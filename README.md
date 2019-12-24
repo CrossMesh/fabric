@@ -1,3 +1,3 @@
 # utt
 
-We are searching for reliable vxlan network solution over network with limited connectivity (limited ports, limited protocols, etc). **utt** multiples avaliable protocols to tunnel UDP packet without packet boundary corruption, passing UDP traffic through firewall. 
+We are searching for reliable vxlan network solution over network with limited connectivity (limited ports, limited protocols, etc). **utt** multiplexes avaliable protocols to tunnel UDP packet without packet boundary corruption, passing UDP traffic through firewall. 
