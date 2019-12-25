@@ -1,0 +1,12 @@
+image: golang:1.12-alpine
+
+stages:
+  - test
+
+variables:
+  GO111MODULE: "on"
+
+mux_test:
+  stage: test
+  script:
+  - go test -bench=. -v git.uestc.cn/sunmxt/utt
