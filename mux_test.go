@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"strconv"
 	"testing"
+	"time"
 )
 
 func TestMuxDemux(t *testing.T) {
@@ -16,7 +17,7 @@ func TestMuxDemux(t *testing.T) {
 		[]byte{0x00, 0xFE, 0x00, 0x01, 0x00, 0x01, 0x01},
 		[]byte{0x00, 0xFE, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x01},
 		[]byte{0x00},
-		[]byte{0xEA, 0x86, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01},
+		[]byte{0x00, 0x00, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01},
 		[]byte{},
 	}
 	res := [][]byte{
@@ -24,7 +25,7 @@ func TestMuxDemux(t *testing.T) {
 		[]byte{0x00, 0x00, 0x00, 0x01, 0x00, 0xFE, 0x00, 0x01, 0x00, 0x01, 0x01},
 		[]byte{0x00, 0x00, 0x00, 0x01, 0x00, 0xFE, 0x00, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x01},
 		[]byte{0x00, 0x00, 0x00, 0x01, 0x00},
-		[]byte{0x00, 0x00, 0x00, 0x01, 0xEA, 0x86, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01},
+		[]byte{0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01},
 		[]byte{0x00, 0x00, 0x00, 0x01},
 	}
 	t.Run("muxing", func(t *testing.T) {
@@ -67,6 +68,9 @@ func TestMuxDemux(t *testing.T) {
 			}
 			cidx++
 		})
+		if cidx != len(res) {
+			t.Fatalf("package count error.")
+		}
 
 		// pieces feed test.
 		maxCaseLength := 0
@@ -94,6 +98,9 @@ func TestMuxDemux(t *testing.T) {
 						cidx++
 					})
 				}
+				if cidx != len(res) {
+					t.Fatalf("package count error.")
+				}
 			})
 		}
 	})
@@ -110,43 +117,89 @@ func BenchmarkRandomMuxBlock1MB(t *testing.B) {
 			binary.PutVarint(buf[sz:sz+strconv.IntSize], int64(rand.Int()))
 		}
 		t.SetBytes(int64(blkSize))
-		t.StartTimer()
 		for idx := 0; idx < mb; idx++ {
-			if _, err := muxer.Mux(buf); err != nil {
-				t.Fatal(err)
+			didx := 0
+			rand.Seed(time.Now().Unix())
+			for didx < len(buf) {
+				written := rand.Int() & int(0xFFF)
+				if written >= len(buf)-didx {
+					written = len(buf) - didx
+				}
+				t.StartTimer()
+				if _, err := muxer.Mux(buf[didx : didx+written]); err != nil {
+					t.Fatal(err)
+				}
+				t.StopTimer()
+				didx += written
 			}
 		}
-		t.StopTimer()
 	}
 	t.Run("16mb", func(t *testing.B) { benchmarkMuxing(16, t) })
 	t.Run("32mb", func(t *testing.B) { benchmarkMuxing(32, t) })
-	t.Run("64mb", func(t *testing.B) { benchmarkMuxing(64, t) })
-	t.Run("128mb", func(t *testing.B) { benchmarkMuxing(128, t) })
-	t.Run("256mb", func(t *testing.B) { benchmarkMuxing(256, t) })
 }
 
-//func BenchmarkRandomDecodeBlock1MB(t *testing.B) {
-//
-//	benchmarkDemuxing := func(mb int, t *testing.B) {
-//		t.StopTimer()
-//		seq := bytes.NewBuffer(make([]byte, 0, 1<<20)) // 1mb
-//		muxer := NewStreamMuxer(seq)
-//		demuxer := NewStreamDemuxer()
-//		blkSize := 1 << 20 // 1mb
-//		buf := make([]byte, blkSize)
-//		for sz := 0; sz+strconv.IntSize < blkSize; sz += strconv.IntSize / 8 {
-//			binary.PutVarint(buf[sz:sz+strconv.IntSize], int64(rand.Int()))
-//		}
-//		if _, err := muxer.Mux(buf); err != nil {
-//			t.Fatal(err)
-//		}
-//		buf = append(buf, frameLead...)
-//		demuxer.Demux(buf, func() {})
-//	}
-//
-//	t.Run("16mb", func(t *testing.B) { benchmarkDemuxing(16, t) })
-//	t.Run("32mb", func(t *testing.B) { benchmarkDemuxing(32, t) })
-//	t.Run("64mb", func(t *testing.B) { benchmarkDemuxing(64, t) })
-//	t.Run("128mb", func(t *testing.B) { benchmarkDemuxing(128, t) })
-//	t.Run("256mb", func(t *testing.B) { benchmarkDemuxing(256, t) })
-//}
+func BenchmarkRandomDecodeBlock1MB(t *testing.B) {
+	benchmarkDemuxing := func(mb int, t *testing.B) {
+		t.StopTimer()
+		blkSize := 1 << 20 // 1mb
+		streamBuf := bytes.NewBuffer(make([]byte, 0, blkSize))
+		muxer := NewStreamMuxer(streamBuf)
+		demuxer := NewStreamDemuxer()
+		t.N = mb
+		buf := make([]byte, blkSize)
+		for sz := 0; sz+strconv.IntSize < blkSize; sz += strconv.IntSize / 8 {
+			binary.PutVarint(buf[sz:sz+strconv.IntSize], int64(rand.Int()))
+		}
+		t.SetBytes(int64(blkSize))
+		cuts := make([]int, 0, 256)
+		for idx := 0; idx < mb; idx++ {
+			didx := 0
+			cuts = cuts[0:0]
+			streamBuf.Reset()
+			for didx < len(buf) {
+				written := rand.Int() & 0xFFF
+				if written >= len(buf)-didx {
+					written = len(buf) - didx
+				}
+				if _, err := muxer.Mux(buf[didx : didx+written]); err != nil {
+					t.Fatal(err)
+				}
+				didx += written
+				cuts = append(cuts, didx)
+			}
+
+			demuxer.Reset()
+			cidx, lastCut := 0, 0
+			didx = 0
+			for didx < streamBuf.Len() {
+				written := rand.Int() & 0xFFF
+				if written >= streamBuf.Len()-didx {
+					written = streamBuf.Len() - didx
+				}
+				t.StartTimer()
+				if _, err := demuxer.Demux(streamBuf.Bytes()[didx:didx+written], func(pkt []byte) {
+					t.StopTimer()
+					if cidx >= len(cuts) {
+						t.Fatal("more packets decoded.")
+					}
+					origin := buf[lastCut:cuts[cidx]]
+					if bytes.Compare(pkt, origin) != 0 {
+						t.Fatalf("decode %v: %v not equal %v", cidx, pkt, origin)
+					}
+					lastCut = cuts[cidx]
+					cidx++
+					t.StartTimer()
+				}); err != nil {
+					t.Fatal(err)
+				}
+				didx += written
+			}
+		}
+	}
+
+	t.Run("16mb", func(t *testing.B) { benchmarkDemuxing(16, t) })
+	t.Run("32mb", func(t *testing.B) { benchmarkDemuxing(32, t) })
+	//t.Run("64mb", func(t *testing.B) { benchmarkDemuxing(64, t) })
+	//t.Run("128mb", func(t *testing.B) { benchmarkDemuxing(128, t) })
+	//t.Run("256mb", func(t *testing.B) { benchmarkDemuxing(256, t) })
+}

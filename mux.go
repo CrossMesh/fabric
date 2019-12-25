@@ -14,7 +14,9 @@ var (
 	// 00 00 00 01 --> 00 00 01 00 01
 	escapeSeq2 = []byte{0x00, 0x00, 0x01, 0x00, 0x01}
 	// 00 00 01 --> 00 00
-	stripSeq = []byte{0x00, 0x00}
+
+	zeroSeq  = []byte{0x00, 0x00, 0x00}
+	stripSeq = zeroSeq[:2]
 )
 
 const (
@@ -112,155 +114,101 @@ func (m *StreamMuxer) Mux(frame []byte) (written int, err error) {
 }
 
 type StreamDemuxer struct {
-	leftBuf *bytes.Buffer
-	buf     *bytes.Buffer
-	bufs    sync.Pool
+	left int
+	buf  []byte
 }
 
 func NewStreamDemuxer() *StreamDemuxer {
-	d := &StreamDemuxer{
-		bufs: sync.Pool{
-			New: func() interface{} {
-				return bytes.NewBuffer(make([]byte, 0, defaultBufferSize))
-			},
-		},
-	}
+	d := &StreamDemuxer{}
 	return d
 }
 
-func (d *StreamDemuxer) allocBuffer() *bytes.Buffer {
-	buf := d.bufs.Get().(*bytes.Buffer)
-	buf.Reset()
-	return buf
-}
-
-func (d *StreamDemuxer) freeBuffer(buf *bytes.Buffer) {
-	d.bufs.Put(buf)
-}
-
 func (d *StreamDemuxer) Reset() {
-	if d.leftBuf != nil {
-		d.freeBuffer(d.leftBuf)
-	}
-	if d.buf != nil {
-		d.freeBuffer(d.buf)
-	}
-	d.leftBuf = nil
 	d.buf = nil
 }
 
-func (d *StreamDemuxer) Demux(raw []byte, emit func([]byte)) (int, error) {
-	preservedRaw := 0
-
-	if d.leftBuf != nil {
-		preservedRaw = d.leftBuf.Len()
-		if _, err := d.leftBuf.Write(raw); err != nil {
-			return 0, err
-		}
-		raw = d.leftBuf.Bytes()
-	}
-
-	last, read, preserved, idx := 0, 0, 0, 0
+func (d *StreamDemuxer) Demux(raw []byte, emit func([]byte)) (read int, err error) {
+	buf, left, preserved, idx := d.buf, d.left, 0, 0
 	if d.buf != nil {
-		preserved = d.buf.Len()
+		preserved = len(d.buf)
 	}
-
-	fallback := func() {
-		d.buf.Truncate(preserved)
-		if d.leftBuf != nil {
-			d.leftBuf.Truncate(preservedRaw)
-		}
-	}
-	write := func(dat []byte) error {
-		if len(dat) < 0 || d.buf == nil {
-			return nil
-		}
-		n, err := d.buf.Write(dat)
+	defer func() {
 		if err != nil {
-			// recover
-			fallback()
-			return err
-		}
-		read += n
-		return nil
-	}
-
-	for idx+2 < len(raw) {
-		if d.buf == nil {
-			last = idx
-		}
-		if raw[idx] == 0x00 && raw[idx+1] == 0x00 {
-			if raw[idx+2] == 0x01 {
-				// case: 00 00 01. strip 01.
-				if d.buf == nil { // boundary not found yet. ignore broken bytes.
-					continue
-				}
-				// write demuxed part.
-				if err := write(raw[last:idx]); err != nil {
-					return 0, err
-				}
-				if err := write(stripSeq); err != nil {
-					return 0, err
-				}
-				idx += 3
-				read++
-				last = idx
-				continue
-
-			} else if raw[idx+2] == 0x00 {
-				if idx+3 >= len(raw) {
-					// case: 00 00 00 ??, frameLead may be cut off.
-					break
-				}
-				if raw[idx+3] == 0x01 {
-					// boundary.
-					if d.buf != nil {
-						if err := write(raw[last:idx]); err != nil {
-							return 0, err
-						}
-						emit(d.buf.Bytes())
-						d.freeBuffer(d.buf)
-					}
-					idx += 4
-					read += 4
-					last = idx
-					d.buf = d.allocBuffer()
-				} else if raw[idx+3] != 0x00 {
-					// case: 00 00 00 xx(!=00 and !=01), could not be frameLead.
-					idx += 4
-				} else {
-					// case: 00 00 00 00 ??, frameLead may be cut off.
-					idx++
-				}
-			} else {
-				idx += 3
+			if d.buf != nil {
+				d.buf = d.buf[:preserved]
 			}
 		} else {
-			idx++
+			d.left = left
+			d.buf = buf
 		}
-	}
-	if err := write(raw[last:idx]); err != nil {
-		return 0, err
-	}
+	}()
 
-	// deal with left data.
-	oldLeftBuf := d.leftBuf
-	if idx < len(raw) {
-		newLeftBuf := d.allocBuffer()
-		n, err := newLeftBuf.Write(raw[idx:])
-		if err != nil {
-			fallback()
-			return 0, err
+	for idx < len(raw) {
+		c := raw[idx]
+		switch left {
+		case 0:
+			if c != 0x00 {
+				if buf != nil {
+					buf = append(buf, c)
+				}
+				break
+			}
+			left++
+
+		case 1:
+			if c != 0x00 {
+				// case 1: 00 xx(xx != 00).
+				if buf != nil {
+					buf = append(buf, 0x00, c)
+				}
+				left = 0
+				break
+			}
+			left++
+
+		case 2:
+			if c == 0x01 {
+				// case 1: 00 00 01. strip 01.
+				if buf != nil {
+					buf = append(buf, 0x00, 0x00)
+				}
+				left = 0
+			} else if c != 0x00 {
+				if buf != nil {
+					buf = append(buf, 0x00, 0x00, c)
+				}
+				left = 0
+			} else {
+				left++
+			}
+
+		case 3:
+			if c == 0x01 {
+				// case: 00 00 00 01, frameLead
+				if buf != nil {
+					emit(buf)
+					buf = buf[0:0]
+				} else {
+					buf = make([]byte, 0, defaultBufferSize)
+				}
+				left = 0
+				break
+			}
+			if c != 0x00 {
+				// case 4: 00 00 00 xx(!=00 and !=01), could not be frameLead.
+				if buf != nil {
+					buf = append(buf, 0x00, 0x00, 0x00, c)
+				}
+				left = 0
+			} else {
+				// case 3: 00 00 00 00 ?? --> 00 00 00 ??
+				if buf != nil {
+					buf = append(buf, 0x00)
+				}
+			}
+
 		}
-		read += n
-		d.leftBuf = newLeftBuf
-	} else {
-		// all data consumed.
-		d.leftBuf = nil
+		idx++
 	}
-	if oldLeftBuf != nil {
-		d.freeBuffer(oldLeftBuf)
-	}
-
-	return read - preservedRaw, nil
+	return
 }
