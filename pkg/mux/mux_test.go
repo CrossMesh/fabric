@@ -1,4 +1,4 @@
-package uut
+package utt
 
 import (
 	"bytes"
