@@ -43,6 +43,7 @@ func runServer(peer *config.Peer) error {
 					"conn_id": connID,
 				},
 			}
+			err = s.Do(arbiter)
 		}
 	})
 

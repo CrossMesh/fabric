@@ -6,8 +6,8 @@ type Endpoint struct {
 }
 
 type ACL struct {
-	Password string    `json:"password" yaml:"password"`
-	Reverse  *Endpoint `json:"reverse" yaml:"reverse"`
+	PSK     string    `json:"psk" yaml:"psk"`
+	Reverse *Endpoint `json:"reverse" yaml:"reverse"`
 }
 
 type Peer struct {
