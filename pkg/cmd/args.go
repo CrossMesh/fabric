@@ -1,16 +1,23 @@
 package cmd
 
 import (
+	"git.uestc.cn/sunmxt/utt/pkg/config"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 )
 
-func getTCPNetwork(ctx *cli.Context) (net string) {
+func pickPeerConfig(ctx *cli.Context, cfg *config.UUT) *config.Peer {
 	if ctx.Args().Len() < 1 {
-		log.Error("TCP endpoint missing.")
+		log.Error("peer config name missing.")
 	}
 	if ctx.Args().Len() > 1 {
-		log.Error("Too many TCP endpoints.")
+		log.Error("Too many peer to connect.")
 	}
-	return ctx.Args().Get(1)
+	peerName := ctx.Args().Get(1)
+	peer, ok := cfg.Peer[peerName]
+	if !ok {
+		log.Errorf("peer \"%v\" not found.", peerName)
+		return nil
+	}
+	return peer
 }
