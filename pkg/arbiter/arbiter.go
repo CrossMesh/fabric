@@ -19,6 +19,7 @@ func New(log *log.Entry) *Arbiter {
 	return &Arbiter{
 		sigFibreExit: make(chan struct{}, 10),
 		log:          log,
+		running:      true,
 	}
 }
 
@@ -51,9 +52,9 @@ Arbiting:
 
 		case <-a.sigFibreExit:
 			a.runningCount--
-			if a.runningCount < 1 {
-				break Arbiting
-			}
+		}
+		if a.runningCount < 1 {
+			break Arbiting
 		}
 	}
 
