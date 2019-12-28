@@ -7,7 +7,7 @@ export PATH:=$(PROJECT_ROOT)/bin:$(PATH)
 all: bin/utt
 
 test:
-	go test -bench=. -v git.uestc.cn/sunmxt/utt/...
+	go test -bench=. -v git.uestc.cn/sunmxt/utt/pkg/...
 
 build:
 	mkdir build

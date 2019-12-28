@@ -68,7 +68,7 @@ func newServerCmd() *cli.Command {
 				return nil
 			}
 			if bindAddr, err := net.ResolveTCPAddr("tcp", bind); err != nil {
-				log.Error("cannot resolve bind endpoint: %v", bind)
+				log.Errorf("cannot resolve bind endpoint: %v", bind)
 				return err
 			} else {
 				peer.Tunnel.Address = bindAddr.IP.To4().String()

@@ -35,6 +35,21 @@ func (a *Arbiter) Go(proc func()) {
 
 func (a *Arbiter) ShouldRun() bool { return a.running }
 
+func (a *Arbiter) Shutdown() {
+	a.running = false
+	atomic.AddUint32(&a.runningCount, 1)
+	a.sigFibreExit <- struct{}{}
+}
+
+func (a *Arbiter) Wait() {
+	for a.runningCount < 1 {
+		select {
+		case <-a.sigFibreExit:
+			a.runningCount--
+		}
+	}
+}
+
 func (a *Arbiter) Arbit() error {
 	sig := make(chan os.Signal)
 	signal.Notify(sig, os.Interrupt, os.Kill)
