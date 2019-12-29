@@ -7,16 +7,16 @@ func UDPAddrEqual(a, b *net.UDPAddr) bool {
 		return true
 	}
 	if a != nil && b != nil {
-		return false
+		if !a.IP.Equal(b.IP) {
+			return false
+		}
+		if a.Port != b.Port {
+			return false
+		}
+		if a.Zone != b.Zone {
+			return false
+		}
+		return true
 	}
-	if !a.IP.Equal(b.IP) {
-		return false
-	}
-	if a.Port != b.Port {
-		return false
-	}
-	if a.Zone != b.Zone {
-		return false
-	}
-	return true
+	return false
 }

@@ -13,7 +13,7 @@ func pickPeerConfig(ctx *cli.Context, cfg *config.UUT) *config.Peer {
 	if ctx.Args().Len() > 1 {
 		log.Error("Too many peer to connect.")
 	}
-	peerName := ctx.Args().Get(1)
+	peerName := ctx.Args().Get(0)
 	peer, ok := cfg.Peer[peerName]
 	if !ok {
 		log.Errorf("peer \"%v\" not found.", peerName)

@@ -24,10 +24,10 @@ func (h *Hello) Encode(buf []byte) []byte {
 }
 
 func (h *Hello) Decode(buf []byte) error {
-	if len(buf) < h.Len() {
+	if len(buf) < h.Len() || bytes.Compare(helloMagic, buf[:len(helloMagic)]) != 0 {
 		return ErrInvalidPacket
 	}
-	copy(h.Challenge[0:16], buf[0:16])
+	copy(h.Challenge[:16], buf[len(helloMagic):16+len(helloMagic)])
 	return nil
 }
 
@@ -69,12 +69,12 @@ func (c *Connect) Encode(buf []byte) ([]byte, error) {
 	if len(binACLKey) > 0xFFFF || len(c.Signature) > 0xFFFF {
 		return nil, ErrContentTooLong
 	}
-	binary.BigEndian.PutUint16(buf[:], uint16(len(binACLKey)))
+	binary.BigEndian.PutUint16(lengthBin[:], uint16(len(binACLKey)))
 	buf = append(buf, lengthBin[:]...)
-	binary.BigEndian.PutUint16(buf[:], uint16(len(c.Signature)))
+	binary.BigEndian.PutUint16(lengthBin[:], uint16(len(c.Signature)))
 	buf = append(buf, lengthBin[:]...)
 
-	buf = append(buf, []byte(c.ACLKey)...)
+	buf = append(buf, binACLKey...)
 	buf = append(buf, c.Signature...)
 	return buf, nil
 }
@@ -86,7 +86,7 @@ func (c *Connect) Decode(buf []byte) error {
 	msgLen, signLen := uint16(0), uint16(0)
 	msgLen = binary.BigEndian.Uint16(buf[:2])
 	signLen = binary.BigEndian.Uint16(buf[2:4])
-	if int(msgLen)+int(signLen)+4 >= len(buf) {
+	if int(msgLen)+int(signLen)+4 > len(buf) {
 		return ErrInvalidPacket
 	}
 	c.ACLKey = string(buf[4 : 4+msgLen])
@@ -123,14 +123,21 @@ func (c *ConnectResult) Encode(buf []byte) []byte {
 	} else {
 		buf = append(buf, 0)
 	}
+	buf = append(buf, byte(c.MsgLen&0xFF))
 	buf = append(buf, c.RawMsg[:c.MsgLen]...)
 	return buf
 }
 
 func (c *ConnectResult) Decode(buf []byte) error {
-	if len(buf) < c.Len() {
+	if len(buf) < 2 {
 		return ErrInvalidPacket
 	}
+	msgLen := uint8(buf[1])
 	c.Welcome = buf[0] > 0
+	if int(2+msgLen) > len(buf) {
+		return ErrInvalidPacket
+	}
+	c.MsgLen = int(msgLen)
+	copy(c.RawMsg[:c.MsgLen], buf[2:2+c.MsgLen])
 	return nil
 }

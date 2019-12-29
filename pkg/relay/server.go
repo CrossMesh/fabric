@@ -2,6 +2,7 @@ package relay
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"time"
@@ -29,19 +30,20 @@ type RelayServer struct {
 
 	listener *net.TCPListener
 
-	Log *log.Entry
+	log *log.Entry
 }
 
-func NewServer(bind *net.TCPAddr, acl map[string]*config.ACL) *RelayServer {
+func NewServer(bind *net.TCPAddr, acl map[string]*config.ACL, log *log.Entry) *RelayServer {
 	return &RelayServer{
-		bind: bind,
-		acl:  acl,
+		bind:        bind,
+		acl:         acl,
+		resolvedACL: make(map[string]*resolvedACL),
+		log:         log,
 	}
 }
 
 func (s *RelayServer) goACLResolve(arbiter *arbiter.Arbiter, addr string, acl *config.ACL) {
 	arbiter.Go(func() {
-		log := s.Log
 		var (
 			newAddr  *net.UDPAddr
 			err      error
@@ -51,12 +53,16 @@ func (s *RelayServer) goACLResolve(arbiter *arbiter.Arbiter, addr string, acl *c
 			sigChange: make(chan *net.UDPAddr),
 		}
 		err = nil
-
+		nextResolveTime := time.Now()
 		for arbiter.ShouldRun() {
 			newAddr = nil
+			if time.Now().Before(nextResolveTime) {
+				time.Sleep(time.Second)
+				continue
+			}
 
 			if newAddr, err = net.ResolveUDPAddr("udp", addr); err != nil {
-				if log != nil {
+				if s.log != nil {
 					log.Errorf("acl \"%v\" resolve failure: %v", addr, err)
 				}
 				time.Sleep(time.Second * 5)
@@ -68,7 +74,10 @@ func (s *RelayServer) goACLResolve(arbiter *arbiter.Arbiter, addr string, acl *c
 					s.aclLock.Lock()
 					s.resolvedACL[addr] = &resolved
 					s.aclLock.Unlock()
+					s.log.Infof("resolved endpoint: %v --> %v:%v.", addr, newAddr.IP, newAddr.Port)
+					register = true
 				} else {
+					s.log.Infof("resolved endpoint change: %v --> %v:%v.", addr, newAddr.IP, newAddr.Port)
 					select {
 					case resolved.sigChange <- newAddr:
 					case <-time.After(time.Second * 5):
@@ -77,6 +86,7 @@ func (s *RelayServer) goACLResolve(arbiter *arbiter.Arbiter, addr string, acl *c
 				resolved.addr = newAddr
 				resolved.origin = acl
 			}
+			nextResolveTime = time.Now().Add(time.Second * 60)
 		}
 	})
 }
@@ -86,27 +96,9 @@ func (s *RelayServer) doRelay(arbiter *arbiter.Arbiter, connID int, conn net.Con
 	return nil
 }
 
-func (s *RelayServer) logError(prefix string, err error) {
-	log := s.Log
-	if log == nil {
-		return
-	}
-	if err != nil {
-		log.Error(prefix, err)
-	} else {
-		log.Error(prefix)
-	}
-}
-
-func (s *RelayServer) logInfo(prefix string) {
-	log := s.Log
-	if log == nil {
-		return
-	}
-	log.Error(prefix)
-}
-
 func (s *RelayServer) handshakeConnect(arbiter *arbiter.Arbiter, connID int, conn net.Conn) (accepted bool, err error) {
+	log := s.log.WithField("conn_id", connID)
+
 	muxer, demuxer := mux.NewStreamMuxer(conn), mux.NewStreamDemuxer()
 	buf := make([]byte, defaultBufferSize)
 
@@ -115,35 +107,42 @@ func (s *RelayServer) handshakeConnect(arbiter *arbiter.Arbiter, connID int, con
 	hello.Refresh() // New challenge.
 	rawChallenge := hello.Encode(buf[:0])
 	if _, err := muxer.Mux(rawChallenge); err != nil {
-		s.logError("write hello error: ", err)
+		log.Error("write hello error: ", err)
 		return false, err
 	}
+	log.Info("handshake hello sent.")
 
 	var connectReq *proto.Connect
 	// wait for connect packet.
 	for arbiter.ShouldRun() && connectReq == nil {
 		if err := conn.SetReadDeadline(time.Now().Add(time.Second * 10)); err != nil {
-			s.logError("set deadline error: ", err)
+			log.Error("set deadline error: ", err)
 			return false, err
 		}
 		read, err := conn.Read(buf)
 		if err != nil {
 			if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
-				s.logInfo("deny due to inactivity.")
+				log.Info("deny due to inactivity.")
 				return false, nil
 			}
+			if err == io.EOF {
+				log.Info("connection closed by client.")
+				return false, nil
+			}
+			return false, err
 		}
 		demuxer.Demux(buf[:read], func(pkt []byte) {
 			if connectReq != nil {
 				return
 			}
-			connectReq := &proto.Connect{}
+			connectReq = &proto.Connect{}
 			if err = connectReq.Decode(pkt); err != nil {
-				s.logInfo("corrupted connect handshake packet.")
+				log.Info("corrupted connect handshake packet.")
 			}
 			accepted = true
 		})
 	}
+	log.Info("connect request received.")
 
 	// verify
 	if !accepted || connectReq == nil {
@@ -153,10 +152,9 @@ func (s *RelayServer) handshakeConnect(arbiter *arbiter.Arbiter, connID int, con
 	acl, hasACL := s.resolvedACL[connectReq.ACLKey]
 	s.aclLock.RUnlock()
 	if !hasACL || acl == nil {
-		s.logInfo("deny for no resolved acl.")
-		return false, nil
-	}
-	if acl.origin.PSK != "" {
+		log.Info("deny for no resolved acl.")
+		accepted = false
+	} else if acl.origin.PSK != "" {
 		accepted = connectReq.Verify(hello.Challenge[:], []byte(acl.origin.PSK))
 	}
 
@@ -166,46 +164,47 @@ func (s *RelayServer) handshakeConnect(arbiter *arbiter.Arbiter, connID int, con
 	}
 	replyBuf := buf[0:0]
 	if !accepted {
-		connRes.EncodeMessage("challenge failure")
-		s.logInfo(fmt.Sprintf("deny connection %v for challenge failure.", connID))
+		connRes.EncodeMessage("challenge failure.")
+		log.Info(fmt.Sprintf("deny connection %v for challenge failure.", connID))
 	} else {
 		connRes.EncodeMessage("ok")
 	}
 	replyBuf = connRes.Encode(replyBuf)
 	if _, err = muxer.Mux(replyBuf); err != nil {
 		accepted = false
-		s.logError("write welcome error: ", err)
+		log.Error("write welcome error: ", err)
 	}
 
 	return accepted, err
 }
 
 func (s *RelayServer) goServeConnection(arbiter *arbiter.Arbiter, connID int, conn net.Conn) {
-	log := s.Log
+	log := s.log.WithField("conn_id", connID)
+	log.Infof("incoming connection %v from %v", connID, conn.RemoteAddr())
 
 	arbiter.Go(func() {
 		defer conn.Close()
 
 		accepted, err := s.handshakeConnect(arbiter, connID, conn)
-		if err != nil && log != nil {
+		if err != nil {
 			log.Errorf("handshake error for connection %v: %v", connID, err)
 			return
 		}
-		if !accepted && log != nil {
-			log.Errorf("connection %v deined.", connID)
+		if !accepted {
+			log.Info("connection deined.")
 			return
 		}
 		err = s.doRelay(arbiter, connID, conn)
-		if err != nil && log != nil {
+		if err != nil {
 			log.Errorf("relay failure: %v", err)
 		}
 	})
 }
 
 func (s *RelayServer) acceptConnection(arbiter *arbiter.Arbiter) (err error) {
-	log := s.Log
-
 	connID := 0
+	s.log.Infof("start accepting connection.")
+
 	for arbiter.ShouldRun() {
 		if err != nil {
 			time.Sleep(time.Second * 5)
@@ -213,9 +212,7 @@ func (s *RelayServer) acceptConnection(arbiter *arbiter.Arbiter) (err error) {
 		err = nil
 
 		if err = s.listener.SetDeadline(time.Now().Add(time.Second * 3)); err != nil {
-			if log != nil {
-				log.Error("set deadline error: ", err)
-			}
+			s.log.Error("set deadline error: ", err)
 			continue
 		}
 
@@ -224,9 +221,7 @@ func (s *RelayServer) acceptConnection(arbiter *arbiter.Arbiter) (err error) {
 			if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
 				continue
 			}
-			if log != nil {
-				log.Error("accept error: ", err)
-			}
+			s.log.Error("accept error: ", err)
 		}
 
 		connID++
@@ -238,14 +233,11 @@ func (s *RelayServer) acceptConnection(arbiter *arbiter.Arbiter) (err error) {
 
 func (s *RelayServer) Do(globalArbiter *arbiter.Arbiter) (err error) {
 	// watch all acls.
-	aclArbiter := arbiter.New(s.Log)
+	aclArbiter := arbiter.New(s.log)
 
 	for key, acl := range s.acl {
 		if key == "" {
-			if s.Log != nil {
-				s.Log.Warn("empty acl key. skip.")
-				continue
-			}
+			s.log.Warn("empty acl key. skip.")
 		}
 		s.goACLResolve(aclArbiter, key, acl)
 	}
@@ -258,9 +250,11 @@ func (s *RelayServer) Do(globalArbiter *arbiter.Arbiter) (err error) {
 
 		s.listener, err = net.ListenTCP("tcp", s.bind)
 		if err != nil {
-			log.Errorf("cannot listen to \"%v\": %v", s.bind.String(), err)
+			s.log.Errorf("cannot listen to \"%v\": %v", s.bind.String(), err)
 			continue
 		}
+		s.log.Infof("listening to %v", s.bind.String())
+
 		err = s.acceptConnection(globalArbiter)
 	}
 

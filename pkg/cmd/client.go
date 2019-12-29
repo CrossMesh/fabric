@@ -14,9 +14,9 @@ import (
 )
 
 func runClient(peer *config.Peer, remote, reverse, tunnel string) error {
-	arbiter := arbiter.New(&log.Entry{
-		Data: log.Fields{"module": "arbiter"},
-	})
+	arbiter := arbiter.New(log.WithFields(log.Fields{
+		"module": "arbiter",
+	}))
 
 	arbiter.Go(func() {
 		var (
@@ -33,12 +33,30 @@ func runClient(peer *config.Peer, remote, reverse, tunnel string) error {
 				log.Info("retry in 5 second.")
 				time.Sleep(time.Second * 5)
 			}
+			if !arbiter.ShouldRun() {
+				break
+			}
 			err = nil
 
 			if remoteAddr, err = net.ResolveUDPAddr("udp", remote); err != nil {
 				log.Error("remote address not resolved: ", err)
 				continue
 			}
+			// ACL config
+			aclName := fmt.Sprintf("%v:%v", remoteAddr.IP.To4().String(), remoteAddr.Port)
+			log.Infof("using ACL \"%v\"", aclName)
+			if peer.ACL != nil {
+				acl, hasACL = peer.ACL[aclName]
+			}
+			hasACL = acl != nil
+			if !hasACL {
+				log.Warnf("acl rule \"%v\" not provided.", aclName)
+			}
+			// default tunnel.
+			if tunnel == "" && acl != nil && acl.Reverse != nil {
+				tunnel = fmt.Sprintf("%v:%v", acl.Reverse.Address, acl.Reverse.Port)
+			}
+
 			if reverseAddr, err = net.ResolveUDPAddr("udp", reverse); err != nil {
 				log.Error("reverse address not resolved: ", err)
 				continue
@@ -51,25 +69,11 @@ func runClient(peer *config.Peer, remote, reverse, tunnel string) error {
 				log.Error("tunnal address not resolved: ", err)
 				continue
 			}
-
-			// ACL config
-			aclName := fmt.Sprintf("%v:%v", remoteAddr.IP.To4().String(), remoteAddr.Port)
-			log.Info("using ACL \"%v\"", aclName)
-			if peer.ACL != nil {
-				acl, hasACL = peer.ACL[aclName]
-			}
-			hasACL = acl != nil
-			if !hasACL {
-				log.Warn("acl rule \"%v\" not provided.", aclName)
-			}
-
-			c := relay.NewClient(tcpAddr, reverseAddr, remoteAddr, tunnelAddr)
-			c.Log = &log.Entry{
-				Data: log.Fields{
-					"module":  "relay_client",
-					"conn_id": connID,
-				},
-			}
+			c := relay.NewClient(tcpAddr, reverseAddr, remoteAddr, tunnelAddr, acl, log.WithFields(log.Fields{
+				"module":  "relay_client",
+				"conn_id": connID,
+			}))
+			connID++
 			err = c.Do(arbiter)
 		}
 	})
@@ -79,14 +83,14 @@ func runClient(peer *config.Peer, remote, reverse, tunnel string) error {
 
 func newClientCmd() *cli.Command {
 	configFile, remote, tunnel, reverse := "", "", "", ""
-	cfg := &config.UUT{}
 
 	cmd := &cli.Command{
 		Name:    "client",
 		Aliases: []string{"c"},
 		Usage:   "run as client to connection to utt server endpoint.",
 		Action: func(ctx *cli.Context) (err error) {
-			if err = configor.Load(&cfg, configFile); err != nil {
+			cfg := &config.UUT{}
+			if err = configor.Load(cfg, configFile); err != nil {
 				log.Error("failed to load configuration: ", err)
 				return err
 			}

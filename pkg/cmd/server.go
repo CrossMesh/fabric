@@ -14,35 +14,29 @@ import (
 )
 
 func runServer(peer *config.Peer) error {
-	arbiter := arbiter.New(&log.Entry{
-		Data: log.Fields{"module": "arbiter"},
-	})
+	arbiter := arbiter.New(log.WithFields(log.Fields{
+		"module": "arbiter",
+	}))
 
 	arbiter.Go(func() {
 		var (
 			err      error
 			bindAddr *net.TCPAddr
-			connID   uint
 		)
 
 		for arbiter.ShouldRun() {
 			if err != nil {
-				log.Info("retry in 5 second.")
+				log.Info("retry in 3 second.")
 				time.Sleep(time.Second * 5)
 			}
 			err = nil
-
 			if bindAddr, err = net.ResolveTCPAddr("tcp", fmt.Sprintf("%v:%v", peer.Tunnel.Address, peer.Tunnel.Port)); err != nil {
 				log.Error("tunnal address not resolved: ", err)
 				continue
 			}
-			s := relay.NewServer(bindAddr, peer.ACL)
-			s.Log = &log.Entry{
-				Data: log.Fields{
-					"module":  "relay_server",
-					"conn_id": connID,
-				},
-			}
+			s := relay.NewServer(bindAddr, peer.ACL, log.WithFields(log.Fields{
+				"module": "relay_server",
+			}))
 			err = s.Do(arbiter)
 		}
 	})
@@ -59,7 +53,7 @@ func newServerCmd() *cli.Command {
 		Usage:   "run as server to wait for connection.",
 		Action: func(ctx *cli.Context) (err error) {
 			cfg := &config.UUT{}
-			if err = configor.Load(&cfg, configFile); err != nil {
+			if err = configor.Load(cfg, configFile); err != nil {
 				log.Error("failed to load configuration: ", err)
 				return err
 			}
@@ -67,13 +61,15 @@ func newServerCmd() *cli.Command {
 			if peer == nil {
 				return nil
 			}
-			if bindAddr, err := net.ResolveTCPAddr("tcp", bind); err != nil {
-				log.Errorf("cannot resolve bind endpoint: %v", bind)
-				return err
-			} else {
-				peer.Tunnel.Address = bindAddr.IP.To4().String()
-				if bindAddr.Port > 0 && uint16(bindAddr.Port) <= uint16(0xFFFF) {
-					peer.Tunnel.Port = uint16(bindAddr.Port)
+			if bind != "" {
+				if bindAddr, err := net.ResolveTCPAddr("tcp", bind); err != nil || bindAddr == nil {
+					log.Errorf("cannot resolve bind endpoint: %v", bind)
+					return err
+				} else {
+					peer.Tunnel.Address = bindAddr.IP.To4().String()
+					if bindAddr.Port > 0 && uint16(bindAddr.Port) <= uint16(0xFFFF) {
+						peer.Tunnel.Port = uint16(bindAddr.Port)
+					}
 				}
 			}
 			// default bind port
@@ -93,7 +89,6 @@ func newServerCmd() *cli.Command {
 			&cli.StringFlag{
 				Name:        "bind",
 				Usage:       "network endpoint to bind.",
-				Required:    true,
 				Destination: &bind,
 			},
 		}}
