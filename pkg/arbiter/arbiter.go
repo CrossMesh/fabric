@@ -42,7 +42,7 @@ func (a *Arbiter) Shutdown() {
 }
 
 func (a *Arbiter) Wait() {
-	for a.runningCount < 1 {
+	for a.runningCount > 0 {
 		select {
 		case <-a.sigFibreExit:
 			a.runningCount--
