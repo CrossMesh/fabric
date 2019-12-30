@@ -3,6 +3,7 @@ module git.uestc.cn/sunmxt/utt
 go 1.12
 
 require (
+	github.com/jinzhu/configor v1.1.1
 	github.com/sirupsen/logrus v1.4.2
 	github.com/urfave/cli/v2 v2.1.1
 	golang.org/x/crypto v0.0.0-20191219195013-becbf705a915 // indirect

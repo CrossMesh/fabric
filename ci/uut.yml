@@ -1,0 +1,11 @@
+peer:
+  test1:
+    tunnel:
+      address: "127.0.0.1"
+      port: 38971
+    acl:
+      "127.0.0.1:38972":
+        psk: 123456
+        reverse:
+          address: "127.0.0.1"
+          port: 38973

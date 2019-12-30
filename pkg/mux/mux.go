@@ -1,4 +1,4 @@
-package utt
+package mux
 
 import (
 	"bytes"
@@ -24,8 +24,9 @@ const (
 )
 
 type StreamMuxer struct {
-	w    io.Writer
-	bufs sync.Pool
+	w           io.Writer
+	leadWritten bool
+	bufs        sync.Pool
 }
 
 func NewStreamMuxer(w io.Writer) *StreamMuxer {
@@ -36,6 +37,7 @@ func NewStreamMuxer(w io.Writer) *StreamMuxer {
 				return bytes.NewBuffer(make([]byte, 0, defaultBufferSize))
 			},
 		},
+		leadWritten: false,
 	}
 }
 
@@ -49,13 +51,21 @@ func (m *StreamMuxer) freeBuffer(buf *bytes.Buffer) {
 	m.bufs.Put(buf)
 }
 
+func (m *StreamMuxer) Reset() {
+	m.leadWritten = false
+}
+
 func (m *StreamMuxer) Mux(frame []byte) (written int, err error) {
 	buf := m.allocBuffer()
 	defer m.freeBuffer(buf)
 
-	if written, err = buf.Write(frameLead); err != nil {
-		return 0, err
+	if !m.leadWritten {
+		if written, err = buf.Write(frameLead); err != nil {
+			return 0, err
+		}
+		m.leadWritten = true
 	}
+
 	last := 0
 	for idx := 0; idx+2 < len(frame); {
 		if frame[idx] != 0x00 {
@@ -108,6 +118,9 @@ func (m *StreamMuxer) Mux(frame []byte) (written int, err error) {
 		idx += 2
 	}
 	if _, err = buf.Write(frame[last:]); err != nil {
+		return 0, err
+	}
+	if written, err = buf.Write(frameLead); err != nil {
 		return 0, err
 	}
 	return m.w.Write(buf.Bytes())

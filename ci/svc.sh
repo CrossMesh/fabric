@@ -30,7 +30,7 @@ logwarn() {
 log_exec() {
     loginfo '[exec]' $*
     $*
-}n
+}
 # bundle: utils.sh
 path_join() {
     local -i idx=1
@@ -160,10 +160,10 @@ binary_deps() {
         return 1
     done
     return 0
-}n
+}
 # bundle: binary.sh
 # bundle: settings/bundle.sh
-BUNDLE_BINARY_DIR='/tmp/sar_runtime/bin'n
+BUNDLE_BINARY_DIR='/tmp/sar_runtime/bin'
 # bundle: bundle.sh
 SAR_LAZY_LOAD_TYPE=${SAR_LAZY_LOAD_TYPE:=local}
 _sar_resolve_lazy_load_path() {
@@ -232,7 +232,7 @@ is_image_exists() {
 docker_installed() {
     docker version -f '{{ .Client.Version }}' 2>&1 >/dev/null
     return $?
-}n
+}
 # bundle: builder/common.sh
 _ci_get_package_ref() {
     local host=`_ci_build_generate_registry $1`
@@ -309,10 +309,10 @@ _ci_build_generate_registry_prefix() {
         return 1
     fi
     echo "$host/$package_path/$env"
-}n
+}
 # bundle: settings/wing.sh
 WING_REPORT_TYPE_START_BUILD_PACKAGE=1
-WING_REPORT_TYPE_FINISH_BUILD_PACKAGE=2n
+WING_REPORT_TYPE_FINISH_BUILD_PACKAGE=2
 # bundle: builder/archifacts.sh
 ci_package_pull_help() {
     echo '
@@ -621,7 +621,7 @@ _ci_wing_gitlab_package_build() {
         logerror cannot talk to wing server.
         return 1
     fi
-}n
+}
 # bundle: builder/docker.sh
 _ci_docker_build() {
     OPTIND=0
@@ -756,7 +756,7 @@ _ci_auto_docker_build() {
         return $?
     fi
     log_exec _ci_docker_build $*
-}n
+}
 # bundle: settings/image.sh
 PACKAGE_BASE_IMAGE='registry.stuhome.com/sunmxt/wing/alpine/master:3.7'
 SAR_CI_REGISTRY='registry.stuhome.com'
@@ -780,7 +780,7 @@ SAR_RUNTIME_SYS_PYTHON_DEPENDENCIES=(
     'ipython'
 )
 SAR_PYTHON_MIRRORS='https://pypi.tuna.tsinghua.edu.cn/simple'
-SAR_RUNTIME_APP_DEFAULT_WORKING_DIR='/'n
+SAR_RUNTIME_APP_DEFAULT_WORKING_DIR='/'
 # bundle: builder/ci.sh
 enable_dockercli_experimentals
 help_ci_build() {
@@ -874,14 +874,14 @@ ci_login() {
         return 1
     fi
     docker login "$SAR_CI_REGISTRY" -u "$username" -p "$password"
-}n
+}
 # bundle: builder/validate.sh
 _validate_base_image() {
     return 0
 }
 _validate_dependency_package() {
     return 0
-}n
+}
 # bundle: builder/runtime_image.sh
 _runtime_image_stash_prefix() {
     local prefix=$1
@@ -1619,7 +1619,7 @@ runtime_image_post_build_script() {
     eval "_SAR_RT_BUILD_${context}_POST_BUILD_SCRIPTS=\"\$_SAR_RT_BUILD_${context}_POST_BUILD_SCRIPTS \$key\""
     eval "_SAR_RT_BUILD_${context}_POST_BUILD_SFRIPT_${key}_PATH=\"$script_appended\""
     eval "_SAR_RT_BUILD_${context}_POST_BUILD_SCRIPT_${key}_WORKDIR=$working_dir"
-}n
+}
 # bundle: settings/binary.sh
 # bundle: runtime.sh
 # [bundle] binaries.
@@ -1686,4 +1686,4 @@ ____sar_lazy_load_binary_impl() {
             return 1
             ;;
     esac
-}n
+}

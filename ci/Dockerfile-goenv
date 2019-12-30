@@ -1,0 +1,7 @@
+FROM golang:1.13-alpine
+
+RUN set -xe; \
+    mkdir /apk-cache; \
+    sed -Ei "s/dl-cdn\.alpinelinux\.org/mirrors.ustc.edu.cn/g" /etc/apk/repositories; \
+    apk update --cache-dir /apk-cache; \
+    apk add make git gcc g++ curl openssl vim jq

@@ -8,3 +8,8 @@ We are searching for reliable vxlan network solution over network with limited c
 make
 ```
 
+#### run test
+
+```bash
+make test
+```
