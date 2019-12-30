@@ -91,12 +91,98 @@ func (s *RelayServer) goACLResolve(arbiter *arbiter.Arbiter, addr string, acl *c
 	})
 }
 
-func (s *RelayServer) doRelay(arbiter *arbiter.Arbiter, connID int, conn net.Conn) error {
+func (s *RelayServer) forwardRelay(arbiter *arbiter.Arbiter, connID int, forward string, conn net.Conn, logBase *log.Entry) {
+	log := logBase.WithFields(log.Fields{
+		"traffic": "forward",
+		"forward": forward,
+	})
+	if forward == "" {
+		log.Warn("empty forward address. exiting...")
+		return
+	}
+
+	out, err := net.ListenPacket("udp", ":0")
+	if err != nil {
+		log.Error("net.ListenPacket error: ", err)
+		return
+	}
+	var addr *net.UDPAddr
+	// resolve address.
+	for arbiter.ShouldRun() {
+		if err != nil {
+			time.Sleep(time.Second * 5)
+		}
+		err = nil
+
+		if addr, err = net.ResolveUDPAddr("udp", forward); err != nil {
+			log.Errorf("resolve \"%v\" failure: %v", forward, err)
+			continue
+		}
+		break
+	}
+	relayDemux := NewDemuxRelay(conn, out, addr, log)
+	if err = relayDemux.Do(arbiter); err != nil {
+		log.Errorf("relay error: ", err)
+	}
+	log.Info("forward relaying shutting down...")
+	arbiter.Shutdown()
+}
+
+func (s *RelayServer) reverseRelay(arbiter *arbiter.Arbiter, connID int, reverse string, conn net.Conn, logBase *log.Entry) {
+	log := logBase.WithFields(log.Fields{
+		"traffic": "reverse",
+		"forward": reverse,
+	})
+	if reverse == "" {
+		log.Warn("empty reverse address. exiting...")
+		return
+	}
+
+	var (
+		addr *net.UDPAddr
+		err  error
+	)
+	// resolve address.
+	for arbiter.ShouldRun() {
+		if err != nil {
+			time.Sleep(time.Second * 5)
+		}
+		err = nil
+		if addr, err = net.ResolveUDPAddr("udp", reverse); err != nil {
+			log.Errorf("resolve \"%v\" failure: %v", reverse, err)
+			continue
+		}
+		break
+	}
+	relayMux := NewMuxRelay(conn, addr, log)
+	if err = relayMux.Do(arbiter); err != nil {
+		log.Error("relay error: ", err)
+	}
+
+	arbiter.Shutdown()
+}
+
+func (s *RelayServer) doRelay(globalArbiter *arbiter.Arbiter, connID int, conn net.Conn, aclKey string, acl *config.ACL) error {
 	defer conn.Close()
+
+	subLog := s.log.WithField("conn_id", connID)
+	relayArbiter := arbiter.New(subLog)
+
+	// Reverse traffic.
+	if acl != nil && acl.Reverse != nil {
+		relayArbiter.Go(func() {
+			s.reverseRelay(relayArbiter, connID, fmt.Sprintf("%v:%v", acl.Reverse.Address, acl.Reverse.Port), conn, subLog)
+		})
+	}
+	// Forward traffic.
+	relayArbiter.Go(func() {
+		s.forwardRelay(relayArbiter, connID, aclKey, conn, subLog)
+	})
+	relayArbiter.Wait()
 	return nil
 }
 
-func (s *RelayServer) handshakeConnect(arbiter *arbiter.Arbiter, connID int, conn net.Conn) (accepted bool, err error) {
+func (s *RelayServer) handshakeConnect(arbiter *arbiter.Arbiter, connID int, conn net.Conn) (accepted bool, aclKey string, validACL *config.ACL, err error) {
 	log := s.log.WithField("conn_id", connID)
 
 	muxer, demuxer := mux.NewStreamMuxer(conn), mux.NewStreamDemuxer()
@@ -108,7 +194,7 @@ func (s *RelayServer) handshakeConnect(arbiter *arbiter.Arbiter, connID int, con
 	rawChallenge := hello.Encode(buf[:0])
 	if _, err := muxer.Mux(rawChallenge); err != nil {
 		log.Error("write hello error: ", err)
-		return false, err
+		return false, "", nil, err
 	}
 	log.Info("handshake hello sent.")
 
@@ -117,19 +203,19 @@ func (s *RelayServer) handshakeConnect(arbiter *arbiter.Arbiter, connID int, con
 	for arbiter.ShouldRun() && connectReq == nil {
 		if err := conn.SetReadDeadline(time.Now().Add(time.Second * 10)); err != nil {
 			log.Error("set deadline error: ", err)
-			return false, err
+			return false, "", nil, err
 		}
 		read, err := conn.Read(buf)
 		if err != nil {
 			if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
 				log.Info("deny due to inactivity.")
-				return false, nil
+				return false, "", nil, nil
 			}
 			if err == io.EOF {
 				log.Info("connection closed by client.")
-				return false, nil
+				return false, "", nil, nil
 			}
-			return false, err
+			return false, "", nil, err
 		}
 		demuxer.Demux(buf[:read], func(pkt []byte) {
 			if connectReq != nil {
@@ -146,7 +232,7 @@ func (s *RelayServer) handshakeConnect(arbiter *arbiter.Arbiter, connID int, con
 
 	// verify
 	if !accepted || connectReq == nil {
-		return false, nil
+		return false, "", nil, nil
 	}
 	s.aclLock.RLock()
 	acl, hasACL := s.resolvedACL[connectReq.ACLKey]
@@ -175,7 +261,7 @@ func (s *RelayServer) handshakeConnect(arbiter *arbiter.Arbiter, connID int, con
 		log.Error("write welcome error: ", err)
 	}
 
-	return accepted, err
+	return accepted, "", nil, err
 }
 
 func (s *RelayServer) goServeConnection(arbiter *arbiter.Arbiter, connID int, conn net.Conn) {
@@ -185,7 +271,7 @@ func (s *RelayServer) goServeConnection(arbiter *arbiter.Arbiter, connID int, co
 	arbiter.Go(func() {
 		defer conn.Close()
 
-		accepted, err := s.handshakeConnect(arbiter, connID, conn)
+		accepted, aclKey, acl, err := s.handshakeConnect(arbiter, connID, conn)
 		if err != nil {
 			log.Errorf("handshake error for connection %v: %v", connID, err)
 			return
@@ -194,7 +280,7 @@ func (s *RelayServer) goServeConnection(arbiter *arbiter.Arbiter, connID int, co
 			log.Info("connection deined.")
 			return
 		}
-		err = s.doRelay(arbiter, connID, conn)
+		err = s.doRelay(arbiter, connID, conn, aclKey, acl)
 		if err != nil {
 			log.Errorf("relay failure: %v", err)
 		}
@@ -219,6 +305,7 @@ func (s *RelayServer) acceptConnection(arbiter *arbiter.Arbiter) (err error) {
 		conn, err := s.listener.Accept()
 		if err != nil {
 			if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
+				err = nil
 				continue
 			}
 			s.log.Error("accept error: ", err)
