@@ -141,7 +141,9 @@ func (r *DemuxRelay) Do(arbiter *arbiter.Arbiter) error {
 			if written, err = r.out.WriteTo(pkt, r.relayTo); err != nil {
 				r.log.Error("error when relay packet: ", err)
 			}
-			r.log.Warnf("receive %v bytes packet, but %v relayed.", len(pkt), written)
+			if len(pkt) != written {
+				r.log.Warnf("receive %v bytes packet, but %v relayed.", len(pkt), written)
+			}
 		})
 	}
 
