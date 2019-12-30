@@ -167,7 +167,7 @@ func (s *RelayServer) doRelay(globalArbiter *arbiter.Arbiter, connID int, conn n
 	defer conn.Close()
 
 	subLog := s.log.WithField("conn_id", connID)
-	relayArbiter := arbiter.New(subLog)
+	relayArbiter := arbiter.NewWithParent(globalArbiter, subLog)
 	acl := resolved.origin
 	resolved.conn = conn
 
@@ -181,7 +181,7 @@ func (s *RelayServer) doRelay(globalArbiter *arbiter.Arbiter, connID int, conn n
 	relayArbiter.Go(func() {
 		s.forwardRelay(relayArbiter, connID, aclKey, conn, subLog)
 	})
-	relayArbiter.Wait()
+	relayArbiter.Join()
 	resolved.conn = nil
 
 	return nil
@@ -331,7 +331,7 @@ func (s *RelayServer) acceptConnection(arbiter *arbiter.Arbiter) (err error) {
 
 func (s *RelayServer) Do(globalArbiter *arbiter.Arbiter) (err error) {
 	// watch all acls.
-	aclArbiter := arbiter.New(s.log)
+	aclArbiter := arbiter.NewWithParent(globalArbiter, s.log)
 
 	for key, acl := range s.acl {
 		if key == "" {
@@ -357,7 +357,7 @@ func (s *RelayServer) Do(globalArbiter *arbiter.Arbiter) (err error) {
 	}
 
 	aclArbiter.Shutdown()
-	aclArbiter.Wait()
+	aclArbiter.Join()
 
 	return nil
 }

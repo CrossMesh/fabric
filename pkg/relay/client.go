@@ -161,7 +161,7 @@ func (c *RelayClient) forwardRelay(arbiter *arbiter.Arbiter, logBase *log.Entry)
 }
 
 func (c *RelayClient) doRelay(globalArbiter *arbiter.Arbiter) error {
-	relayArbiter := arbiter.New(c.log)
+	relayArbiter := arbiter.NewWithParent(globalArbiter, c.log)
 
 	// forward
 	relayArbiter.Go(func() {
@@ -171,7 +171,7 @@ func (c *RelayClient) doRelay(globalArbiter *arbiter.Arbiter) error {
 	relayArbiter.Go(func() {
 		c.reverseRelay(relayArbiter, c.log)
 	})
-	relayArbiter.Wait()
+	relayArbiter.Join()
 
 	return nil
 }

@@ -14,9 +14,16 @@ import (
 )
 
 func runServer(peer *config.Peer) error {
-	arbiter := arbiter.New(log.WithFields(log.Fields{
+	arbiterLog := log.WithFields(log.Fields{
 		"module": "arbiter",
-	}))
+	})
+	arbiter := arbiter.New(arbiterLog)
+	arbiter.HookPreStop(func() {
+		arbiterLog.Info("shutting down...")
+	})
+	arbiter.HookStopped(func() {
+		arbiterLog.Info("exiting...")
+	})
 
 	arbiter.Go(func() {
 		var (
@@ -40,7 +47,6 @@ func runServer(peer *config.Peer) error {
 			err = s.Do(arbiter)
 		}
 	})
-
 	return arbiter.Arbit()
 }
 

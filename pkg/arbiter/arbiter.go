@@ -9,22 +9,40 @@ import (
 )
 
 type Arbiter struct {
-	runningCount uint32
+	runningCount int32
 	running      bool
+
 	sigFibreExit chan struct{}
-	log          *log.Entry
+	sigPreStop   chan struct{}
+	sigOS        chan os.Signal
+
+	preStop   func()
+	afterStop func()
+
+	log *log.Entry
+
+	parent *Arbiter
+}
+
+func NewWithParent(parent *Arbiter, log *log.Entry) *Arbiter {
+	a := &Arbiter{
+		sigFibreExit: make(chan struct{}, 10),
+		sigPreStop:   make(chan struct{}, 1),
+		sigOS:        make(chan os.Signal, 0),
+		log:          log,
+		running:      true,
+		parent:       parent,
+	}
+	a.sigPreStop <- struct{}{}
+	return a
 }
 
 func New(log *log.Entry) *Arbiter {
-	return &Arbiter{
-		sigFibreExit: make(chan struct{}, 10),
-		log:          log,
-		running:      true,
-	}
+	return NewWithParent(nil, log)
 }
 
 func (a *Arbiter) Go(proc func()) {
-	atomic.AddUint32(&a.runningCount, 1)
+	atomic.AddInt32(&a.runningCount, 1)
 	go func() {
 		defer func() {
 			a.sigFibreExit <- struct{}{}
@@ -33,48 +51,66 @@ func (a *Arbiter) Go(proc func()) {
 	}()
 }
 
-func (a *Arbiter) ShouldRun() bool { return a.running }
+func (a *Arbiter) ShouldRun() bool {
+	if a.parent != nil {
+		return a.parent.ShouldRun() && a.running
+	}
+	return a.running
+}
 
 func (a *Arbiter) Shutdown() {
-	a.running = false
-	atomic.AddUint32(&a.runningCount, 1)
+	a.shutdown()
+	atomic.AddInt32(&a.runningCount, 1)
 	a.sigFibreExit <- struct{}{}
 }
 
-func (a *Arbiter) Wait() {
-	for a.runningCount > 0 {
-		select {
-		case <-a.sigFibreExit:
-			a.runningCount--
+func (a *Arbiter) shutdown() {
+	a.running = false
+}
+
+func (a *Arbiter) StopOSSignals(stopSignals ...os.Signal) {
+	signal.Notify(a.sigOS, stopSignals...)
+}
+
+func (a *Arbiter) Join() {
+	<-a.sigPreStop
+	defer func() {
+		a.sigPreStop <- struct{}{}
+	}()
+
+	if a.runningCount > 0 {
+		for a.runningCount > 0 {
+			select {
+			case <-a.sigFibreExit:
+				a.runningCount--
+
+			case <-a.sigOS:
+				if a.running {
+					a.shutdown()
+					preStop := a.preStop
+					if preStop != nil {
+						preStop()
+					}
+				}
+			}
+		}
+		afterStop := a.afterStop
+		if afterStop != nil {
+			afterStop()
 		}
 	}
 }
 
 func (a *Arbiter) Arbit() error {
-	sig := make(chan os.Signal)
-	signal.Notify(sig, os.Interrupt, os.Kill)
-
-Arbiting:
-	for {
-		select {
-		case s := <-sig:
-			if (s == os.Interrupt || s == os.Kill) && a.running {
-				a.running = false
-				if a.log != nil {
-					a.log.Info("shutting down...")
-				}
-			}
-
-		case <-a.sigFibreExit:
-			a.runningCount--
-		}
-		if a.runningCount < 1 {
-			break Arbiting
-		}
-	}
-
-	if a.log != nil {
-		a.log.Info("exiting...")
-	}
+	a.StopOSSignals(os.Kill, os.Interrupt)
+	a.Join()
 	return nil
+}
+
+func (a *Arbiter) HookPreStop(proc func()) {
+	a.preStop = proc
+}
+
+func (a *Arbiter) HookStopped(proc func()) {
+	a.afterStop = proc
 }

@@ -14,9 +14,17 @@ import (
 )
 
 func runClient(peer *config.Peer, remote, reverse, tunnel string) error {
-	arbiter := arbiter.New(log.WithFields(log.Fields{
+	arbiterLog := log.WithFields(log.Fields{
 		"module": "arbiter",
-	}))
+	})
+	arbiter := arbiter.New(arbiterLog)
+
+	arbiter.HookPreStop(func() {
+		arbiterLog.Info("shutting down...")
+	})
+	arbiter.HookStopped(func() {
+		arbiterLog.Info("exiting...")
+	})
 
 	arbiter.Go(func() {
 		var (
