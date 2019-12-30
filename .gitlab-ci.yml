@@ -1,12 +1,32 @@
 image: golang:1.12-alpine
 
 stages:
+  - baseimage
   - test
 
 variables:
   GO111MODULE: "on"
 
 mux_test:
+  image: registry.stuhome.com/sunmxt/utt/goenv:${CI_COMMIT_REF_NAME}
+
+  cache:
+    paths:
+    - ./build/pkg
+    - /apk-cache
+
   stage: test
   script:
-  - go test -bench=. -v git.uestc.cn/sunmxt/utt
+  - make test
+
+build_environment:
+  stage: baseimage
+  cache:
+    paths:
+    - /apk-cache
+
+  script:
+  - sed -Ei "s/dl-cdn\.alpinelinux\.org/mirrors.ustc.edu.cn/g" /etc/apk/repositories
+  - apk update --cache-dir /apk-cache
+  - apk add bash vim jq docker --cache-dir /apk-cache
+  - bash -c "source ci/svc.sh && ci_build docker -e goenv -t $CI_COMMIT_REF_NAME -- -f ci/Dockerfile-goenv ."
