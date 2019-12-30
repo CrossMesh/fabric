@@ -131,8 +131,48 @@ func (c *RelayClient) handshake(arbiter *arbiter.Arbiter) (result *proto.Connect
 	return welcome, nil
 }
 
-func (c *RelayClient) doRelay() error {
-	time.Sleep(time.Second * 5)
+func (c *RelayClient) reverseRelay(arbiter *arbiter.Arbiter, logBase *log.Entry) {
+	log := logBase.WithFields(log.Fields{
+		"traffic": "reverse",
+		"to":      c.reverse,
+	})
+	out, err := net.ListenPacket("udp", ":0")
+	if err != nil {
+		log.Error("net.ListenPacket error: ", err)
+		return
+	}
+	defer arbiter.Shutdown()
+
+	relay := NewDemuxRelay(c.conn, out, c.reverse, log)
+	if err = relay.Do(arbiter); err != nil {
+		log.Error("demux relay error: ", err)
+	}
+}
+
+func (c *RelayClient) forwardRelay(arbiter *arbiter.Arbiter, logBase *log.Entry) {
+	log := logBase.WithFields(log.Fields{
+		"traffic": "forward",
+		"from":    c.tunnel,
+	})
+	relay := NewMuxRelay(c.conn, c.tunnel, log)
+	if err := relay.Do(arbiter); err != nil {
+		log.Error("mux relay error: ", err)
+	}
+}
+
+func (c *RelayClient) doRelay(globalArbiter *arbiter.Arbiter) error {
+	relayArbiter := arbiter.New(c.log)
+
+	// forward
+	relayArbiter.Go(func() {
+		c.forwardRelay(relayArbiter, c.log)
+	})
+	// reverse
+	relayArbiter.Go(func() {
+		c.reverseRelay(relayArbiter, c.log)
+	})
+	relayArbiter.Wait()
+
 	return nil
 }
 
@@ -166,5 +206,5 @@ func (c *RelayClient) Do(arbiter *arbiter.Arbiter) (err error) {
 		return err
 	}
 
-	return c.doRelay()
+	return c.doRelay(arbiter)
 }

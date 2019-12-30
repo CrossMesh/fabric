@@ -17,7 +17,7 @@ import (
 type resolvedACL struct {
 	origin    *config.ACL
 	addr      *net.UDPAddr
-	conn      *net.Conn
+	conn      net.Conn
 	sigChange chan *net.UDPAddr
 }
 
@@ -94,13 +94,14 @@ func (s *RelayServer) goACLResolve(arbiter *arbiter.Arbiter, addr string, acl *c
 func (s *RelayServer) forwardRelay(arbiter *arbiter.Arbiter, connID int, forward string, conn net.Conn, logBase *log.Entry) {
 	log := logBase.WithFields(log.Fields{
 		"traffic": "forward",
-		"forward": forward,
+		"to":      forward,
 	})
 	if forward == "" {
 		log.Warn("empty forward address. exiting...")
 		return
 	}
 
+	defer arbiter.Shutdown()
 	out, err := net.ListenPacket("udp", ":0")
 	if err != nil {
 		log.Error("net.ListenPacket error: ", err)
@@ -125,19 +126,19 @@ func (s *RelayServer) forwardRelay(arbiter *arbiter.Arbiter, connID int, forward
 		log.Errorf("relay error: ", err)
 	}
 	log.Info("forward relaying shutting down...")
-	arbiter.Shutdown()
 }
 
 func (s *RelayServer) reverseRelay(arbiter *arbiter.Arbiter, connID int, reverse string, conn net.Conn, logBase *log.Entry) {
 	log := logBase.WithFields(log.Fields{
 		"traffic": "reverse",
-		"forward": reverse,
+		"from":    reverse,
 	})
 	if reverse == "" {
 		log.Warn("empty reverse address. exiting...")
 		return
 	}
 
+	defer arbiter.Shutdown()
 	var (
 		addr *net.UDPAddr
 		err  error
@@ -156,17 +157,19 @@ func (s *RelayServer) reverseRelay(arbiter *arbiter.Arbiter, connID int, reverse
 	}
 	relayMux := NewMuxRelay(conn, addr, log)
 	if err = relayMux.Do(arbiter); err != nil {
-		log.Error("relay error: ", err)
+		log.Error("relay error: ", err.Error())
 	}
 
-	arbiter.Shutdown()
+	log.Info("reverse relay shutting down...")
 }
 
-func (s *RelayServer) doRelay(globalArbiter *arbiter.Arbiter, connID int, conn net.Conn, aclKey string, acl *config.ACL) error {
+func (s *RelayServer) doRelay(globalArbiter *arbiter.Arbiter, connID int, conn net.Conn, aclKey string, resolved *resolvedACL) error {
 	defer conn.Close()
 
 	subLog := s.log.WithField("conn_id", connID)
 	relayArbiter := arbiter.New(subLog)
+	acl := resolved.origin
+	resolved.conn = conn
 
 	// Reverse traffic.
 	if acl != nil && acl.Reverse != nil {
@@ -179,10 +182,12 @@ func (s *RelayServer) doRelay(globalArbiter *arbiter.Arbiter, connID int, conn n
 		s.forwardRelay(relayArbiter, connID, aclKey, conn, subLog)
 	})
 	relayArbiter.Wait()
+	resolved.conn = nil
+
 	return nil
 }
 
-func (s *RelayServer) handshakeConnect(arbiter *arbiter.Arbiter, connID int, conn net.Conn) (accepted bool, aclKey string, validACL *config.ACL, err error) {
+func (s *RelayServer) handshakeConnect(arbiter *arbiter.Arbiter, connID int, conn net.Conn) (accepted bool, aclKey string, racl *resolvedACL, err error) {
 	log := s.log.WithField("conn_id", connID)
 
 	muxer, demuxer := mux.NewStreamMuxer(conn), mux.NewStreamDemuxer()
@@ -248,20 +253,25 @@ func (s *RelayServer) handshakeConnect(arbiter *arbiter.Arbiter, connID int, con
 	connRes := proto.ConnectResult{
 		Welcome: accepted,
 	}
+	// has connected.
 	replyBuf := buf[0:0]
 	if !accepted {
-		connRes.EncodeMessage("challenge failure.")
+		connRes.EncodeMessage("challenge failure")
 		log.Info(fmt.Sprintf("deny connection %v for challenge failure.", connID))
+	} else if acl.conn != nil {
+		connRes.EncodeMessage("already connected")
+		connRes.Welcome = false
 	} else {
 		connRes.EncodeMessage("ok")
 	}
+
 	replyBuf = connRes.Encode(replyBuf)
 	if _, err = muxer.Mux(replyBuf); err != nil {
 		accepted = false
 		log.Error("write welcome error: ", err)
 	}
 
-	return accepted, "", nil, err
+	return accepted, connectReq.ACLKey, acl, err
 }
 
 func (s *RelayServer) goServeConnection(arbiter *arbiter.Arbiter, connID int, conn net.Conn) {
@@ -313,6 +323,7 @@ func (s *RelayServer) acceptConnection(arbiter *arbiter.Arbiter) (err error) {
 
 		connID++
 		s.goServeConnection(arbiter, connID, conn)
+		conn = nil
 	}
 
 	return nil

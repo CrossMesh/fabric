@@ -35,9 +35,7 @@ func (r *MuxRelay) Do(arbiter *arbiter.Arbiter) error {
 	buf := make([]byte, 65536)
 	oob := make([]byte, 16)
 
-	if r.log != nil {
-		r.log.Infof("relay start.")
-	}
+	r.log.Infof("mux relay start.")
 	var (
 		udpConn *net.UDPConn
 		err     error
@@ -53,14 +51,18 @@ func (r *MuxRelay) Do(arbiter *arbiter.Arbiter) error {
 		}
 		break
 	}
+	defer udpConn.Close()
 
 	for arbiter.ShouldRun() {
 		if err != nil {
-			time.Sleep(time.Second * 5)
+			if err == io.EOF {
+				return nil
+			}
+			return err
 		}
 		err = nil
 
-		if err = udpConn.SetReadDeadline(time.Now().Add(time.Second * 5)); err != nil {
+		if err = udpConn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
 			r.log.Error("SetReadDeadline error: ", err)
 			continue
 		}
@@ -68,12 +70,8 @@ func (r *MuxRelay) Do(arbiter *arbiter.Arbiter) error {
 		if err != nil {
 			if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
 				err = nil
-				continue
 			}
-			if err == io.EOF {
-				return nil
-			}
-			return err
+			continue
 		}
 		if flag&syscall.MSG_TRUNC != 0 {
 			if r.log != nil {
@@ -86,9 +84,7 @@ func (r *MuxRelay) Do(arbiter *arbiter.Arbiter) error {
 		}
 	}
 
-	if r.log != nil {
-		r.log.Infof("relay stop.")
-	}
+	r.log.Infof("relay stop.")
 
 	return nil
 }
@@ -113,7 +109,7 @@ func NewDemuxRelay(in net.Conn, out net.PacketConn, relayTo *net.UDPAddr, log *l
 
 func (r *DemuxRelay) Do(arbiter *arbiter.Arbiter) error {
 	buf := make([]byte, defaultBufferSize)
-	r.log.Info("relay start.")
+	r.log.Info("demux relay start.")
 
 	var (
 		err  error
@@ -121,18 +117,6 @@ func (r *DemuxRelay) Do(arbiter *arbiter.Arbiter) error {
 	)
 	for arbiter.ShouldRun() {
 		if err != nil {
-			time.Sleep(time.Second * 5)
-		}
-		if err = r.in.SetReadDeadline(time.Now().Add(time.Second * 5)); err != nil {
-			r.log.Error("SetReadDeadline error: ", err)
-			continue
-		}
-		read, err = r.in.Read(buf)
-		if err != nil {
-			if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
-				err = nil
-				continue
-			}
 			if err == io.EOF {
 				return nil
 			}
@@ -140,7 +124,18 @@ func (r *DemuxRelay) Do(arbiter *arbiter.Arbiter) error {
 			r.demuxer.Reset()
 			return err
 		}
+		err = nil
 
+		if err = r.in.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+			r.log.Error("SetReadDeadline error: ", err)
+			continue
+		}
+		if read, err = r.in.Read(buf); err != nil {
+			if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
+				err = nil
+			}
+			continue
+		}
 		r.demuxer.Demux(buf[:read], func(pkt []byte) {
 			written := 0
 			if written, err = r.out.WriteTo(pkt, r.relayTo); err != nil {

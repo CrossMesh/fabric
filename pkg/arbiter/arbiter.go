@@ -24,8 +24,8 @@ func New(log *log.Entry) *Arbiter {
 }
 
 func (a *Arbiter) Go(proc func()) {
+	atomic.AddUint32(&a.runningCount, 1)
 	go func() {
-		atomic.AddUint32(&a.runningCount, 1)
 		defer func() {
 			a.sigFibreExit <- struct{}{}
 		}()
