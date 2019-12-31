@@ -163,6 +163,9 @@ func (c *RelayClient) forwardRelay(arbiter *arbiter.Arbiter, logBase *log.Entry)
 func (c *RelayClient) doRelay(globalArbiter *arbiter.Arbiter) error {
 	relayArbiter := arbiter.NewWithParent(globalArbiter, c.log)
 
+	// enable keepalive for tcp connection.
+	c.conn.SetKeepAlive(true)
+
 	// forward
 	relayArbiter.Go(func() {
 		c.forwardRelay(relayArbiter, c.log)

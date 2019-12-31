@@ -49,6 +49,10 @@ func (r *MuxRelay) Do(arbiter *arbiter.Arbiter) error {
 			r.log.Error("udp listen error: ", err)
 			continue
 		}
+		if udpConn == nil {
+			r.log.Error("udpConn is nil.")
+			continue
+		}
 		break
 	}
 	defer udpConn.Close()

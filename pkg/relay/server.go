@@ -290,6 +290,10 @@ func (s *RelayServer) goServeConnection(arbiter *arbiter.Arbiter, connID int, co
 			log.Info("connection deined.")
 			return
 		}
+		// enable keepalive for tcp connection.
+		if tcpConn, isTCP := conn.(*net.TCPConn); isTCP && tcpConn != nil {
+			tcpConn.SetKeepAlive(true)
+		}
 		err = s.doRelay(arbiter, connID, conn, aclKey, acl)
 		if err != nil {
 			log.Errorf("relay failure: %v", err)
