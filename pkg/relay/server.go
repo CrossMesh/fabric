@@ -123,7 +123,7 @@ func (s *RelayServer) forwardRelay(arbiter *arbiter.Arbiter, connID int, forward
 	}
 	relayDemux := NewDemuxRelay(conn, out, addr, log)
 	if err = relayDemux.Do(arbiter); err != nil {
-		log.Errorf("relay error: ", err)
+		log.Error("relay error: ", err)
 	}
 	log.Info("forward relaying shutting down...")
 }

@@ -7,13 +7,12 @@ import (
 )
 
 var (
-	frameLead = []byte{0x00, 0x00, 0x00, 0x01}
+	startCode = []byte{0x00, 0x00, 0x00, 0x01}
 
-	// 00 00 01 --> 00 00 01 01
-	escapeSeq1 = []byte{0x00, 0x00, 0x01, 0x01}
-	// 00 00 00 01 --> 00 00 01 00 01
-	escapeSeq2 = []byte{0x00, 0x00, 0x01, 0x00, 0x01}
-	// 00 00 01 --> 00 00
+	// 00 00 02 --> 00 00 02 02
+	escapeSeq1 = []byte{0x00, 0x00, 0x02, 0x02}
+	// 00 00 00 01 --> 00 00 02 00 01
+	escapeSeq2 = []byte{0x00, 0x00, 0x02, 0x00, 0x01}
 
 	zeroSeq  = []byte{0x00, 0x00, 0x00}
 	stripSeq = zeroSeq[:2]
@@ -60,13 +59,14 @@ func (m *StreamMuxer) Mux(frame []byte) (written int, err error) {
 	defer m.freeBuffer(buf)
 
 	if !m.leadWritten {
-		if written, err = buf.Write(frameLead); err != nil {
+		if written, err = buf.Write(startCode); err != nil {
 			return 0, err
 		}
 		m.leadWritten = true
 	}
 
 	last := 0
+MuxMainLoop:
 	for idx := 0; idx+2 < len(frame); {
 		if frame[idx] != 0x00 {
 			idx++
@@ -76,51 +76,65 @@ func (m *StreamMuxer) Mux(frame []byte) (written int, err error) {
 			idx += 2
 			continue
 		}
-		if frame[idx+2] == 0x00 {
-			// 00 00 00 ??
-			if idx+3 >= len(frame) {
-				// end.
-				idx += 3
-				break
-			}
-			if frame[idx+3] == 0x01 {
-				// 00 00 00 01
+		for {
+			// case 1: 0x00 0x00 0x02 --> 0x00 0x00 0x02 0x02
+			if frame[idx+2] == 0x02 {
 				if _, err = buf.Write(frame[last:idx]); err != nil {
 					return 0, err
 				}
-				if _, err = buf.Write(escapeSeq2); err != nil {
+				if _, err = buf.Write(escapeSeq1); err != nil {
 					return 0, err
 				}
-				idx += 4
+				idx += 3
 				last = idx
-				continue
+				continue MuxMainLoop
 			}
-			if frame[idx+3] == 0x00 {
-				// 00 00 00 00
+			// case 2: 0x00 0x00 0x??
+			if frame[idx+2] != 0x00 {
+				idx += 3
+				continue MuxMainLoop
+			}
+			if idx+3 >= len(frame) {
+				break
+			}
+			// case 3: 0x00 0x00 0x00 0x00
+			for frame[idx+3] == 0x00 {
+				idx++
+				if idx+3 >= len(frame) {
+					break MuxMainLoop
+				}
+			}
+			// fast path to case 2.
+			if frame[idx+3] == 0x02 {
 				idx++
 				continue
 			}
+			break
+		}
+
+		if idx+3 >= len(frame) {
+			break
+		}
+		// case 4: 0x00 0x00 0x00 0x??
+		if frame[idx+3] != 0x01 {
 			idx += 4
-			continue
+			continue MuxMainLoop
 		}
-		if frame[idx+2] == 0x01 {
-			// 00 00 01
-			if _, err = buf.Write(frame[last:idx]); err != nil {
-				return 0, err
-			}
-			if _, err = buf.Write(escapeSeq1); err != nil {
-				return 0, err
-			}
-			idx += 3
-			last = idx
-			continue
+		// case 5: 0x00 0x00 0x00 0x01 --> 0x00 0x00 0x02 0x00 0x01
+		if _, err = buf.Write(frame[last:idx]); err != nil {
+			return 0, err
 		}
-		idx += 2
+		if _, err = buf.Write(escapeSeq2); err != nil {
+			return 0, err
+		}
+		idx += 4
+		last = idx
 	}
+	// flush the last
 	if _, err = buf.Write(frame[last:]); err != nil {
 		return 0, err
 	}
-	if written, err = buf.Write(frameLead); err != nil {
+	if written, err = buf.Write(startCode); err != nil {
 		return 0, err
 	}
 	return m.w.Write(buf.Bytes())
@@ -140,11 +154,45 @@ func (d *StreamDemuxer) Reset() {
 	d.buf = nil
 }
 
-func (d *StreamDemuxer) Demux(raw []byte, emit func([]byte)) (read int, err error) {
-	buf, left, preserved, idx := d.buf, d.left, 0, 0
-	if d.buf != nil {
-		preserved = len(d.buf)
+func (d *StreamDemuxer) indexStartCode(raw []byte) (idx int) {
+	left := d.left
+loopForStartCode:
+	for idx = 0; idx < len(raw); idx++ {
+		if left == 3 {
+			switch raw[idx] {
+			case 0x00:
+			case 0x01:
+				d.buf = make([]byte, 0, defaultBufferSize)
+				idx++
+				left = 0
+				break loopForStartCode
+			default:
+				left = 0
+			}
+		} else {
+			switch raw[idx] {
+			case 0x00:
+				left++
+			default:
+				left = 0
+			}
+		}
 	}
+	d.left = left
+	return idx
+}
+
+func (d *StreamDemuxer) Demux(raw []byte, emit func([]byte)) (read int, err error) {
+	idx := 0
+	if d.buf == nil {
+		idx = d.indexStartCode(raw)
+		if d.buf == nil {
+			return len(raw), nil
+		}
+	}
+
+	buf, left := d.buf, d.left
+	preserved := len(d.buf)
 	defer func() {
 		if err != nil {
 			if d.buf != nil {
@@ -161,67 +209,48 @@ func (d *StreamDemuxer) Demux(raw []byte, emit func([]byte)) (read int, err erro
 		switch left {
 		case 0:
 			if c != 0x00 {
-				if buf != nil {
-					buf = append(buf, c)
-				}
-				break
+				buf = append(buf, c)
+			} else {
+				left++
 			}
-			left++
 
 		case 1:
 			if c != 0x00 {
-				// case 1: 00 xx(xx != 00).
-				if buf != nil {
-					buf = append(buf, 0x00, c)
-				}
+				buf = append(buf, 0x00, c)
 				left = 0
-				break
+			} else {
+				left++
 			}
-			left++
 
 		case 2:
-			if c == 0x01 {
-				// case 1: 00 00 01. strip 01.
-				if buf != nil {
-					buf = append(buf, 0x00, 0x00)
-				}
+			if c == 0x02 {
+				buf = append(buf, 0x00, 0x00)
 				left = 0
+
 			} else if c != 0x00 {
-				if buf != nil {
-					buf = append(buf, 0x00, 0x00, c)
-				}
+				buf = append(buf, 0x00, 0x00, c)
 				left = 0
 			} else {
 				left++
 			}
 
 		case 3:
-			if c == 0x01 {
-				// case: 00 00 00 01, frameLead
-				if buf != nil {
-					emit(buf)
-					buf = buf[0:0]
-				} else {
-					buf = make([]byte, 0, defaultBufferSize)
-				}
-				left = 0
+			if c == 0x00 {
+				buf = append(buf, 0x00)
 				break
 			}
-			if c != 0x00 {
-				// case 4: 00 00 00 xx(!=00 and !=01), could not be frameLead.
-				if buf != nil {
-					buf = append(buf, 0x00, 0x00, 0x00, c)
-				}
-				left = 0
+			if c == 0x01 {
+				emit(buf)
+				buf = buf[0:0]
+			} else if c != 0x02 {
+				buf = append(buf, 0x00, 0x00, 0x00, c)
 			} else {
-				// case 3: 00 00 00 00 ?? --> 00 00 00 ??
-				if buf != nil {
-					buf = append(buf, 0x00)
-				}
+				buf = append(buf, 0x00, 0x00, 0x00)
 			}
-
+			left = 0
 		}
 		idx++
 	}
+
 	return
 }
