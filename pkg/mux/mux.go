@@ -22,6 +22,16 @@ const (
 	defaultBufferSize = 512
 )
 
+type Muxer interface {
+	Mux([]byte) (int, error)
+	Reset() error
+}
+
+type Demuxer interface {
+	Demux([]byte, func([]byte)) (int, error)
+	Reset() error
+}
+
 type StreamMuxer struct {
 	w           io.Writer
 	leadWritten bool
