@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package proto;
+
+import "google/protobuf/any.proto";
+
+message PeerBackend {
+    enum BackendType {
+        TCP = 0;
+    }
+    BackendType backend = 1;
+    uint32 ip = 2;
+    repeated google.protobuf.Any details = 3;
+}
+
+message Peer {
+    uint32 peer_type = 1;
+    uint32 virtual_ip = 2;
+    uint32 virtual_mask = 3;
+    uint64 version = 4;
+    repeated string tag = 5;
+    repeated PeerBackend backend = 6; 
+}
+
+message PeerRequest {
+    uint32 request_id = 1;
+}
+
+message PeerReply {
+    uint32 request_id = 1;
+    repeated Peer peer = 2;
+}
