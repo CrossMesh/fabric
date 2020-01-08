@@ -1,0 +1,99 @@
+package rpc
+
+import (
+	"errors"
+	"path/filepath"
+	"reflect"
+	"runtime"
+	"strings"
+	"sync"
+
+	"git.uestc.cn/sunmxt/utt/pkg/proto"
+	logging "github.com/sirupsen/logrus"
+)
+
+var (
+	ErrInvalidRPCFunction    = errors.New("Not a valid RPC function type")
+	ErrFunctionNotFound      = errors.New("RPC function not found")
+	ErrInvalidRPCMessageType = errors.New("Invali RPC message type")
+)
+
+type serviceFunction struct {
+	inMessageConstructor func() interface{}
+	inMessageType        reflect.Type
+	outMessageType       reflect.Type
+	function             interface{}
+}
+
+type Stub struct {
+	functions map[string]*serviceFunction
+
+	outcoming sync.Map
+	incoming  sync.Map
+
+	log *logging.Entry
+}
+
+func NewStub(log *logging.Entry) *Stub {
+	if log != nil {
+		log = logging.WithField("module", "rpc_stub")
+	}
+	return &Stub{
+		functions: make(map[string]*serviceFunction),
+		log:       log,
+	}
+}
+
+func validProtocolMessageType(ty reflect.Type) bool {
+	if id, exist := proto.IDByProtobufType[ty]; !exist {
+		return false
+	} else if _, exist := proto.ConstructorByID[id]; !exist {
+		return false
+	}
+	return true
+}
+
+func (s *Stub) Register(proc interface{}) error {
+	ty := reflect.TypeOf(proc)
+
+	// check function type
+	if ty.Kind() != reflect.Func || ty.NumIn() != 1 || ty.NumOut() != 2 ||
+		!ty.Out(1).AssignableTo(reflect.TypeOf((*error)(nil)).Elem()) {
+		return ErrInvalidRPCFunction
+	}
+	serviceFunction := &serviceFunction{
+		function:       proc,
+		inMessageType:  ty.In(0),
+		outMessageType: ty.Out(0),
+	}
+	if !validProtocolMessageType(serviceFunction.inMessageType) || !validProtocolMessageType(serviceFunction.outMessageType) {
+		return ErrInvalidRPCFunction
+	}
+
+	// function name as service function name
+	v := reflect.ValueOf(proc)
+	name := strings.TrimPrefix(filepath.Ext(runtime.FuncForPC(v.Pointer()).Name()), ".")
+	s.functions[name] = serviceFunction
+
+	return nil
+}
+
+func (s *Stub) NewServer(log *logging.Entry) *Server {
+	if log == nil {
+		log = logging.WithField("module", "rpc_server")
+	}
+	return &Server{
+		stub: s,
+		log:  log,
+	}
+}
+
+func (s *Stub) NewClient(log *logging.Entry) *Client {
+	if log == nil {
+		log = logging.WithField("module", "rpc_client")
+	}
+	return &Client{
+		stub: s,
+		log:  log,
+	}
+}
