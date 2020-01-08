@@ -1,7 +1,0 @@
-syntax = "proto3";
-
-package proto;
-
-message TCPPeerDetail {
-	uint32 port = 1;
-}
