@@ -42,14 +42,23 @@ func (s *Server) Invoke(name string, id uint32, raw []byte, reply func([]byte, e
 	})
 
 	// marshal
-	outErr := outs[1].Interface().(error)
-	var replyRaw []byte
+	var (
+		outErr   error
+		replyRaw []byte
+	)
+	if outs[1].Interface() != nil {
+		outErr = outs[1].Interface().(error)
+	}
 	switch v := outs[0].Interface().(type) {
 	case proto.ProtobufMessage:
-		replyRaw, err = pb.Marshal(v)
+		if v != nil {
+			replyRaw, err = pb.Marshal(v)
+		}
 	case proto.ProtocolMessage:
-		replyRaw = make([]byte, 0, v.Len())
-		replyRaw = v.Encode(replyRaw)
+		if v != nil {
+			replyRaw = make([]byte, 0, v.Len())
+			replyRaw = v.Encode(replyRaw)
+		}
 	default:
 		err = ErrInvalidRPCMessageType
 	}

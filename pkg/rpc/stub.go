@@ -19,10 +19,11 @@ var (
 )
 
 type serviceFunction struct {
-	inMessageConstructor func() interface{}
-	inMessageType        reflect.Type
-	outMessageType       reflect.Type
-	function             interface{}
+	inMessageConstructor  func() interface{}
+	outMessageConstructor func() interface{}
+	inMessageType         reflect.Type
+	outMessageType        reflect.Type
+	function              interface{}
 }
 
 type Stub struct {
@@ -45,7 +46,7 @@ func NewStub(log *logging.Entry) *Stub {
 }
 
 func validProtocolMessageType(ty reflect.Type) bool {
-	if id, exist := proto.IDByProtobufType[ty]; !exist {
+	if id, exist := proto.IDByProtoType[ty]; !exist {
 		return false
 	} else if _, exist := proto.ConstructorByID[id]; !exist {
 		return false
@@ -66,9 +67,16 @@ func (s *Stub) Register(proc interface{}) error {
 		inMessageType:  ty.In(0),
 		outMessageType: ty.Out(0),
 	}
+	if serviceFunction.inMessageType.Kind() != reflect.Ptr || serviceFunction.outMessageType.Kind() != reflect.Ptr {
+		return ErrInvalidRPCFunction
+	}
+	serviceFunction.inMessageType = serviceFunction.inMessageType.Elem()
+	serviceFunction.outMessageType = serviceFunction.outMessageType.Elem()
 	if !validProtocolMessageType(serviceFunction.inMessageType) || !validProtocolMessageType(serviceFunction.outMessageType) {
 		return ErrInvalidRPCFunction
 	}
+	serviceFunction.inMessageConstructor = proto.ConstructorByID[proto.IDByProtoType[serviceFunction.inMessageType]]
+	serviceFunction.outMessageConstructor = proto.ConstructorByID[proto.IDByProtoType[serviceFunction.outMessageType]]
 
 	// function name as service function name
 	v := reflect.ValueOf(proc)

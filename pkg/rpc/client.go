@@ -22,12 +22,12 @@ type Client struct {
 	calls sync.Map
 }
 
-type rpcReply struct {
+type rpcResponse struct {
 	err error
 	raw []byte
 }
 
-func (c *Client) Call(ctx context.Context, name string, msg interface{}, send func(uint32, string, []byte) error) (reply interface{}, err error) {
+func (c *Client) Call(ctx context.Context, name string, msg interface{}, send func(uint32, string, []byte) error) (resp interface{}, err error) {
 	// get service function
 	serviceFunction, exist := c.stub.functions[name]
 	if !exist || serviceFunction == nil {
@@ -53,7 +53,7 @@ func (c *Client) Call(ctx context.Context, name string, msg interface{}, send fu
 		return nil, err
 	}
 
-	notify := make(chan *rpcReply, 0)
+	notify := make(chan *rpcResponse, 0)
 	c.calls.Store(rid, notify)
 	defer func() {
 		c.calls.Delete(rid)
@@ -65,26 +65,25 @@ func (c *Client) Call(ctx context.Context, name string, msg interface{}, send fu
 		return nil, err
 	}
 
-	// wait for reply.
-	var replyRaw []byte
-	c.calls.Store(rid, notify)
+	// wait for resp.
+	var respRaw []byte
 	select {
 	case r := <-notify:
 		if r.err != nil {
 			return nil, r.err
 		}
-		replyRaw = r.raw
+		respRaw = r.raw
 
 	case <-ctx.Done():
 		return nil, ErrRPCCanceled
 	}
-	if replyRaw != nil {
-		reply = serviceFunction.inMessageConstructor()
-		switch v := reply.(type) {
+	if respRaw != nil {
+		resp = serviceFunction.outMessageConstructor()
+		switch v := resp.(type) {
 		case proto.ProtobufMessage:
-			err = pb.Unmarshal(replyRaw, v)
+			err = pb.Unmarshal(respRaw, v)
 		case proto.ProtocolMessage:
-			err = v.Decode(replyRaw)
+			err = v.Decode(respRaw)
 		default:
 			err = ErrInvalidRPCMessageType
 		}
@@ -94,16 +93,16 @@ func (c *Client) Call(ctx context.Context, name string, msg interface{}, send fu
 		}
 	}
 
-	return reply, nil
+	return resp, nil
 }
 
 func (c *Client) Reply(id uint32, msg []byte, err error) {
 	if v, ok := c.calls.Load(id); !ok || v == nil {
 		return
-	} else if notify, ok := v.(chan *rpcReply); !ok || notify == nil {
+	} else if notify, ok := v.(chan *rpcResponse); !ok || notify == nil {
 		return
 	} else {
-		notify <- &rpcReply{
+		notify <- &rpcResponse{
 			err: err,
 			raw: msg,
 		}
