@@ -3,7 +3,6 @@ package mux
 import (
 	"crypto/cipher"
 	"crypto/rand"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -61,8 +60,6 @@ func (m *GCMStreamMuxer) Mux(frame []byte) (written int, err error) {
 	hdrBuf[0] = byte(dataSize & 0xFF)
 	hdrBuf[1] = byte((dataSize >> 8) & 0xFF)
 	hdrBuf[2] = byte((dataSize >> 16) & 0xFF)
-
-	binary.BigEndian.PutUint32(hdrBuf[:3], uint32(dataSize))
 	buf = m.aead.Seal(buf, m.nonce, hdrBuf[:], nil)
 	// encrypt data.
 	buf = m.aead.Seal(buf, m.nonce, frame, buf[:len(buf)])
@@ -93,7 +90,7 @@ type GCMStreamDemuxer struct {
 	bufs        sync.Pool
 }
 
-func NewGCMStreamDemuxer(w io.Writer, block cipher.Block, nonce []byte) (*GCMStreamDemuxer, error) {
+func NewGCMStreamDemuxer(block cipher.Block, nonce []byte) (*GCMStreamDemuxer, error) {
 	d := &GCMStreamDemuxer{
 		block: block,
 		nonce: nonce,
@@ -103,6 +100,7 @@ func NewGCMStreamDemuxer(w io.Writer, block cipher.Block, nonce []byte) (*GCMStr
 				return make([]byte, 0, defaultBufferSize)
 			},
 		},
+		frameLength: -1,
 	}
 	if err := d.Reset(); err != nil {
 		return nil, err
@@ -140,12 +138,12 @@ func (d *GCMStreamDemuxer) Demux(raw []byte, emit func([]byte)) (read int, err e
 		for {
 			if frameLength < 0 {
 				// decrypt header.
-				fill := headerLength - len(d.buf)
+				fill := headerLength - len(buf)
 				if fill > len(raw) {
 					fill = len(raw)
 				}
 				buf, raw = append(buf, raw[:fill]...), raw[fill:]
-				if len(buf) < 3+d.aead.Overhead() {
+				if len(buf) < headerLength {
 					break
 				}
 				if openBuf, err = d.aead.Open(openBuf[:0], d.nonce, buf[:headerLength], nil); err != nil {
@@ -160,13 +158,16 @@ func (d *GCMStreamDemuxer) Demux(raw []byte, emit func([]byte)) (read int, err e
 				}
 			}
 
-			// decrype data.
+			// decrypt data.
 			fill := frameLength + headerLength - len(buf)
 			if fill > len(raw) {
 				fill = len(raw)
 			}
 			buf, raw = append(buf, raw[:fill]...), raw[fill:]
-			if openBuf, err = d.aead.Open(openBuf[:0], d.nonce, buf[frameLength:frameLength+frameLength], buf[:frameLength]); err != nil {
+			if len(buf) < headerLength+frameLength {
+				break
+			}
+			if openBuf, err = d.aead.Open(openBuf[:0], d.nonce, buf[headerLength:headerLength+frameLength], buf[:headerLength]); err != nil {
 				return 0, err
 			}
 			emit(openBuf)

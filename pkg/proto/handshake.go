@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha512"
+	"crypto/sha256"
 	"encoding/binary"
 )
 
@@ -13,96 +13,65 @@ var (
 )
 
 type Hello struct {
-	Challenge [16]byte
+	Lead []byte
+	IV   [12]byte
+	HMAC [32]byte
 }
 
 func (h *Hello) Encode(buf []byte) []byte {
 	buf = buf[0:0]
-	buf = append(buf, helloMagic...)
-	buf = append(buf, h.Challenge[:]...)
+	buf = append(buf, h.Lead...)
+	buf = append(buf, h.IV[:]...)
+	buf = append(buf, h.HMAC[:]...)
 	return buf
 }
 
 func (h *Hello) Decode(buf []byte) error {
-	if len(buf) < h.Len() || bytes.Compare(helloMagic, buf[:len(helloMagic)]) != 0 {
+	if len(buf) < h.Len() || bytes.Compare(h.Lead, buf[:len(h.Lead)]) != 0 {
 		return ErrInvalidPacket
 	}
-	copy(h.Challenge[:16], buf[len(helloMagic):16+len(helloMagic)])
+	copy(h.IV[:12], buf[len(h.Lead):12+len(h.Lead)])
+	copy(h.HMAC[:32], buf[len(h.Lead)+12:12+32+len(h.Lead)])
 	return nil
 }
 
-func (h *Hello) Len() int {
-	return len(helloMagic) + len(h.Challenge)
-}
-
-func (h *Hello) Refresh() { rand.Read(h.Challenge[:]) }
-
-type Connect struct {
-	ACLKey    string
-	Signature []byte
-}
-
-func (c *Connect) HMAC(challenge []byte, psk []byte) []byte {
-	h := hmac.New(sha512.New, psk)
-	h.Write([]byte("cha"))
-	h.Write(challenge)
-	h.Write([]byte("acl#" + c.ACLKey))
+func (c *Hello) HMACSum(psk []byte) []byte {
+	h := hmac.New(sha256.New, psk)
+	h.Write([]byte("lead#"))
+	h.Write(c.Lead)
+	h.Write([]byte("psk#"))
+	if psk != nil {
+		h.Write(psk)
+	}
+	h.Write([]byte("IV#"))
+	h.Write(c.IV[:])
 	return h.Sum(nil)
 }
 
-func (c *Connect) Len() int {
-	return len([]byte(c.ACLKey)) + len(c.Signature)
+func (c *Hello) Sign(psk []byte) {
+	copy(c.HMAC[:], c.HMACSum(psk))
 }
 
-func (c *Connect) Sign(challenge []byte, psk []byte) {
-	c.Signature = c.HMAC(challenge, psk)
+func (c *Hello) Verify(psk []byte) bool {
+	return bytes.Equal(c.HMACSum(psk), c.HMAC[:])
 }
 
-func (c *Connect) Verify(challenge []byte, psk []byte) bool {
-	return bytes.Compare(c.Signature, c.HMAC(challenge, psk)) == 0
+func (h *Hello) Len() int {
+	return len(h.Lead) + len(h.IV) + len(h.HMAC)
 }
 
-func (c *Connect) Encode(buf []byte) ([]byte, error) {
-	var lengthBin [2]byte
-	buf = buf[0:0]
-	binACLKey := []byte(c.ACLKey)
-	if len(binACLKey) > 0xFFFF || len(c.Signature) > 0xFFFF {
-		return nil, ErrContentTooLong
-	}
-	binary.BigEndian.PutUint16(lengthBin[:], uint16(len(binACLKey)))
-	buf = append(buf, lengthBin[:]...)
-	binary.BigEndian.PutUint16(lengthBin[:], uint16(len(c.Signature)))
-	buf = append(buf, lengthBin[:]...)
+func (h *Hello) Refresh() { rand.Read(h.IV[:]) }
 
-	buf = append(buf, binACLKey...)
-	buf = append(buf, c.Signature...)
-	return buf, nil
+type Welcome struct {
+	Welcome  bool
+	RawMsg   [31]byte
+	MsgLen   int
+	Identity string
 }
 
-func (c *Connect) Decode(buf []byte) error {
-	if len(buf) < 4 {
-		return ErrInvalidPacket
-	}
-	msgLen, signLen := uint16(0), uint16(0)
-	msgLen = binary.BigEndian.Uint16(buf[:2])
-	signLen = binary.BigEndian.Uint16(buf[2:4])
-	if int(msgLen)+int(signLen)+4 > len(buf) {
-		return ErrInvalidPacket
-	}
-	c.ACLKey = string(buf[4 : 4+msgLen])
-	c.Signature = buf[4+msgLen : 4+msgLen+signLen]
-	return nil
-}
+func (c *Welcome) Len() int { return 1 + c.MsgLen }
 
-type ConnectResult struct {
-	Welcome bool
-	RawMsg  [31]byte
-	MsgLen  int
-}
-
-func (c *ConnectResult) Len() int { return 1 + c.MsgLen }
-
-func (c *ConnectResult) EncodeMessage(msg string) error {
+func (c *Welcome) EncodeMessage(msg string) error {
 	raw := []byte(msg)
 	if len(raw) > len(c.RawMsg) {
 		return ErrBufferTooShort
@@ -112,32 +81,73 @@ func (c *ConnectResult) EncodeMessage(msg string) error {
 	return nil
 }
 
-func (c *ConnectResult) DecodeMessage() string {
+func (c *Welcome) DecodeMessage() string {
 	return string(c.RawMsg[:])
 }
 
-func (c *ConnectResult) Encode(buf []byte) []byte {
+func (c *Welcome) Encode(buf []byte) []byte {
 	buf = buf[0:0]
 	if c.Welcome {
 		buf = append(buf, 1)
 	} else {
 		buf = append(buf, 0)
 	}
+	identityBin := []byte(c.Identity)
 	buf = append(buf, byte(c.MsgLen&0xFF))
+	buf = append(buf, byte(len(identityBin)&0xFF))
 	buf = append(buf, c.RawMsg[:c.MsgLen]...)
+	buf = append(buf, identityBin...)
 	return buf
 }
 
-func (c *ConnectResult) Decode(buf []byte) error {
-	if len(buf) < 2 {
+func (c *Welcome) Decode(buf []byte) error {
+	if len(buf) < 3 {
 		return ErrInvalidPacket
 	}
-	msgLen := uint8(buf[1])
+	msgLen, identityLength := uint8(buf[1]), uint8(buf[2])
 	c.Welcome = buf[0] > 0
-	if int(2+msgLen) > len(buf) {
+	if int(3+msgLen+identityLength) > len(buf) {
 		return ErrInvalidPacket
 	}
 	c.MsgLen = int(msgLen)
-	copy(c.RawMsg[:c.MsgLen], buf[2:2+c.MsgLen])
+	copy(c.RawMsg[:c.MsgLen], buf[3:3+c.MsgLen])
+	c.Identity = string(buf[3+c.MsgLen : 3+c.MsgLen+int(identityLength)])
+	return nil
+}
+
+type Connect struct {
+	Version  uint8
+	Identity string
+}
+
+const (
+	ConnectNoCrypt   = 0
+	ConnectAES256GCM = 1
+)
+
+func (c *Connect) Len() int {
+	return 1 + len([]byte(c.Identity))
+}
+
+func (c *Connect) Encode(buf []byte) []byte {
+	buf = buf[0:0]
+	idBin := []byte(c.Identity)
+	buf = append(buf, c.Version)
+	buf = append(buf, 0, 0)
+	binary.BigEndian.PutUint16(buf, uint16(len(idBin)))
+	buf = append(buf, idBin...)
+	return buf
+}
+
+func (c *Connect) Decode(buf []byte) error {
+	if len(buf) < 3 {
+		return ErrInvalidPacket
+	}
+	c.Version = buf[0]
+	idLen := binary.BigEndian.Uint16(buf[1:3])
+	if len(buf) < int(3+idLen) {
+		return ErrInvalidPacket
+	}
+	c.Identity = string(buf[3 : 3+idLen])
 	return nil
 }

@@ -1,20 +1,20 @@
 package config
 
-type Endpoint struct {
-	Address string `json:"address" yaml:"address"`
-	Port    uint16 `json:"port" yaml:"port"`
+type TCPBackend struct {
+	Bind      string      `json:"bind" yaml:"bind"`
+	Publish   string      `json:"publish" yaml:"publish"`
+	Priority  uint        `json:"priority" yaml:"priority"`
+	StartCode interface{} `json:"startCode" yaml:"startCode"`
+	Encrypt   bool        `json:"encrypt" yaml:"encrypt" default:"true"`
 }
 
-type ACL struct {
-	PSK     string    `json:"psk" yaml:"psk"`
-	Reverse *Endpoint `json:"reverse" yaml:"reverse"`
+type Network struct {
+	PSK     string                 `json:"psk" yaml:"psk"`
+	Iface   string                 `json:"interface" yaml:"interface"`
+	Backend map[string]interface{} `json:"backends" yaml:"backends"`
+	Mode    string                 `json:"mode" yaml:"mode"`
+	Tags    []string               `json:"tags" yaml:"tags"`
 }
-
-type Peer struct {
-	Tunnel Endpoint        `json:"tunnel" yaml:"tunnel"`
-	ACL    map[string]*ACL `json:"acl" yaml:"acl"`
-}
-
-type UUT struct {
-	Peer map[string]*Peer `json:"peer" yaml:"peer"`
+type Link struct {
+	Net map[string]*Network `json:"link" yaml:"link"`
 }

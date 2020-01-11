@@ -14,6 +14,9 @@ const (
 
 var (
 	ErrUnknownDestinationType = errors.New("Unknown destination type")
+	ErrOperationCanceled      = errors.New("operation canceled")
+	ErrConnectionDeined       = errors.New("connection deined")
+	ErrConnectionClosed       = errors.New("connection closed")
 )
 
 type Backend interface {

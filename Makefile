@@ -1,4 +1,4 @@
-.PHONY: test exec bench bin/utt
+.PHONY: test exec bench bin/utt proto
 
 PROJECT_ROOT:=$(shell pwd)
 export GOPATH:=$(PROJECT_ROOT)/build
@@ -7,7 +7,8 @@ export PATH:=$(PROJECT_ROOT)/bin:$(PATH)
 all: bin/utt
 
 test:
-	go test -bench=. -v git.uestc.cn/sunmxt/utt/pkg/...
+	go test -bench=. -v git.uestc.cn/sunmxt/utt/pkg/mux/...
+	go test -bench=. -v git.uestc.cn/sunmxt/utt/pkg/rpc/...
 
 build:
 	mkdir build
@@ -24,6 +25,12 @@ bin/utt:
 	else																\
 	    go install -v -ldflags='all=-s -w' git.uestc.cn/sunmxt/utt; \
 	fi
+
+bin/protoc-gen-go:
+	go get -u github.com/golang/protobuf/protoc-gen-go
+
+proto: bin/protoc-gen-go
+	protoc -I=$(PROJECT_ROOT)/pkg --go_out=$(PROJECT_ROOT)/pkg proto/pb/core.proto 
 
 exec:
 	$(CMD)

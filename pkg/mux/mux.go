@@ -60,8 +60,9 @@ func (m *StreamMuxer) freeBuffer(buf *bytes.Buffer) {
 	m.bufs.Put(buf)
 }
 
-func (m *StreamMuxer) Reset() {
+func (m *StreamMuxer) Reset() error {
 	m.leadWritten = false
+	return nil
 }
 
 func (m *StreamMuxer) Mux(frame []byte) (written int, err error) {
@@ -160,8 +161,9 @@ func NewStreamDemuxer() *StreamDemuxer {
 	return d
 }
 
-func (d *StreamDemuxer) Reset() {
+func (d *StreamDemuxer) Reset() error {
 	d.buf = nil
+	return nil
 }
 
 func (d *StreamDemuxer) indexStartCode(raw []byte) (idx int) {

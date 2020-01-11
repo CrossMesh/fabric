@@ -1,6 +1,6 @@
 # utt
 
-Overlay L2/L3 network solution.
+Overlay L2/L3 network edge router.
 
 #### build binary
 

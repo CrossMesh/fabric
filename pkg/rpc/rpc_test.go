@@ -14,7 +14,7 @@ type TestMessage struct {
 	Str string
 }
 
-func (c *TestMessage) Type() uint32 {
+func (c *TestMessage) Type() uint16 {
 	return 0
 }
 
