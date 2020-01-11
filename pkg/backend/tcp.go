@@ -23,7 +23,10 @@ import (
 )
 
 func validTCPPublishEndpoint(arr *net.TCPAddr) bool {
-	return true
+	if arr == nil {
+		return false
+	}
+	return arr.IP.IsGlobalUnicast()
 }
 
 type TCPLink struct {
@@ -71,7 +74,8 @@ type TCP struct {
 
 	log *logging.Entry
 
-	link   sync.Map
+	link sync.Map
+
 	watch  sync.Map
 	connID uint32
 
@@ -361,16 +365,40 @@ func (t *TCP) goTCPLinkDaemon(log *logging.Entry, key string, link *TCPLink) {
 			t.link.Delete(key)
 		}()
 
-		var err error
+		var (
+			err  error
+			read int
+		)
+
+		buf := make([]byte, defaultBufferSize)
 
 		for t.Arbiter.ShouldRun() {
-			if err != nil {
-				if err == io.EOF {
-					log.Info("connection closed by peer.")
-					break
+			if err = link.conn.SetDeadline(time.Now().Add(time.Second * 2)); err != nil {
+				log.Info("conn.SetDeadline() error: ", err)
+				break
+			}
+			if err == io.EOF {
+				log.Info("connection closed by peer.")
+				break
+			}
+			if read, err = link.conn.Read(buf); err != nil {
+				if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
+					err = nil
 				}
 			}
+			if _, err = link.demuxer.Demux(buf[:read], func(pkt []byte) {
+				// notify all watchers.
+				t.watch.Range(func(k, v interface{}) bool {
+					if emit, ok := v.(func([]byte, interface{})); ok {
+						emit(pkt, link.remote)
+					}
+					return true
+				})
+			}); err != nil {
+				log.Error("demux error: ", err)
+			}
 		}
+		log.Error("receiver existing...")
 	})
 }
 
@@ -615,7 +643,9 @@ func (t *TCP) Send(ctx context.Context, frame []byte, dst interface{}) (err erro
 }
 
 func (t *TCP) Watch(proc func([]byte, interface{})) error {
-
+	if proc != nil {
+		t.watch.Store(&proc, proc)
+	}
 	return nil
 }
 

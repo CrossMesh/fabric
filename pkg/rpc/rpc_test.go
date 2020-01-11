@@ -40,12 +40,12 @@ func ServiceCalleeA(msg *TestMessage) (reply *TestMessage, err error) {
 }
 func TestRPC(t *testing.T) {
 	// mock IDByProtoType
-	idByProtoType, oldIDByProtoType := map[reflect.Type]uint32{
+	idByProtoType, oldIDByProtoType := map[reflect.Type]uint16{
 		reflect.TypeOf((*TestMessage)(nil)).Elem(): 1,
 	}, proto.IDByProtoType
 	proto.IDByProtoType = idByProtoType
 	// mock ConstructorByID
-	constructorByID, oldConstructorByID := map[uint32]func() interface{}{
+	constructorByID, oldConstructorByID := map[uint16]func() interface{}{
 		1: func() interface{} { return &TestMessage{} },
 	}, proto.ConstructorByID
 	proto.ConstructorByID = constructorByID
