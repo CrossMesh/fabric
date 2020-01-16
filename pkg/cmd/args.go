@@ -6,18 +6,18 @@ import (
 	"github.com/urfave/cli/v2"
 )
 
-func pickPeerConfig(ctx *cli.Context, cfg *config.UUT) *config.Peer {
+func pickNetConfig(ctx *cli.Context, cfg *config.Link) *config.Network {
 	if ctx.Args().Len() < 1 {
-		log.Error("peer config name missing.")
+		log.Error("network missing.")
 	}
 	if ctx.Args().Len() > 1 {
-		log.Error("Too many peer to connect.")
+		log.Error("Too many networks specified.")
 	}
-	peerName := ctx.Args().Get(0)
-	peer, ok := cfg.Peer[peerName]
+	netName := ctx.Args().Get(0)
+	net, ok := cfg.Net[netName]
 	if !ok {
-		log.Errorf("peer \"%v\" not found.", peerName)
+		log.Errorf("netWork \"%v\" not found.", netName)
 		return nil
 	}
-	return peer
+	return net
 }

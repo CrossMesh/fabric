@@ -6,9 +6,8 @@ import (
 
 var App = cli.App{
 	Name:  "utt",
-	Usage: "UDP tunnel proxy.",
+	Usage: "Overlay L2/L3 edge router",
 	Commands: []*cli.Command{
-		newServerCmd(),
-		newClientCmd(),
+		newEdgeCmd(),
 	},
 }
