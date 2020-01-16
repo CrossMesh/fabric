@@ -5,6 +5,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,7 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"git.uestc.cn/sunmxt/utt/pkg/arbiter"
+	arbit "git.uestc.cn/sunmxt/utt/pkg/arbiter"
 	"git.uestc.cn/sunmxt/utt/pkg/config"
 	"git.uestc.cn/sunmxt/utt/pkg/mux"
 	"git.uestc.cn/sunmxt/utt/pkg/proto"
@@ -27,6 +28,35 @@ func validTCPPublishEndpoint(arr *net.TCPAddr) bool {
 		return false
 	}
 	return arr.IP.IsGlobalUnicast()
+}
+
+type TCPBackendConfig struct {
+	Bind      string      `json:"bind" yaml:"bind"`
+	Publish   string      `json:"publish" yaml:"publish"`
+	Priority  int         `json:"priority" yaml:"priority"`
+	StartCode interface{} `json:"startCode" yaml:"startCode"`
+	Encrypt   bool        `json:"-" yaml:"-"`
+}
+
+func createTCPBackend(arbiter *arbit.Arbiter, log *logging.Entry, cfg *config.Backend) (Backend, error) {
+	if cfg.Parameters == nil {
+		return nil, ErrInvalidBackendConfig
+	}
+	var backendConfig *TCPBackendConfig
+	if v, ok := cfg.Parameters.(*TCPBackendConfig); ok {
+		backendConfig = v
+	} else {
+		// re-parse
+		bin, err := json.Marshal(cfg.Parameters)
+		if err != nil {
+			return nil, fmt.Errorf("parse backend config failure (%v)", err)
+		}
+		if err = json.Unmarshal(bin, &backendConfig); err != nil {
+			return nil, fmt.Errorf("parse backend config failure (%v)", err)
+		}
+	}
+	backendConfig.Encrypt = cfg.Encrypt
+	return NewTCP(arbiter, log, backendConfig, &cfg.PSK), nil
 }
 
 type TCPLink struct {
@@ -69,7 +99,7 @@ type TCP struct {
 	bind     *net.TCPAddr
 	listener *net.TCPListener
 
-	config *config.TCPBackend
+	config *TCPBackendConfig
 	psk    *string
 
 	log *logging.Entry
@@ -79,14 +109,14 @@ type TCP struct {
 	watch  sync.Map
 	connID uint32
 
-	Arbiter *arbiter.Arbiter
+	Arbiter *arbit.Arbiter
 }
 
 var (
 	ErrNonTCPConnection = errors.New("got non-tcp connection")
 )
 
-func NewTCP(arbiter *arbiter.Arbiter, log *logging.Entry, cfg *config.TCPBackend, psk *string) (t *TCP) {
+func NewTCP(arbiter *arbit.Arbiter, log *logging.Entry, cfg *TCPBackendConfig, psk *string) (t *TCP) {
 	if log == nil {
 		log = logging.WithField("module", "backend_tcp")
 	}
@@ -94,9 +124,9 @@ func NewTCP(arbiter *arbiter.Arbiter, log *logging.Entry, cfg *config.TCPBackend
 		psk:     psk,
 		config:  cfg,
 		log:     log,
-		Arbiter: arbiter,
+		Arbiter: arbit.NewWithParent(arbiter, nil),
 	}
-	arbiter.Go(func() {
+	t.Arbiter.Go(func() {
 		var err error
 
 		for arbiter.ShouldRun() {
@@ -113,11 +143,15 @@ func NewTCP(arbiter *arbiter.Arbiter, log *logging.Entry, cfg *config.TCPBackend
 
 			t.serve(arbiter)
 		}
-	})
+	}).Join(true)
 	return t
 }
 
-func (t *TCP) serve(arbiter *arbiter.Arbiter) (err error) {
+func (t *TCP) Priority() int {
+	return t.config.Priority
+}
+
+func (t *TCP) serve(arbiter *arbit.Arbiter) (err error) {
 	for arbiter.ShouldRun() {
 		if err != nil {
 			time.Sleep(time.Second * 5)
@@ -135,7 +169,7 @@ func (t *TCP) serve(arbiter *arbiter.Arbiter) (err error) {
 	return
 }
 
-func (t *TCP) acceptConnection(arbiter *arbiter.Arbiter) (err error) {
+func (t *TCP) acceptConnection(arbiter *arbit.Arbiter) (err error) {
 	var conn net.Conn
 
 	t.log.Infof("start accepting connection.")
@@ -170,7 +204,7 @@ func (t *TCP) acceptConnection(arbiter *arbiter.Arbiter) (err error) {
 	return nil
 }
 
-func (t *TCP) goServeConnection(arbiter *arbiter.Arbiter, connID uint32, conn net.Conn) {
+func (t *TCP) goServeConnection(arbiter *arbit.Arbiter, connID uint32, conn net.Conn) {
 	log := t.log.WithField("conn_id", connID)
 	log.Infof("incomming connection %v from %v", connID, conn.RemoteAddr())
 
@@ -188,7 +222,7 @@ func (t *TCP) goServeConnection(arbiter *arbiter.Arbiter, connID uint32, conn ne
 
 }
 
-func (t *TCP) handshakeConnect(arbiter *arbiter.Arbiter, log *logging.Entry, connID uint32, conn net.Conn) (accepted bool, err error) {
+func (t *TCP) handshakeConnect(arbiter *arbit.Arbiter, log *logging.Entry, connID uint32, conn net.Conn) (accepted bool, err error) {
 	buf := make([]byte, defaultBufferSize)
 
 	// wait for hello.
@@ -321,7 +355,7 @@ func (t *TCP) handshakeConnect(arbiter *arbiter.Arbiter, log *logging.Entry, con
 	return t.acceptTCPLink(arbiter, log, link, connectReq)
 }
 
-func (t *TCP) acceptTCPLink(arbiter *arbiter.Arbiter, log *logging.Entry, link *TCPLink, connectArg *proto.Connect) (bool, error) {
+func (t *TCP) acceptTCPLink(arbiter *arbit.Arbiter, log *logging.Entry, link *TCPLink, connectArg *proto.Connect) (bool, error) {
 	// protocol version
 	switch connectArg.Version {
 	case proto.ConnectNoCrypt:
@@ -387,7 +421,7 @@ func (t *TCP) goTCPLinkDaemon(log *logging.Entry, key string, link *TCPLink) {
 				}
 			}
 			if _, err = link.demuxer.Demux(buf[:read], func(pkt []byte) {
-				// notify all watchers.
+				// deliver framt to all watchers.
 				t.watch.Range(func(k, v interface{}) bool {
 					if emit, ok := v.(func([]byte, interface{})); ok {
 						emit(pkt, link.remote)
@@ -615,6 +649,11 @@ func (t *TCP) Type() pb.PeerBackend_BackendType {
 	return pb.PeerBackend_TCP
 }
 
+func (t *TCP) Shutdown() {
+	t.Arbiter.Shutdown()
+	t.Arbiter.Join(false)
+}
+
 func (t *TCP) Send(ctx context.Context, frame []byte, dst interface{}) (err error) {
 	var (
 		addr *net.TCPAddr
@@ -632,14 +671,18 @@ func (t *TCP) Send(ctx context.Context, frame []byte, dst interface{}) (err erro
 	default:
 		return ErrUnknownDestinationType
 	}
-	if link, err = t.GetTCPLink(ctx, addr); err != nil {
-		return err
-	}
-	if _, err = link.muxer.Mux(frame); err != nil {
-		t.log.Error("mux error: ", err)
-		return err
-	}
-	return nil
+
+	t.Arbiter.Do(func() {
+		if link, err = t.GetTCPLink(ctx, addr); err != nil {
+			return
+		}
+		if _, err = link.muxer.Mux(frame); err != nil {
+			t.log.Error("mux error: ", err)
+			return
+		}
+	})
+
+	return err
 }
 
 func (t *TCP) Watch(proc func([]byte, interface{})) error {
