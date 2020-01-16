@@ -5,7 +5,7 @@ import (
 	"os/signal"
 	"sync/atomic"
 
-	log "github.com/sirupsen/logrus"
+	logging "github.com/sirupsen/logrus"
 )
 
 type Arbiter struct {
@@ -19,12 +19,15 @@ type Arbiter struct {
 	preStop   func()
 	afterStop func()
 
-	log *log.Entry
+	log *logging.Entry
 
 	parent *Arbiter
 }
 
-func NewWithParent(parent *Arbiter, log *log.Entry) *Arbiter {
+func NewWithParent(parent *Arbiter, log *logging.Entry) *Arbiter {
+	if log == nil {
+		log = logging.WithField("module", "arbiter")
+	}
 	a := &Arbiter{
 		sigFibreExit: make(chan struct{}, 10),
 		sigPreStop:   make(chan struct{}, 1),
@@ -37,7 +40,7 @@ func NewWithParent(parent *Arbiter, log *log.Entry) *Arbiter {
 	return a
 }
 
-func New(log *log.Entry) *Arbiter {
+func New(log *logging.Entry) *Arbiter {
 	return NewWithParent(nil, log)
 }
 
@@ -49,6 +52,14 @@ func (a *Arbiter) Go(proc func()) {
 		}()
 		proc()
 	}()
+}
+
+func (a *Arbiter) Do(proc func()) {
+	atomic.AddInt32(&a.runningCount, 1)
+	defer func() {
+		a.sigFibreExit <- struct{}{}
+	}()
+	proc()
 }
 
 func (a *Arbiter) ShouldRun() bool {
