@@ -50,7 +50,9 @@ func (a *Arbiter) Go(proc func()) {
 		defer func() {
 			a.sigFibreExit <- struct{}{}
 		}()
-		proc()
+		if a.ShouldRun() {
+			proc()
+		}
 	}()
 }
 
@@ -59,7 +61,9 @@ func (a *Arbiter) Do(proc func()) {
 	defer func() {
 		a.sigFibreExit <- struct{}{}
 	}()
-	proc()
+	if a.ShouldRun() {
+		proc()
+	}
 }
 
 func (a *Arbiter) ShouldRun() bool {
@@ -83,7 +87,7 @@ func (a *Arbiter) StopOSSignals(stopSignals ...os.Signal) {
 	signal.Notify(a.sigOS, stopSignals...)
 }
 
-func (a *Arbiter) Join() {
+func (a *Arbiter) join() {
 	<-a.sigPreStop
 	defer func() {
 		a.sigPreStop <- struct{}{}
@@ -112,9 +116,17 @@ func (a *Arbiter) Join() {
 	}
 }
 
+func (a *Arbiter) Join(async bool) {
+	if !async {
+		go a.join()
+		return
+	}
+	a.join()
+}
+
 func (a *Arbiter) Arbit() error {
 	a.StopOSSignals(os.Kill, os.Interrupt)
-	a.Join()
+	a.join()
 	return nil
 }
 
