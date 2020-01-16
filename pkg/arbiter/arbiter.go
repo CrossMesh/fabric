@@ -8,6 +8,7 @@ import (
 	logging "github.com/sirupsen/logrus"
 )
 
+// Arbiter is tracer to manage lifecycle of goroutines.
 type Arbiter struct {
 	runningCount int32
 	running      bool
@@ -24,6 +25,8 @@ type Arbiter struct {
 	parent *Arbiter
 }
 
+// NewWithParent create a new arbiter atteched to specified parent arbiter.
+// The arbiter will be shut down by the parent or a call to Arbiter.Shutdown().
 func NewWithParent(parent *Arbiter, log *logging.Entry) *Arbiter {
 	if log == nil {
 		log = logging.WithField("module", "arbiter")
@@ -40,11 +43,18 @@ func NewWithParent(parent *Arbiter, log *logging.Entry) *Arbiter {
 	return a
 }
 
+// New create a new arbiter.
 func New(log *logging.Entry) *Arbiter {
 	return NewWithParent(nil, log)
 }
 
-func (a *Arbiter) Go(proc func()) {
+func (a *Arbiter) Reset() {
+	a.Join(false)
+	a.running = true
+}
+
+// Go spawns the proc (act same as the "go" keyword) and let the arbiter traces it.
+func (a *Arbiter) Go(proc func()) *Arbiter {
 	atomic.AddInt32(&a.runningCount, 1)
 	go func() {
 		defer func() {
@@ -54,9 +64,11 @@ func (a *Arbiter) Go(proc func()) {
 			proc()
 		}
 	}()
+	return a
 }
 
-func (a *Arbiter) Do(proc func()) {
+// Do calls the proc.
+func (a *Arbiter) Do(proc func()) *Arbiter {
 	atomic.AddInt32(&a.runningCount, 1)
 	defer func() {
 		a.sigFibreExit <- struct{}{}
@@ -64,8 +76,10 @@ func (a *Arbiter) Do(proc func()) {
 	if a.ShouldRun() {
 		proc()
 	}
+	return a
 }
 
+// ShouldRun is called by goroutines traced by Arbiter, indicating whether the goroutines can continue to execute.
 func (a *Arbiter) ShouldRun() bool {
 	if a.parent != nil {
 		return a.parent.ShouldRun() && a.running
@@ -73,6 +87,7 @@ func (a *Arbiter) ShouldRun() bool {
 	return a.running
 }
 
+// Shutdown shuts the arbiter.
 func (a *Arbiter) Shutdown() {
 	a.shutdown()
 	atomic.AddInt32(&a.runningCount, 1)
@@ -83,8 +98,10 @@ func (a *Arbiter) shutdown() {
 	a.running = false
 }
 
-func (a *Arbiter) StopOSSignals(stopSignals ...os.Signal) {
+// StopOSSignals chooses OS signals to shut the arbiter.
+func (a *Arbiter) StopOSSignals(stopSignals ...os.Signal) *Arbiter {
 	signal.Notify(a.sigOS, stopSignals...)
+	return a
 }
 
 func (a *Arbiter) join() {
@@ -116,6 +133,8 @@ func (a *Arbiter) join() {
 	}
 }
 
+// Join waits until all goroutines exited (sync mode).
+// NOTE: Not less then one goroutines should Join() arbiter.
 func (a *Arbiter) Join(async bool) {
 	if !async {
 		go a.join()
@@ -124,16 +143,21 @@ func (a *Arbiter) Join(async bool) {
 	a.join()
 }
 
+// Arbit configures SIGKILL and SIGINT as shutting down signal and waits until all goroutines exited.
 func (a *Arbiter) Arbit() error {
 	a.StopOSSignals(os.Kill, os.Interrupt)
 	a.join()
 	return nil
 }
 
-func (a *Arbiter) HookPreStop(proc func()) {
+// HookPreStop inserts pre-stop (a shutdown triggered) callback function.
+func (a *Arbiter) HookPreStop(proc func()) *Arbiter {
 	a.preStop = proc
+	return a
 }
 
-func (a *Arbiter) HookStopped(proc func()) {
+// HookStopped inserts after-stop (all goroutines existed) callback function.
+func (a *Arbiter) HookStopped(proc func()) *Arbiter {
 	a.afterStop = proc
+	return a
 }
