@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/signal"
 	"sync/atomic"
+	"time"
 
 	logging "github.com/sirupsen/logrus"
 )
@@ -53,7 +54,7 @@ func (a *Arbiter) Reset() {
 	a.running = true
 }
 
-// Go spawns the proc (act same as the "go" keyword) and let the arbiter traces it.
+// Go spawns the proc (act the same as the "go" keyword) and let the arbiter traces it.
 func (a *Arbiter) Go(proc func()) *Arbiter {
 	atomic.AddInt32(&a.runningCount, 1)
 	go func() {
@@ -65,6 +66,41 @@ func (a *Arbiter) Go(proc func()) *Arbiter {
 		}
 	}()
 	return a
+}
+
+func (a *Arbiter) TickGo(proc func(func()), period time.Duration, brust uint32) (cancel func()) {
+	if brust < 1 {
+		return
+	}
+
+	runningCount, canceled := uint32(0), false
+	cancel = func() { canceled = true } // cancel function.
+	a.Go(func() {
+		nextSpawn := time.Now()
+
+		for a.ShouldRun() && !canceled {
+			if nextSpawn.Before(time.Now()) {
+				if runningCount < brust {
+					atomic.AddUint32(&runningCount, 1)
+					a.Go(func() {
+						defer func() {
+							atomic.AddUint32(&runningCount, uint32(0xFFFFFFFF))
+						}()
+						proc(cancel)
+					})
+				}
+				nextSpawn = time.Now().Add(period)
+			}
+
+			sleepTimeout := nextSpawn.Sub(time.Now())
+			if sleepTimeout > time.Second {
+				sleepTimeout = time.Second
+			}
+			time.Sleep(sleepTimeout)
+		}
+	})
+
+	return
 }
 
 // Do calls the proc.
