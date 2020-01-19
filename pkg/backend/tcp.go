@@ -33,7 +33,7 @@ func validTCPPublishEndpoint(arr *net.TCPAddr) bool {
 type TCPBackendConfig struct {
 	Bind      string      `json:"bind" yaml:"bind"`
 	Publish   string      `json:"publish" yaml:"publish"`
-	Priority  int         `json:"priority" yaml:"priority"`
+	Priority  uint32      `json:"priority" yaml:"priority"`
 	StartCode interface{} `json:"startCode" yaml:"startCode"`
 	Encrypt   bool        `json:"-" yaml:"-"`
 }
@@ -56,7 +56,7 @@ func createTCPBackend(arbiter *arbit.Arbiter, log *logging.Entry, cfg *config.Ba
 		}
 	}
 	backendConfig.Encrypt = cfg.Encrypt
-	return NewTCP(arbiter, log, backendConfig, &cfg.PSK), nil
+	return NewTCP(arbiter, log, backendConfig, &cfg.PSK)
 }
 
 type TCPLink struct {
@@ -65,6 +65,31 @@ type TCPLink struct {
 	conn    net.Conn
 	crypt   cipher.Block
 	remote  *net.TCPAddr
+	publish string
+
+	backend *TCP
+}
+
+func (l *TCPLink) Send(ctx context.Context, frame []byte) (err error) {
+	t := l.backend
+
+	t.Arbiter.Do(func() {
+		if deadline, hasDeadline := ctx.Deadline(); hasDeadline {
+			l.conn.SetWriteDeadline(deadline)
+		}
+		_, err = l.muxer.Mux(frame)
+	})
+	if err != nil {
+		if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
+			err = ErrOperationCanceled
+		} else {
+			// close corrupted link.
+			t.log.Error("mux error: ", err)
+			l.Close()
+		}
+	}
+
+	return
 }
 
 func (l *TCPLink) InitializeAESGCM(key []byte, nonce []byte) (err error) {
@@ -90,6 +115,7 @@ func (l *TCPLink) Close() (err error) {
 	conn := l.conn
 	if conn != nil {
 		conn.Close()
+		l.backend.link.Delete(l.publish)
 		l.conn = nil
 	}
 	return
@@ -97,6 +123,7 @@ func (l *TCPLink) Close() (err error) {
 
 type TCP struct {
 	bind     *net.TCPAddr
+	publish  *net.TCPAddr
 	listener *net.TCPListener
 
 	config *TCPBackendConfig
@@ -104,7 +131,8 @@ type TCP struct {
 
 	log *logging.Entry
 
-	link sync.Map
+	link         sync.Map
+	resolveCache sync.Map
 
 	watch  sync.Map
 	connID uint32
@@ -114,18 +142,29 @@ type TCP struct {
 
 var (
 	ErrNonTCPConnection = errors.New("got non-tcp connection")
+	ErrTCPAmbigousRole  = errors.New("ambigous tcp role")
 )
 
-func NewTCP(arbiter *arbit.Arbiter, log *logging.Entry, cfg *TCPBackendConfig, psk *string) (t *TCP) {
+func NewTCP(arbiter *arbit.Arbiter, log *logging.Entry, cfg *TCPBackendConfig, psk *string) (t *TCP, err error) {
 	if log == nil {
 		log = logging.WithField("module", "backend_tcp")
 	}
 	t = &TCP{
-		psk:     psk,
-		config:  cfg,
-		log:     log,
-		Arbiter: arbit.NewWithParent(arbiter, nil),
+		psk:    psk,
+		config: cfg,
+		log:    log,
 	}
+	if cfg.Publish == "" {
+		cfg.Publish = cfg.Bind
+	}
+	if t.publish, err = net.ResolveTCPAddr("tcp", cfg.Publish); err != nil {
+		return nil, err
+	}
+	if !validTCPPublishEndpoint(t.publish) {
+		return nil, fmt.Errorf("cannot publish \"%v\"", cfg.Publish)
+	}
+	t.Arbiter = arbit.NewWithParent(arbiter, nil)
+
 	t.Arbiter.Go(func() {
 		var err error
 
@@ -144,10 +183,11 @@ func NewTCP(arbiter *arbit.Arbiter, log *logging.Entry, cfg *TCPBackendConfig, p
 			t.serve(arbiter)
 		}
 	}).Join(true)
-	return t
+
+	return t, nil
 }
 
-func (t *TCP) Priority() int {
+func (t *TCP) Priority() uint32 {
 	return t.config.Priority
 }
 
@@ -396,7 +436,6 @@ func (t *TCP) goTCPLinkDaemon(log *logging.Entry, key string, link *TCPLink) {
 	t.Arbiter.Go(func() {
 		defer func() {
 			link.conn.Close()
-			t.link.Delete(key)
 		}()
 
 		var (
@@ -421,10 +460,10 @@ func (t *TCP) goTCPLinkDaemon(log *logging.Entry, key string, link *TCPLink) {
 				}
 			}
 			if _, err = link.demuxer.Demux(buf[:read], func(pkt []byte) {
-				// deliver framt to all watchers.
+				// deliver frame to all watchers.
 				t.watch.Range(func(k, v interface{}) bool {
-					if emit, ok := v.(func([]byte, interface{})); ok {
-						emit(pkt, link.remote)
+					if emit, ok := v.(func(Backend, []byte, string)); ok {
+						emit(t, pkt, link.publish)
 					}
 					return true
 				})
@@ -436,7 +475,7 @@ func (t *TCP) goTCPLinkDaemon(log *logging.Entry, key string, link *TCPLink) {
 	})
 }
 
-func (t *TCP) connect(ctx context.Context, addr *net.TCPAddr) (link *TCPLink, err error) {
+func (t *TCP) connect(ctx context.Context, addr *net.TCPAddr, publish string) (link *TCPLink, err error) {
 	key := addr.IP.To4().String() + strconv.FormatInt(int64(addr.Port), 10)
 	if v, exists := t.link.Load(key); exists {
 		return v.(*TCPLink), nil
@@ -448,7 +487,9 @@ func (t *TCP) connect(ctx context.Context, addr *net.TCPAddr) (link *TCPLink, er
 
 	// dial
 	t.log.Info("connecting to ", addr.String())
-	link = &TCPLink{}
+	link = &TCPLink{
+		publish: publish,
+	}
 	dialer := net.Dialer{}
 	if ctx != nil {
 		if deadline, hasDeadline := ctx.Deadline(); hasDeadline {
@@ -637,10 +678,6 @@ func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TC
 	return connectReq.Identity, nil
 }
 
-func (t *TCP) GetTCPLink(ctx context.Context, addr *net.TCPAddr) (*TCPLink, error) {
-	return t.connect(ctx, addr)
-}
-
 func (t *TCP) Port() uint16 {
 	return uint16(t.bind.Port)
 }
@@ -649,43 +686,44 @@ func (t *TCP) Type() pb.PeerBackend_BackendType {
 	return pb.PeerBackend_TCP
 }
 
+func (t *TCP) Publish() (id string) {
+	return t.config.Publish
+}
+
 func (t *TCP) Shutdown() {
 	t.Arbiter.Shutdown()
 	t.Arbiter.Join(false)
 }
 
-func (t *TCP) Send(ctx context.Context, frame []byte, dst interface{}) (err error) {
+func (t *TCP) resolve(endpoint string) (addr *net.TCPAddr, err error) {
+	v, ok := t.resolveCache.Load(endpoint)
+	if !ok || v == nil {
+		if addr, err = net.ResolveTCPAddr("tcp", endpoint); err != nil {
+			t.log.Errorf("destination \"%v\" not resolved: %v", v, err)
+			return nil, err
+		}
+		t.resolveCache.Store(endpoint, addr)
+	} else {
+		addr = v.(*net.TCPAddr)
+	}
+	return
+}
+
+func (t *TCP) Connect(ctx context.Context, endpoint string) (l Link, err error) {
 	var (
 		addr *net.TCPAddr
 		link *TCPLink
 	)
-
-	switch v := dst.(type) {
-	case string:
-		if addr, err = net.ResolveTCPAddr("tcp", v); err != nil {
-			t.log.Errorf("destination \"%v\" not resolved: %v", v, err)
-			return err
-		}
-	case *net.TCPAddr:
-		addr = v
-	default:
-		return ErrUnknownDestinationType
+	if addr, err = t.resolve(endpoint); err != nil {
+		return nil, err
 	}
-
-	t.Arbiter.Do(func() {
-		if link, err = t.GetTCPLink(ctx, addr); err != nil {
-			return
-		}
-		if _, err = link.muxer.Mux(frame); err != nil {
-			t.log.Error("mux error: ", err)
-			return
-		}
-	})
-
-	return err
+	if link, err = t.connect(ctx, addr, endpoint); err != nil {
+		return nil, err
+	}
+	return link, err
 }
 
-func (t *TCP) Watch(proc func([]byte, interface{})) error {
+func (t *TCP) Watch(proc func(Backend, []byte, string)) error {
 	if proc != nil {
 		t.watch.Store(&proc, proc)
 	}
