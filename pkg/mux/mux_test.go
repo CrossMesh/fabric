@@ -118,6 +118,7 @@ func BenchmarkRandomMuxBlock1MB(t *testing.B) {
 			binary.PutVarint(buf[sz:sz+strconv.IntSize], int64(rand.Int()))
 		}
 		t.SetBytes(int64(blkSize))
+		t.StartTimer()
 		for idx := 0; idx < mb; idx++ {
 			didx := 0
 			rand.Seed(time.Now().Unix())
@@ -126,11 +127,9 @@ func BenchmarkRandomMuxBlock1MB(t *testing.B) {
 				if written >= len(buf)-didx {
 					written = len(buf) - didx
 				}
-				t.StartTimer()
 				if _, err := muxer.Mux(buf[didx : didx+written]); err != nil {
 					t.Fatal(err)
 				}
-				t.StopTimer()
 				didx += written
 			}
 		}
@@ -173,14 +172,13 @@ func BenchmarkRandomDecodeBlock1MB(t *testing.B) {
 			demuxer.Reset()
 			cidx, lastCut := 0, 0
 			didx = 0
+			t.StartTimer()
 			for didx < streamBuf.Len() {
 				written := rand.Int() & 0xFFF
 				if written >= streamBuf.Len()-didx {
 					written = streamBuf.Len() - didx
 				}
-				t.StartTimer()
 				if _, err := demuxer.Demux(streamBuf.Bytes()[didx:didx+written], func(pkt []byte) {
-					t.StopTimer()
 					if cidx >= len(cuts) {
 						t.Fatal("more packets decoded.")
 					}
@@ -190,7 +188,6 @@ func BenchmarkRandomDecodeBlock1MB(t *testing.B) {
 					}
 					lastCut = cuts[cidx]
 					cidx++
-					t.StartTimer()
 				}); err != nil {
 					t.Fatal(err)
 				}
