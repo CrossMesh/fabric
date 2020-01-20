@@ -1,14 +1,22 @@
-.PHONY: test exec bench bin/utt proto
+.PHONY: test exec bench bin/utt proto cover
 
 PROJECT_ROOT:=$(shell pwd)
 export GOPATH:=$(PROJECT_ROOT)/build
 export PATH:=$(PROJECT_ROOT)/bin:$(PATH)
 
+COVERAGE_DIR:=coverage
+
 all: bin/utt
 
-test:
-	go test -v git.uestc.cn/sunmxt/utt/pkg/mux/...
-	go test -v git.uestc.cn/sunmxt/utt/pkg/rpc/...
+$(COVERAGE_DIR):
+	mkdir -p $(COVERAGE_DIR)
+
+cover: coverage test
+	go tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html
+
+test: coverage
+	go test -v -coverprofile=$(COVERAGE_DIR)/coverage.out ./pkg/mux/... ./pkg/rpc/...
+	go tool cover -func=$(COVERAGE_DIR)/coverage.out
 
 build:
 	mkdir build

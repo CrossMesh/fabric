@@ -7,17 +7,20 @@ stages:
 variables:
   GO111MODULE: "on"
 
-mux_test:
+test:
   image: registry.stuhome.com/sunmxt/utt/goenv:${CI_COMMIT_REF_NAME}
 
   cache:
     paths:
     - ./build/pkg
     - /apk-cache
+  artifacts:
+    paths:
+    - coverage
 
   stage: test
   script:
-  - make test
+  - make cover
 
 build_environment:
   stage: baseimage
