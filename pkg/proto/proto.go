@@ -31,6 +31,8 @@ const (
 
 	MsgTypeRPC          = uint16(4)
 	MsgTypePeerExchange = uint16(5)
+	MsgTypePing         = uint16(6)
+	MsgTypeRawFrame     = uint16(7)
 )
 
 var IDByProtoType map[reflect.Type]uint16 = map[reflect.Type]uint16{
@@ -39,6 +41,8 @@ var IDByProtoType map[reflect.Type]uint16 = map[reflect.Type]uint16{
 	reflect.TypeOf((*Welcome)(nil)).Elem():         MsgTypeWelcome,
 	reflect.TypeOf((*pb.RPC)(nil)).Elem():          MsgTypeRPC,
 	reflect.TypeOf((*pb.PeerExchange)(nil)).Elem(): MsgTypePeerExchange,
+	reflect.TypeOf((*pb.Ping)(nil)).Elem():         MsgTypePing,
+	reflect.TypeOf((*NetworkRawFrame)(nil)).Elem(): MsgTypeRawFrame,
 }
 
 var ConstructorByID map[uint16]func() interface{} = map[uint16]func() interface{}{
@@ -47,9 +51,22 @@ var ConstructorByID map[uint16]func() interface{} = map[uint16]func() interface{
 	MsgTypeWelcome:      func() interface{} { return &Welcome{} },
 	MsgTypeRPC:          func() interface{} { return &pb.RPC{} },
 	MsgTypePeerExchange: func() interface{} { return &pb.PeerExchange{} },
+	MsgTypePing:         func() interface{} { return &pb.Ping{} },
+	MsgTypeRawFrame:     func() interface{} { return make(NetworkRawFrame, 0) },
 }
 
-func PackProtocolMessageHeader(buf []byte, msg interface{}) (packed []byte, err error) {
+const (
+	ProtocolMessageHeaderSize = 2
+)
+
+func PackProtocolMessageHeader(buf []byte, msgID uint16) []byte {
+	if len(buf) < ProtocolMessageHeaderSize {
+		return nil
+	}
+	binary.BigEndian.PutUint16(buf, msgID)
+	return buf[:ProtocolMessageHeaderSize]
+}
+func PackProtocolMessageHeaderByMsg(buf []byte, msg interface{}) (packed []byte, err error) {
 	ty := reflect.TypeOf(msg)
 	if ty.Kind() == reflect.Ptr {
 		ty = ty.Elem()
@@ -62,7 +79,7 @@ func PackProtocolMessageHeader(buf []byte, msg interface{}) (packed []byte, err 
 		packed = make([]byte, 2)
 	}
 	binary.BigEndian.PutUint16(packed, msgTypeID)
-	return packed[:2], nil
+	return packed[:ProtocolMessageHeaderSize], nil
 }
 
 func UnpackProtocolMessageHeader(buf []byte) uint16 {
