@@ -13,6 +13,12 @@ const (
 	DEAD      = 2
 )
 
+var StateName = map[int]string{
+	ALIVE:     "alive",
+	SUSPECTED: "suspected",
+	DEAD:      "dead",
+}
+
 type MembershipPeer interface {
 	GossiperStub() *Peer
 
@@ -83,6 +89,10 @@ func (t *PeerReleaseTx) ClaimDead() {
 	}
 }
 
+func (t *PeerReleaseTx) ShouldCommit() bool {
+	return t.regionUpdated || t.stateUpdated
+}
+
 type Peer struct {
 	lock            sync.RWMutex
 	g               *Gossiper
@@ -107,8 +117,8 @@ func (p *Peer) Tx(commit func(*PeerReleaseTx) bool) bool {
 	defer p.lock.Unlock()
 
 	tx, shouldCommit := &PeerReleaseTx{p: p}, false
-	shouldCommit = commit(tx) && (tx.regionUpdated || tx.stateUpdated)
-	if !shouldCommit {
+	shouldCommit = commit(tx) && tx.ShouldCommit()
+	if shouldCommit {
 		return false
 	}
 	if tx.regionUpdated && !tx.stateUpdated {
@@ -126,6 +136,12 @@ func (p *Peer) Tx(commit func(*PeerReleaseTx) bool) bool {
 	}
 
 	return true
+}
+
+func (p *Peer) RTx(commit func()) {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
+	commit()
 }
 
 type GossipContext struct {

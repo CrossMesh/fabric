@@ -3,115 +3,83 @@ package route
 import (
 	"sort"
 	"strconv"
-	"sync"
 	"time"
 
 	"git.uestc.cn/sunmxt/utt/pkg/backend"
 	"git.uestc.cn/sunmxt/utt/pkg/gossip"
+	"git.uestc.cn/sunmxt/utt/pkg/proto/pb"
 	pbp "git.uestc.cn/sunmxt/utt/pkg/proto/pb"
 )
 
-type peerMetaTx struct {
+type PeerReleaseTx struct {
+	*gossip.PeerReleaseTx
+
+	meta *PeerMeta
+
 	backends []backend.Backend
-	region   string
 	version  uint64
 
 	backendUpdated bool
-	regionUpdated  bool
 	versionUpdated bool
 }
 
-func (t *peerMetaTx) Backend(backends ...backend.Backend) {
+func (t *PeerReleaseTx) Backend(backends ...backend.Backend) bool {
+	if t.meta.backendEqual(backends...) {
+		return false
+	}
 	t.backendUpdated = true
 	t.backends = backends
+	return true
 }
 
-func (t *peerMetaTx) Region(region string) {
-	t.regionUpdated = true
-	t.region = region
-}
-
-func (t *peerMetaTx) Version(version uint64) {
+func (t *PeerReleaseTx) Version(version uint64) {
 	t.versionUpdated = true
 	t.version = version
 }
 
+func (t *PeerReleaseTx) ShouldCommit() bool {
+	return t.PeerReleaseTx.ShouldCommit() || t.backendUpdated || (t.versionUpdated && t.version > t.meta.version)
+}
+
+type peerBackend struct {
+	PeerBackend
+	Priority uint32
+}
 type PeerBackend struct {
 	Type     pbp.PeerBackend_BackendType
-	Priority uint32
 	Endpoint string
 }
 
 type PeerMeta struct {
-	lockState       sync.RWMutex
-	stateVersion    uint32
-	state           pbp.Peer_State
-	lastStateUpdate time.Time
+	gossip.Peer
 
-	lock              sync.RWMutex
 	version           uint64
-	region            string
-	backendByPriority []*PeerBackend
+	backendByPriority []*peerBackend
 	activeBackend     int
 }
 
-func (p *PeerMeta) Init(region string) {
-	p.region = region
-	p.stateVersion = 0
-	p.lastStateUpdate = time.Now()
+func (p *PeerMeta) Init() {
 	p.version = 0
 	p.activeBackend = 0
 }
 
-func (p *PeerMeta) State() (int, uint32, time.Time) {
-	p.lockState.RLock()
-	defer p.lockState.RUnlock()
-
-	state, version, last := p.state, p.stateVersion, p.lastStateUpdate
-	switch state {
-	case pbp.Peer_ALIVE:
-		state = gossip.ALIVE
-	case pbp.Peer_DEAD:
-		state = gossip.DEAD
-	case pbp.Peer_SUSPECTED:
-		state = gossip.SUSPECTED
-	}
-	return int(state), version, last
-}
-
-func (p *PeerMeta) SetState(state int, version uint32, lastUpdate time.Time) {
-	p.lockState.Lock()
-	defer p.lockState.Unlock()
-
-	switch state {
-	case gossip.ALIVE:
-		p.state = pbp.Peer_ALIVE
-	case gossip.DEAD:
-		p.state = pbp.Peer_DEAD
-	case gossip.SUSPECTED:
-		p.state = pbp.Peer_SUSPECTED
-	default:
-		// p.log.Warn("unrecoginized gossip state: ", state)
-		return
-	}
-	p.stateVersion = version
-	p.lastStateUpdate = lastUpdate
-}
-
-func (p *PeerMeta) Region() string {
-	return p.region
-}
-
 func (p *PeerMeta) String() string {
-	return "state_ver:" + strconv.FormatUint(uint64(p.stateVersion), 10) +
-		",ver:" + strconv.FormatUint(p.version, 10)
+	state, stateVersion, _ := p.State()
+	stateName, _ := gossip.StateName[state]
+	if stateName == "" {
+		stateName = "unknown"
+	}
+	return "(" + stateName + "," + strconv.FormatInt(int64(stateVersion), 10) + ")," +
+		strconv.FormatUint(p.version, 10)
 }
 
 func (p *PeerMeta) PBSnapshot() (msgPeer *pbp.Peer, err error) {
+	state, stateVersion, _ := p.State()
 	msgPeer = &pbp.Peer{
 		Version:      p.version,
-		StateVersion: p.stateVersion,
-		State:        p.state,
+		StateVersion: stateVersion,
+		State:        pb.Peer_State(state),
+		Region:       p.Region(),
 	}
 	msgPeer.Backend = make([]*pbp.PeerBackend, 0, len(p.backendByPriority))
 
@@ -133,12 +101,11 @@ func (p *PeerMeta) backendEqual(backends ...backend.Backend) bool {
 	}
 	set := map[PeerBackend]struct{}{}
 	for idx := range p.backendByPriority {
-		set[*p.backendByPriority[idx]] = struct{}{}
+		set[p.backendByPriority[idx].PeerBackend] = struct{}{}
 	}
 	for idx := range backends {
 		if _, exist := set[PeerBackend{
 			Type:     backends[idx].Type(),
-			Priority: backends[idx].Priority(),
 			Endpoint: backends[idx].Publish(),
 		}]; !exist {
 			return false
@@ -147,50 +114,51 @@ func (p *PeerMeta) backendEqual(backends ...backend.Backend) bool {
 	return true
 }
 
-func (p *PeerMeta) Tx(commit func(PeerReleaseTx) bool) {
-	p.lock.Lock()
-	defer p.lock.Unlock()
+func (p *PeerMeta) Tx(commit func(*PeerReleaseTx) bool) bool {
+	return p.Peer.Tx(func(btx *gossip.PeerReleaseTx) bool {
+		tx, shouldCommit := &PeerReleaseTx{
+			meta:          p,
+			PeerReleaseTx: btx,
+		}, false
 
-	tx, shouldCommit := &peerMetaTx{}, false
-	shouldCommit = commit(tx) && ((tx.backendUpdated && p.backendEqual(tx.backends...)) ||
-		(tx.regionUpdated && p.region != tx.region))
-
-	if !shouldCommit || (tx.versionUpdated && p.version <= p.version) {
-		return
-	}
-
-	// update version.
-	if tx.versionUpdated {
-		if p.version <= tx.version { // accept new version only.
-			return
+		shouldCommit = commit(tx)
+		if !shouldCommit {
+			return false
 		}
-		p.version = tx.version
-	} else {
-		// version should be monotonic increasing number over the cluster.
-		// use unix nano as version since only publisher can create a new version.
-		p.version = uint64(time.Now().UnixNano()) // new version.
-	}
 
-	// update region.
-	if tx.regionUpdated {
-		p.region = tx.region
-	}
+		if !tx.backendUpdated && (!tx.versionUpdated || tx.version <= tx.meta.version) {
+			return true
+		}
 
-	// update backends.
-	p.backendByPriority = make([]*PeerBackend, 0, len(tx.backends))
-	for idx := range tx.backends {
-		b := tx.backends[idx]
-		if b == nil {
-			continue
+		// update version.
+		if tx.versionUpdated {
+			p.version = tx.version
+		} else {
+			// version should be monotonic increasing number over the cluster.
+			// use unix nano as version since only publisher can create a new version.
+			p.version = uint64(time.Now().UnixNano()) // new version.
 		}
-		backend := &PeerBackend{
-			Type:     b.Type(),
-			Priority: b.Priority(),
-			Endpoint: b.Publish(),
+
+		// update backends.
+		p.backendByPriority = make([]*peerBackend, 0, len(tx.backends))
+		for idx := range tx.backends {
+			b := tx.backends[idx]
+			if b == nil {
+				continue
+			}
+			backend := &peerBackend{
+				Priority: b.Priority(),
+				PeerBackend: PeerBackend{
+					Endpoint: b.Publish(),
+					Type:     b.Type(),
+				},
+			}
+			p.backendByPriority = append(p.backendByPriority, backend)
 		}
-		p.backendByPriority = append(p.backendByPriority, backend)
-	}
-	sort.Slice(p.backendByPriority, func(i, j int) bool {
-		return p.backendByPriority[i].Priority > p.backendByPriority[j].Priority
+		sort.Slice(p.backendByPriority, func(i, j int) bool {
+			return p.backendByPriority[i].Priority > p.backendByPriority[j].Priority
+		})
+
+		return true
 	})
 }
