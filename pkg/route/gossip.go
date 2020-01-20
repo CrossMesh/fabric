@@ -53,15 +53,17 @@ type PeerBackend struct {
 type PeerMeta struct {
 	gossip.Peer
 
+	Self bool
+
+	onBackendUpdated func(Peer, []PeerBackend, []PeerBackend)
+
 	version           uint64
 	backendByPriority []*peerBackend
 	activeBackend     int
 }
 
-func (p *PeerMeta) Init() {
-	p.version = 0
-	p.activeBackend = 0
-}
+func (p *PeerMeta) Meta() *PeerMeta { return p }
+func (p *PeerMeta) IsSelf() bool    { return p.Self }
 
 func (p *PeerMeta) String() string {
 	state, stateVersion, _ := p.State()
@@ -114,14 +116,24 @@ func (p *PeerMeta) backendEqual(backends ...backend.Backend) bool {
 	return true
 }
 
-func (p *PeerMeta) Tx(commit func(*PeerReleaseTx) bool) bool {
+func (p *PeerMeta) OnBackendUpdated(emit func(Peer, []PeerBackend, []PeerBackend)) {
+	p.onBackendUpdated = emit
+}
+
+func (p *PeerMeta) RTx(commit func(Peer)) {
+	p.Peer.RTx(func() {
+		commit(p)
+	})
+}
+
+func (p *PeerMeta) Tx(commit func(Peer, *PeerReleaseTx) bool) bool {
 	return p.Peer.Tx(func(btx *gossip.PeerReleaseTx) bool {
 		tx, shouldCommit := &PeerReleaseTx{
 			meta:          p,
 			PeerReleaseTx: btx,
 		}, false
 
-		shouldCommit = commit(tx)
+		shouldCommit = commit(p, tx)
 		if !shouldCommit {
 			return false
 		}
@@ -139,26 +151,58 @@ func (p *PeerMeta) Tx(commit func(*PeerReleaseTx) bool) bool {
 			p.version = uint64(time.Now().UnixNano()) // new version.
 		}
 
-		// update backends.
-		p.backendByPriority = make([]*peerBackend, 0, len(tx.backends))
-		for idx := range tx.backends {
-			b := tx.backends[idx]
-			if b == nil {
-				continue
+		if tx.backendUpdated {
+			// update backends.
+			if onBackendUpdated := p.onBackendUpdated; onBackendUpdated != nil {
+				olds, news := make([]PeerBackend, len(p.backendByPriority)), make([]PeerBackend, len(tx.backends))
+
+				onBackendUpdated(p, olds, news)
 			}
-			backend := &peerBackend{
-				Priority: b.Priority(),
-				PeerBackend: PeerBackend{
-					Endpoint: b.Publish(),
-					Type:     b.Type(),
-				},
+			p.backendByPriority = make([]*peerBackend, 0, len(tx.backends))
+			for idx := range tx.backends {
+				b := tx.backends[idx]
+				if b == nil {
+					continue
+				}
+				backend := &peerBackend{
+					Priority: b.Priority(),
+					PeerBackend: PeerBackend{
+						Endpoint: b.Publish(),
+						Type:     b.Type(),
+					},
+				}
+				p.backendByPriority = append(p.backendByPriority, backend)
 			}
-			p.backendByPriority = append(p.backendByPriority, backend)
+			sort.Slice(p.backendByPriority, func(i, j int) bool {
+				return p.backendByPriority[i].Priority > p.backendByPriority[j].Priority
+			})
 		}
-		sort.Slice(p.backendByPriority, func(i, j int) bool {
-			return p.backendByPriority[i].Priority > p.backendByPriority[j].Priority
-		})
 
 		return true
 	})
+}
+
+type GossipGroup struct {
+	*gossip.Gossiper
+}
+
+func NewGossipGroup() *GossipGroup {
+	return &GossipGroup{
+		Gossiper: gossip.NewGossiper(),
+	}
+}
+
+func (s *GossipGroup) PBSnapshot() (peers []*pbp.Peer, err error) {
+	peers = make([]*pbp.Peer, 0, 8)
+	s.VisitPeer(func(region string, p gossip.MembershipPeer) bool {
+		peer := p.(Peer)
+		pbMsg, merr := peer.PBSnapshot()
+		if merr != nil {
+			err = merr
+			return false
+		}
+		peers = append(peers, pbMsg)
+		return true
+	})
+	return
 }

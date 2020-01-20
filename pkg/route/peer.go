@@ -1,7 +1,6 @@
 package route
 
 import (
-	"git.uestc.cn/sunmxt/utt/pkg/backend"
 	"git.uestc.cn/sunmxt/utt/pkg/gossip"
 	pbp "git.uestc.cn/sunmxt/utt/pkg/proto/pb"
 )
@@ -17,15 +16,12 @@ var PeerTypeName map[uint32]string = map[uint32]string{
 }
 
 type Peer interface {
-	gossip.Peer
+	gossip.MembershipPeer
 
+	Meta() *PeerMeta
 	String() string
 	PBSnapshot() (*pbp.Peer, error)
-	Tx(func(Peer, PeerReleaseTx) bool)
-}
-
-type PeerReleaseTx interface {
-	Backend(...backend.Backend)
-	Region(string)
-	Version(uint64)
+	Tx(func(Peer, *PeerReleaseTx) bool) bool
+	RTx(func(Peer))
+	OnBackendUpdated(func(Peer, []PeerBackend, []PeerBackend))
 }
