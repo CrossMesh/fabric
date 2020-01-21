@@ -68,7 +68,7 @@ func (a *Arbiter) Go(proc func()) *Arbiter {
 	return a
 }
 
-func (a *Arbiter) TickGo(proc func(func()), period time.Duration, brust uint32) (cancel func()) {
+func (a *Arbiter) TickGo(proc func(func(), time.Time), period time.Duration, brust uint32) (cancel func()) {
 	if brust < 1 {
 		return
 	}
@@ -80,16 +80,17 @@ func (a *Arbiter) TickGo(proc func(func()), period time.Duration, brust uint32) 
 
 		for a.ShouldRun() && !canceled {
 			if nextSpawn.Before(time.Now()) {
+				nextSpawn = time.Now().Add(period)
+
 				if runningCount < brust {
 					atomic.AddUint32(&runningCount, 1)
 					a.Go(func() {
 						defer func() {
 							atomic.AddUint32(&runningCount, uint32(0xFFFFFFFF))
 						}()
-						proc(cancel)
+						proc(cancel, nextSpawn)
 					})
 				}
-				nextSpawn = time.Now().Add(period)
 			}
 
 			sleepTimeout := nextSpawn.Sub(time.Now())

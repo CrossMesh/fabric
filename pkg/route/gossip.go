@@ -44,7 +44,9 @@ func (t *PeerReleaseTx) ShouldCommit() bool {
 type peerBackend struct {
 	PeerBackend
 	Priority uint32
+	Disabled bool
 }
+
 type PeerBackend struct {
 	Type     pbp.PeerBackend_BackendType
 	Endpoint string
@@ -59,11 +61,34 @@ type PeerMeta struct {
 
 	version           uint64
 	backendByPriority []*peerBackend
-	activeBackend     int
 }
 
 func (p *PeerMeta) Meta() *PeerMeta { return p }
 func (p *PeerMeta) IsSelf() bool    { return p.Self }
+func (p *PeerMeta) ActiveBackend() PeerBackend {
+	bes := p.backendByPriority
+	if len(bes) < 1 {
+		return PeerBackend{Type: pbp.PeerBackend_UNKNOWN}
+	}
+	return bes[0].PeerBackend
+}
+
+func (p *PeerMeta) updateActiveBackend() {
+	cmp := func(i, j int) bool {
+		ei, ej := p.backendByPriority[i], p.backendByPriority[j]
+		if ei.Disabled != ej.Disabled {
+			if ei.Disabled {
+				return true // ei > ej
+			}
+			return false
+		}
+		return ei.Priority > ej.Priority
+	}
+	if sort.SliceIsSorted(p.backendByPriority, cmp) {
+		return
+	}
+	sort.Slice(p.backendByPriority, cmp)
+}
 
 func (p *PeerMeta) String() string {
 	state, stateVersion, _ := p.State()
@@ -173,9 +198,7 @@ func (p *PeerMeta) Tx(commit func(Peer, *PeerReleaseTx) bool) bool {
 				}
 				p.backendByPriority = append(p.backendByPriority, backend)
 			}
-			sort.Slice(p.backendByPriority, func(i, j int) bool {
-				return p.backendByPriority[i].Priority > p.backendByPriority[j].Priority
-			})
+			p.updateActiveBackend()
 		}
 
 		return true

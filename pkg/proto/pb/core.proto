@@ -4,7 +4,8 @@ package pb;
 
 message PeerBackend {
     enum BackendType {
-        TCP = 0;
+        UNKNOWN = 0;
+        TCP = 1;
     }
     BackendType backend = 1;
     string endpoint = 2;
