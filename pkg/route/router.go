@@ -14,6 +14,7 @@ type Router interface {
 
 	Forward([]byte) []Peer
 	Backward([]byte, PeerBackend) Peer
+	BackendPeer(backend PeerBackend) Peer
 	HotPeers(time.Duration) []Peer
 }
 
@@ -41,6 +42,15 @@ func (r *BaseRouter) hitPeer(p Peer) {
 	r.hots.Store(p.GossiperStub(), hot)
 }
 
+func (r *BaseRouter) BackendPeer(backend PeerBackend) (p Peer) {
+	v, ok := r.byBackend.Load(backend)
+	if !ok {
+		return nil
+	}
+	p, _ = v.(Peer)
+	return
+}
+
 func (r *BaseRouter) HotPeers(last time.Duration) (peers []Peer) {
 	r.hots.Range(func(k, v interface{}) bool {
 		hot, isPeer := v.(hotPeer)
@@ -53,7 +63,7 @@ func (r *BaseRouter) HotPeers(last time.Duration) (peers []Peer) {
 	return
 }
 
-func (r *BaseRouter) goRoutines(arbiter *arbit.Arbiter) {
+func (r *BaseRouter) goTasks(arbiter *arbit.Arbiter) {
 	// time ticking.
 	arbiter.TickGo(func(cancel func(), deadline time.Time) {
 		r.now = time.Now()
