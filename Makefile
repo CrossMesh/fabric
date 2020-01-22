@@ -1,4 +1,4 @@
-.PHONY: test exec bench bin/utt proto cover
+.PHONY: test exec bench bin/utt proto cover devtools
 
 PROJECT_ROOT:=$(shell pwd)
 export GOPATH:=$(PROJECT_ROOT)/build
@@ -15,7 +15,7 @@ cover: coverage test
 	go tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html
 
 test: coverage
-	go test -v -coverprofile=$(COVERAGE_DIR)/coverage.out ./pkg/mux/... ./pkg/rpc/...
+	go test -v -coverprofile=$(COVERAGE_DIR)/coverage.out ./pkg/mux/... ./pkg/rpc/... ./pkg/gossip/...
 	go tool cover -func=$(COVERAGE_DIR)/coverage.out
 
 build:
@@ -36,6 +36,14 @@ bin/utt:
 
 bin/protoc-gen-go:
 	go get -u github.com/golang/protobuf/protoc-gen-go
+
+bin/gopls:
+	go get -u go get -u golang.org/x/tools/gopls
+
+bin/goimports:
+	go get -u go get -u golang.org/x/tools/cmd/goimports
+
+devtools: bin/protoc-gen-go bin/gopls bin/goimports
 
 proto: bin/protoc-gen-go
 	protoc -I=$(PROJECT_ROOT)/pkg --go_out=$(PROJECT_ROOT)/pkg proto/pb/core.proto 
