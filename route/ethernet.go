@@ -4,8 +4,8 @@ import (
 	"sync"
 	"time"
 
-	arbit "git.uestc.cn/sunmxt/utt/pkg/arbiter"
-	"git.uestc.cn/sunmxt/utt/pkg/gossip"
+	arbit "git.uestc.cn/sunmxt/utt/arbiter"
+	"git.uestc.cn/sunmxt/utt/gossip"
 	logging "github.com/sirupsen/logrus"
 )
 

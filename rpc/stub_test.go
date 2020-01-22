@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
-	"git.uestc.cn/sunmxt/utt/pkg/proto"
-	"git.uestc.cn/sunmxt/utt/pkg/proto/pb"
+	"git.uestc.cn/sunmxt/utt/proto"
+	"git.uestc.cn/sunmxt/utt/proto/pb"
 	"github.com/stretchr/testify/assert"
 )
 

@@ -15,11 +15,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	arbit "git.uestc.cn/sunmxt/utt/pkg/arbiter"
-	"git.uestc.cn/sunmxt/utt/pkg/config"
-	"git.uestc.cn/sunmxt/utt/pkg/mux"
-	"git.uestc.cn/sunmxt/utt/pkg/proto"
-	"git.uestc.cn/sunmxt/utt/pkg/proto/pb"
+	arbit "git.uestc.cn/sunmxt/utt/arbiter"
+	"git.uestc.cn/sunmxt/utt/config"
+	"git.uestc.cn/sunmxt/utt/mux"
+	"git.uestc.cn/sunmxt/utt/proto"
+	"git.uestc.cn/sunmxt/utt/proto/pb"
 	logging "github.com/sirupsen/logrus"
 )
 

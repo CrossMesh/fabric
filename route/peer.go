@@ -1,8 +1,8 @@
 package route
 
 import (
-	"git.uestc.cn/sunmxt/utt/pkg/gossip"
-	pbp "git.uestc.cn/sunmxt/utt/pkg/proto/pb"
+	"git.uestc.cn/sunmxt/utt/gossip"
+	pbp "git.uestc.cn/sunmxt/utt/proto/pb"
 )
 
 const (

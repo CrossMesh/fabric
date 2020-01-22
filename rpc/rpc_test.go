@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"git.uestc.cn/sunmxt/utt/pkg/proto"
+	"git.uestc.cn/sunmxt/utt/proto"
 	"github.com/stretchr/testify/assert"
 )
 

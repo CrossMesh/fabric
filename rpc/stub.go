@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"git.uestc.cn/sunmxt/utt/pkg/proto"
+	"git.uestc.cn/sunmxt/utt/proto"
 	logging "github.com/sirupsen/logrus"
 )
 

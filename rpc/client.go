@@ -6,7 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"git.uestc.cn/sunmxt/utt/pkg/proto"
+	"git.uestc.cn/sunmxt/utt/proto"
 	pb "github.com/golang/protobuf/proto"
 	logging "github.com/sirupsen/logrus"
 )

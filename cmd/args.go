@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"git.uestc.cn/sunmxt/utt/pkg/config"
+	"git.uestc.cn/sunmxt/utt/config"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 )

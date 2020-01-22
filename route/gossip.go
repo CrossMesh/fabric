@@ -5,10 +5,10 @@ import (
 	"strconv"
 	"time"
 
-	"git.uestc.cn/sunmxt/utt/pkg/backend"
-	"git.uestc.cn/sunmxt/utt/pkg/gossip"
-	"git.uestc.cn/sunmxt/utt/pkg/proto/pb"
-	pbp "git.uestc.cn/sunmxt/utt/pkg/proto/pb"
+	"git.uestc.cn/sunmxt/utt/backend"
+	"git.uestc.cn/sunmxt/utt/gossip"
+	"git.uestc.cn/sunmxt/utt/proto/pb"
+	pbp "git.uestc.cn/sunmxt/utt/proto/pb"
 )
 
 type PeerReleaseTx struct {
