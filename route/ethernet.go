@@ -1,12 +1,17 @@
 package route
 
 import (
+	"bytes"
 	"sync"
 	"time"
 
 	arbit "git.uestc.cn/sunmxt/utt/arbiter"
 	"git.uestc.cn/sunmxt/utt/gossip"
 	logging "github.com/sirupsen/logrus"
+)
+
+var (
+	EthernetBoardcastAddress = [6]byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
 )
 
 type L2Peer struct {
@@ -18,7 +23,6 @@ type L2Router struct {
 
 	gossip *GossipGroup
 
-	lock    sync.RWMutex
 	peerMAC sync.Map // map[*gossip.Peer]map[[6]byte]struct{}
 	byMAC   sync.Map // map[[6]byte]*hotMAC
 
@@ -38,8 +42,7 @@ func NewL2Router(arbiter *arbit.Arbiter, log *logging.Entry, recordExpire time.D
 	r = &L2Router{
 		gossip: NewGossipGroup(),
 	}
-	r.gossip.OnAppend(r.append)
-	r.gossip.OnRemove(r.remove)
+	r.gossip.OnAppend(r.append).OnRemove(r.remove)
 	return
 }
 
@@ -88,16 +91,18 @@ func (r *L2Router) Forward(frame []byte) (peers []Peer) {
 	copy(dst[:], frame[0:6])
 
 	// lookup.
-	v, hasPeer := r.byMAC.Load(dst)
-	if hasPeer {
-		hot, isHot := v.(*hotMAC)
-		if !isHot { // found.
-			r.hitPeer(hot.p)
-			hot.lastHit = r.now
-			return []Peer{hot.p}
+	if 0 != bytes.Compare(dst[:], EthernetBoardcastAddress[:]) { // unicast.
+		v, hasPeer := r.byMAC.Load(dst)
+		if hasPeer {
+			hot, isHot := v.(*hotMAC)
+			if isHot { // found.
+				r.hitPeer(hot.p)
+				hot.lastHit = r.now
+				return []Peer{hot.p}
+			}
 		}
 	}
-	// peer not found. boardcast to all peers.
+	// fallback to  boardcast.
 	r.gossip.VisitPeer(func(region string, p gossip.MembershipPeer) bool {
 		peer, isPeer := p.(Peer)
 		if !isPeer {
@@ -121,12 +126,16 @@ func (r *L2Router) Backward(frame []byte, backend PeerBackend) (p Peer) {
 	if p = r.BackendPeer(backend); p == nil {
 		return
 	}
+	if 0 != bytes.Compare(src[:], EthernetBoardcastAddress[:]) {
+		// do not learn boardcast address.
+		return
+	}
 	// lookup record by MAC.
-	v, loaded := r.byMAC.Load(src)
 	for {
+		v, loaded := r.byMAC.Load(src)
 		if loaded {
 			hot, isHot := v.(*hotMAC)
-			if !isHot { // found.
+			if isHot { // found.
 				r.hitPeer(hot.p)
 
 				// update record.
@@ -142,9 +151,9 @@ func (r *L2Router) Backward(frame []byte, backend PeerBackend) (p Peer) {
 			lastHit: r.now,
 		}
 		copy(new.mac[:], src[:])
-		if v, loaded = r.byMAC.LoadOrStore(src, new); !loaded {
+		if v, loaded = r.byMAC.LoadOrStore(src, new); !loaded { // changed by me.
 			macs := r.getMACSet(p)
-			if macs != nil { // changed by me.
+			if macs != nil {
 				macs.Store(src, struct{}{})
 			}
 		}
@@ -154,22 +163,18 @@ func (r *L2Router) Backward(frame []byte, backend PeerBackend) (p Peer) {
 }
 
 func (r *L2Router) append(v gossip.MembershipPeer) {
-	r.lock.Lock()
-	defer r.lock.Unlock()
-
 	r.BaseRouter.append(v)
 	// allocate MAC set.
 	r.peerMAC.Store(v.GossiperStub(), &sync.Map{})
 }
 
 func (r *L2Router) remove(v gossip.MembershipPeer) {
-	r.lock.Lock()
-	defer r.lock.Unlock()
-
 	r.BaseRouter.remove(v)
 
 	// remove related records.
 	macs := r.getMACSet(v)
+	// deallocate MAC set.
+	r.peerMAC.Delete(v.GossiperStub())
 	if macs != nil {
 		macs.Range(func(k, v interface{}) bool {
 			r.byMAC.Delete(k)
@@ -177,6 +182,4 @@ func (r *L2Router) remove(v gossip.MembershipPeer) {
 		})
 		return
 	}
-	// deallocate MAC set.
-	r.peerMAC.Delete(v.GossiperStub())
 }
