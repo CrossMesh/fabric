@@ -18,6 +18,7 @@ const (
 var (
 	ErrUnknownDestinationType = errors.New("Unknown destination type")
 	ErrOperationCanceled      = errors.New("operation canceled")
+	ErrBufferFull             = errors.New("buffer full")
 	ErrConnectionDeined       = errors.New("connection deined")
 	ErrConnectionClosed       = errors.New("connection closed")
 	ErrBackendTypeUnknown     = errors.New("Unknown backend type")
@@ -25,7 +26,7 @@ var (
 )
 
 type Link interface {
-	Send(context.Context, []byte) error
+	Send([]byte) error
 	Close() error
 }
 
@@ -41,18 +42,34 @@ type Backend interface {
 	IP() net.IP
 }
 
-var creators map[string]func(*arbit.Arbiter, *logging.Entry, *config.Backend) (Backend, error) = map[string]func(*arbit.Arbiter, *logging.Entry, *config.Backend) (Backend, error){
-	"tcp": createTCPBackend,
+type BackendCreator interface {
+	Type() pb.PeerBackend_BackendType
+	Priority() uint32
+	Publish() string
+
+	New(*arbit.Arbiter, *logging.Entry) (Backend, error)
 }
 
-var nameByType map[pb.PeerBackend_BackendType]string = map[pb.PeerBackend_BackendType]string{
+var creators = map[string]func(*config.Backend) (BackendCreator, error){
+	"tcp": newTCPCreator,
+}
+
+var nameByType = map[pb.PeerBackend_BackendType]string{
 	pb.PeerBackend_TCP: "tcp",
 }
 
-func CreateBackend(ty string, arbiter *arbit.Arbiter, log *logging.Entry, cfg *config.Backend) (Backend, error) {
+func GetCreator(ty string, cfg *config.Backend) (BackendCreator, error) {
 	factory, hasCreator := creators[ty]
 	if !hasCreator {
 		return nil, ErrBackendTypeUnknown
 	}
-	return factory(arbiter, log, cfg)
+	return factory(cfg)
+}
+
+func GetBackendIdentityName(ty pb.PeerBackend_BackendType) string {
+	name, ok := nameByType[ty]
+	if !ok {
+		return "unknown"
+	}
+	return name
 }

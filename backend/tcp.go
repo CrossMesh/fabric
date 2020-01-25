@@ -31,38 +31,54 @@ func validTCPPublishEndpoint(arr *net.TCPAddr) bool {
 }
 
 type TCPBackendConfig struct {
-	Bind      string      `json:"bind" yaml:"bind"`
-	Publish   string      `json:"publish" yaml:"publish"`
-	Priority  uint32      `json:"priority" yaml:"priority"`
-	StartCode interface{} `json:"startCode" yaml:"startCode"`
-	Encrypt   bool        `json:"-" yaml:"-"`
+	Bind            string      `json:"bind" yaml:"bind"`
+	Publish         string      `json:"publish" yaml:"publish"`
+	Priority        uint32      `json:"priority" yaml:"priority"`
+	StartCode       interface{} `json:"startCode" yaml:"startCode"`
+	SendTimeout     uint32      `json:"sendTimeout" yaml:"sendTimeout" default:"50"`
+	SendBufferSize  int         `json:"sendBuffer" yaml:"sendBuffer" default:"0"`
+	KeepalivePeriod int         `json:"keepalivePeriod" yaml:"keepalivePeriod" default:"60"`
+	Encrypt         bool        `json:"-" yaml:"-"`
 }
 
-func createTCPBackend(arbiter *arbit.Arbiter, log *logging.Entry, cfg *config.Backend) (Backend, error) {
+type tcpCreator struct {
+	cfg TCPBackendConfig
+	raw *config.Backend
+}
+
+func newTCPCreator(cfg *config.Backend) (BackendCreator, error) {
+	c := &tcpCreator{}
 	if cfg.Parameters == nil {
 		return nil, ErrInvalidBackendConfig
 	}
-	var backendConfig *TCPBackendConfig
-	if v, ok := cfg.Parameters.(*TCPBackendConfig); ok {
-		backendConfig = v
+	if backendConfig, ok := cfg.Parameters.(*TCPBackendConfig); ok {
+		c.cfg = *backendConfig
 	} else {
 		// re-parse
 		bin, err := json.Marshal(cfg.Parameters)
 		if err != nil {
 			return nil, fmt.Errorf("parse backend config failure (%v)", err)
 		}
-		if err = json.Unmarshal(bin, &backendConfig); err != nil {
+		if err = json.Unmarshal(bin, &c.cfg); err != nil {
 			return nil, fmt.Errorf("parse backend config failure (%v)", err)
 		}
 	}
-	backendConfig.Encrypt = cfg.Encrypt
-	return NewTCP(arbiter, log, backendConfig, &cfg.PSK)
+	c.cfg.Encrypt = cfg.Encrypt
+	c.raw = cfg
+	return c, nil
+}
+
+func (c *tcpCreator) Type() pb.PeerBackend_BackendType { return pb.PeerBackend_TCP }
+func (c *tcpCreator) Priority() uint32                 { return c.cfg.Priority }
+func (c *tcpCreator) Publish() string                  { return c.cfg.Publish }
+func (c *tcpCreator) New(arbiter *arbit.Arbiter, log *logging.Entry) (Backend, error) {
+	return NewTCP(arbiter, log, &c.cfg, &c.raw.PSK)
 }
 
 type TCPLink struct {
 	muxer   mux.Muxer
 	demuxer mux.Demuxer
-	conn    net.Conn
+	conn    *net.TCPConn
 	crypt   cipher.Block
 	remote  *net.TCPAddr
 	publish string
@@ -70,18 +86,20 @@ type TCPLink struct {
 	backend *TCP
 }
 
-func (l *TCPLink) Send(ctx context.Context, frame []byte) (err error) {
+func (l *TCPLink) Send(frame []byte) (err error) {
 	t := l.backend
 
 	t.Arbiter.Do(func() {
-		if deadline, hasDeadline := ctx.Deadline(); hasDeadline {
-			l.conn.SetWriteDeadline(deadline)
+		deadline := time.Now().Add(time.Second * time.Duration(t.config.SendTimeout))
+		if err = l.conn.SetWriteDeadline(deadline); err != nil {
+			return
 		}
 		_, err = l.muxer.Mux(frame)
 	})
+
 	if err != nil {
 		if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
-			err = ErrOperationCanceled
+			err = ErrBufferFull
 		} else {
 			// close corrupted link.
 			t.log.Error("mux error: ", err)
@@ -262,8 +280,14 @@ func (t *TCP) goServeConnection(arbiter *arbit.Arbiter, connID uint32, conn net.
 
 }
 
-func (t *TCP) handshakeConnect(arbiter *arbit.Arbiter, log *logging.Entry, connID uint32, conn net.Conn) (accepted bool, err error) {
+func (t *TCP) handshakeConnect(arbiter *arbit.Arbiter, log *logging.Entry, connID uint32, adaptedConn net.Conn) (accepted bool, err error) {
 	buf := make([]byte, defaultBufferSize)
+
+	conn, isTCPConn := adaptedConn.(*net.TCPConn)
+	if !isTCPConn {
+		log.Error("got non-tcp connection. rejected.")
+		return false, nil
+	}
 
 	// wait for hello.
 	hello := proto.Hello{}
@@ -443,8 +467,29 @@ func (t *TCP) goTCPLinkDaemon(log *logging.Entry, key string, link *TCPLink) {
 			read int
 		)
 
-		buf := make([]byte, defaultBufferSize)
+		// TCP options.
+		if bufSize := t.config.SendBufferSize; bufSize > 0 {
+			if err = link.conn.SetWriteBuffer(bufSize); err != nil {
+				log.Error("conn.SetWriteBuffer error: ", err)
+				return
+			}
+		}
+		if err = link.conn.SetNoDelay(true); err != nil {
+			log.Error("conn.SetNoDelay error: ", err)
+			return
+		}
+		if err = link.conn.SetKeepAlive(true); err != nil {
+			log.Error("conn.SetKeepalive error: ", err)
+			return
+		}
+		if keepalivePeriod := t.config.KeepalivePeriod; keepalivePeriod > 0 {
+			if err = link.conn.SetKeepAlivePeriod(time.Second * time.Duration(keepalivePeriod)); err != nil {
+				log.Error("conn.SetKeepalivePeriod error: ", err)
+				return
+			}
+		}
 
+		buf := make([]byte, defaultBufferSize)
 		for t.Arbiter.ShouldRun() {
 			if err = link.conn.SetDeadline(time.Now().Add(time.Second * 2)); err != nil {
 				log.Info("conn.SetDeadline() error: ", err)
