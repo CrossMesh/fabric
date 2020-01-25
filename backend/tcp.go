@@ -30,15 +30,23 @@ func validTCPPublishEndpoint(arr *net.TCPAddr) bool {
 	return arr.IP.IsGlobalUnicast()
 }
 
+const (
+	defaultSendTimeout    = 50
+	defaultConnectTimeout = 15
+)
+
 type TCPBackendConfig struct {
-	Bind            string      `json:"bind" yaml:"bind"`
-	Publish         string      `json:"publish" yaml:"publish"`
-	Priority        uint32      `json:"priority" yaml:"priority"`
-	StartCode       interface{} `json:"startCode" yaml:"startCode"`
-	SendTimeout     uint32      `json:"sendTimeout" yaml:"sendTimeout" default:"50"`
-	SendBufferSize  int         `json:"sendBuffer" yaml:"sendBuffer" default:"0"`
-	KeepalivePeriod int         `json:"keepalivePeriod" yaml:"keepalivePeriod" default:"60"`
-	Encrypt         bool        `json:"-" yaml:"-"`
+	Bind      string      `json:"bind" yaml:"bind"`
+	Publish   string      `json:"publish" yaml:"publish"`
+	Priority  uint32      `json:"priority" yaml:"priority"`
+	StartCode interface{} `json:"startCode" yaml:"startCode"`
+
+	SendTimeout     uint32 `json:"sendTimeout" yaml:"sendTimeout" default:"50"`
+	SendBufferSize  int    `json:"sendBuffer" yaml:"sendBuffer" default:"0"`
+	KeepalivePeriod int    `json:"keepalivePeriod" yaml:"keepalivePeriod" default:"60"`
+	ConnectTimeout  uint32 `json:"connectTimeout" yaml:"connectTimeout" default: "15"`
+
+	Encrypt bool `json:"-" yaml:"-"`
 }
 
 type tcpCreator struct {
@@ -207,6 +215,14 @@ func NewTCP(arbiter *arbit.Arbiter, log *logging.Entry, cfg *TCPBackendConfig, p
 
 func (t *TCP) Priority() uint32 {
 	return t.config.Priority
+}
+
+func (t *TCP) getSendTimeout() (timeout time.Duration) {
+	timeout = time.Microsecond * time.Duration(t.config.SendTimeout)
+	if timeout > 0 {
+		return
+	}
+	return time.Duration(defaultSendTimeout) * time.Millisecond
 }
 
 func (t *TCP) serve(arbiter *arbit.Arbiter) (err error) {
@@ -520,14 +536,10 @@ func (t *TCP) goTCPLinkDaemon(log *logging.Entry, key string, link *TCPLink) {
 	})
 }
 
-func (t *TCP) connect(ctx context.Context, addr *net.TCPAddr, publish string) (link *TCPLink, err error) {
+func (t *TCP) connect(addr *net.TCPAddr, publish string) (link *TCPLink, err error) {
 	key := addr.IP.To4().String() + strconv.FormatInt(int64(addr.Port), 10)
 	if v, exists := t.link.Load(key); exists {
 		return v.(*TCPLink), nil
-	}
-
-	if ctx == nil {
-		ctx = context.Background()
 	}
 
 	// dial
@@ -535,65 +547,76 @@ func (t *TCP) connect(ctx context.Context, addr *net.TCPAddr, publish string) (l
 	link = &TCPLink{
 		publish: publish,
 	}
-	dialer := net.Dialer{}
-	if ctx != nil {
-		if deadline, hasDeadline := ctx.Deadline(); hasDeadline {
-			dialer.Deadline = deadline
+	done := make(chan struct{}, 1)
+	t.Arbiter.Go(func() {
+		defer func() { done <- struct{}{} }()
+
+		dialer, connectTimeout := net.Dialer{}, time.Duration(0)
+		if connectTimeoutSeconds := t.config.ConnectTimeout; connectTimeoutSeconds > 0 {
+			connectTimeout = time.Second * time.Duration(connectTimeoutSeconds)
+		} else {
+			connectTimeout = time.Duration(defaultConnectTimeout) * time.Second
 		}
-	}
-	if conn, err := dialer.Dial("tcp", addr.String()); err != nil {
-		t.log.Error(err)
-		return nil, err
-	} else if tcpConn, isTCP := conn.(*net.TCPConn); !isTCP {
-		t.log.Error("got non-tcp connection")
-		return nil, ErrNonTCPConnection
-	} else {
-		link.conn = tcpConn
-	}
-	defer func() {
-		if err != nil {
+		deadline := time.Now().Add(connectTimeout)
+		dialer.Deadline = deadline
+
+		if conn, ierr := dialer.Dial("tcp", addr.String()); ierr != nil {
+			t.log.Error(err)
+			err = ierr
+			return
+		} else if tcpConn, isTCP := conn.(*net.TCPConn); !isTCP {
+			t.log.Error("got non-tcp connection")
+			err = ErrNonTCPConnection
+			return
+		} else {
+			link.conn = tcpConn
+		}
+		defer func() {
+			if err != nil {
+				link.Close()
+			}
+		}()
+
+		connID := atomic.AddUint32(&t.connID, 1)
+		log := t.log.WithField("conn_id", connID)
+
+		// handshake
+		ctx, _ := context.WithDeadline(context.TODO(), deadline)
+		var identity string
+		if identity, err = t.connectHandshake(ctx, log, link); err != nil {
 			link.Close()
+			return
 		}
-	}()
-	if done := ctx.Done(); done != nil {
-		select {
-		case <-done:
-			return nil, ErrOperationCanceled
+
+		// resolve identity.
+		if peerAddr, ierr := net.ResolveTCPAddr("tcp", identity); ierr != nil {
+			log.Errorf("cannot resolve \"%v\": %v", identity, ierr)
+			err = ierr
+			return
+		} else if !validTCPPublishEndpoint(peerAddr) {
+			err = fmt.Errorf("invalid publish endpoint")
+			log.Error(err)
+		} else {
+			identity = peerAddr.IP.To4().String() + strconv.FormatInt(int64(peerAddr.Port), 10)
 		}
+
+		if v, exists := t.link.LoadOrStore(identity, link); exists {
+			link.Close()
+			log.Warnf("link to foreign peer \"%v\" exists. closing...")
+			link = v.(*TCPLink)
+		} else {
+			// start receiver for new link.
+			t.goTCPLinkDaemon(log, identity, link)
+		}
+	})
+
+	select {
+	case <-done:
+	case <-time.After(t.getSendTimeout()):
+		return nil, ErrOperationCanceled
 	}
 
-	connID := atomic.AddUint32(&t.connID, 1)
-	log := t.log.WithField("conn_id", connID)
-
-	// handshake
-	var identity string
-	if identity, err = t.connectHandshake(ctx, log, link); err != nil {
-		link.Close()
-		return nil, err
-	}
-
-	// resolve identity.
-	if peerAddr, err := net.ResolveTCPAddr("tcp", identity); err != nil {
-		log.Errorf("cannot resolve \"%v\": %v", identity, err)
-		return nil, err
-	} else if !validTCPPublishEndpoint(peerAddr) {
-		err = fmt.Errorf("invalid publish endpoint")
-		log.Error(err)
-		return nil, err
-	} else {
-		identity = peerAddr.IP.To4().String() + strconv.FormatInt(int64(peerAddr.Port), 10)
-	}
-
-	if v, exists := t.link.LoadOrStore(identity, link); exists {
-		link.Close()
-		log.Warnf("link to foreign peer \"%v\" exists. closing...")
-		link = v.(*TCPLink)
-	} else {
-		// start receiver for new link.
-		t.goTCPLinkDaemon(log, identity, link)
-	}
-
-	return link, nil
+	return
 }
 
 func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TCPLink) (identity string, err error) {
@@ -754,7 +777,7 @@ func (t *TCP) resolve(endpoint string) (addr *net.TCPAddr, err error) {
 	return
 }
 
-func (t *TCP) Connect(ctx context.Context, endpoint string) (l Link, err error) {
+func (t *TCP) Connect(endpoint string) (l Link, err error) {
 	var (
 		addr *net.TCPAddr
 		link *TCPLink
@@ -762,7 +785,7 @@ func (t *TCP) Connect(ctx context.Context, endpoint string) (l Link, err error) 
 	if addr, err = t.resolve(endpoint); err != nil {
 		return nil, err
 	}
-	if link, err = t.connect(ctx, addr, endpoint); err != nil {
+	if link, err = t.connect(addr, endpoint); err != nil {
 		return nil, err
 	}
 	return link, err

@@ -1,7 +1,6 @@
 package backend
 
 import (
-	"context"
 	"errors"
 	"net"
 
@@ -34,7 +33,7 @@ type Backend interface {
 	Type() pb.PeerBackend_BackendType
 	Priority() uint32
 
-	Connect(context.Context, string) (Link, error)
+	Connect(string) (Link, error)
 	Watch(func(Backend, []byte, string)) error
 	Shutdown()
 
