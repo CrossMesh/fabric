@@ -91,23 +91,36 @@ type TCPLink struct {
 	remote  *net.TCPAddr
 	publish string
 
+	lock chan struct{}
+
 	backend *TCP
+}
+
+func NewTCPLink() (r *TCPLink) {
+	r = &TCPLink{
+		lock: make(chan struct{}, 1),
+	}
+	r.lock <- struct{}{}
+	return r
 }
 
 func (l *TCPLink) Send(frame []byte) (err error) {
 	t := l.backend
 
+	select {
+	case <-time.After(t.getSendTimeout()):
+		return ErrOperationCanceled
+	case <-l.lock:
+		defer func() { l.lock <- struct{}{} }()
+	}
+
 	t.Arbiter.Do(func() {
-		deadline := time.Now().Add(time.Second * time.Duration(t.config.SendTimeout))
-		if err = l.conn.SetWriteDeadline(deadline); err != nil {
-			return
-		}
 		_, err = l.muxer.Mux(frame)
 	})
 
 	if err != nil {
 		if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
-			err = ErrBufferFull
+			err = ErrOperationCanceled
 		} else {
 			// close corrupted link.
 			t.log.Error("mux error: ", err)
@@ -365,9 +378,8 @@ func (t *TCP) handshakeConnect(arbiter *arbit.Arbiter, log *logging.Entry, connI
 	log.Info("authentication success.")
 
 	// init cipher.
-	link := &TCPLink{
-		conn: conn,
-	}
+	link := NewTCPLink()
+	link.conn = conn
 	buf = buf[:0]
 	buf = append(buf, hello.Lead...)
 	if t.psk != nil {
@@ -544,9 +556,8 @@ func (t *TCP) connect(addr *net.TCPAddr, publish string) (link *TCPLink, err err
 
 	// dial
 	t.log.Info("connecting to ", addr.String())
-	link = &TCPLink{
-		publish: publish,
-	}
+	link = NewTCPLink()
+	link.publish = publish
 	done := make(chan struct{}, 1)
 	t.Arbiter.Go(func() {
 		defer func() { done <- struct{}{} }()

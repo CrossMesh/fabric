@@ -17,7 +17,6 @@ const (
 var (
 	ErrUnknownDestinationType = errors.New("Unknown destination type")
 	ErrOperationCanceled      = errors.New("operation canceled")
-	ErrBufferFull             = errors.New("buffer full")
 	ErrConnectionDeined       = errors.New("connection deined")
 	ErrConnectionClosed       = errors.New("connection closed")
 	ErrBackendTypeUnknown     = errors.New("Unknown backend type")
