@@ -24,5 +24,5 @@ type Peer interface {
 	Tx(func(Peer, *PeerReleaseTx) bool) bool
 	RTx(func(Peer))
 	OnBackendUpdated(func(Peer, []PeerBackend, []PeerBackend))
-	ActiveBackend() PeerBackend
+	ActiveBackend() *PeerBackend
 }

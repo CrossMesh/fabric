@@ -21,8 +21,6 @@ type L2Peer struct {
 type L2Router struct {
 	BaseRouter
 
-	gossip *GossipGroup
-
 	peerMAC sync.Map // map[*gossip.Peer]map[[6]byte]struct{}
 	byMAC   sync.Map // map[[6]byte]*hotMAC
 
@@ -37,11 +35,10 @@ type hotMAC struct {
 
 func NewL2Router(arbiter *arbit.Arbiter, log *logging.Entry, recordExpire time.Duration) (r *L2Router) {
 	if log == nil {
-		log = logging.WithField("module", "l2_router")
+		log = logging.WithField("module", "l2_route")
 	}
-	r = &L2Router{
-		gossip: NewGossipGroup(),
-	}
+	r = &L2Router{}
+	r.BaseRouter.gossip = NewGossipGroup()
 	r.gossip.OnAppend(r.append).OnRemove(r.remove)
 	return
 }

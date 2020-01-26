@@ -19,8 +19,13 @@ type PeerReleaseTx struct {
 	backends []backend.Backend
 	version  uint64
 
-	backendUpdated bool
-	versionUpdated bool
+	backendUpdated      bool
+	updateActiveBackend bool
+	versionUpdated      bool
+}
+
+func (t *PeerReleaseTx) UpdateActiveBackend() {
+	t.updateActiveBackend = true
 }
 
 func (t *PeerReleaseTx) Backend(backends ...backend.Backend) bool {
@@ -38,16 +43,20 @@ func (t *PeerReleaseTx) Version(version uint64) {
 }
 
 func (t *PeerReleaseTx) ShouldCommit() bool {
-	return t.PeerReleaseTx.ShouldCommit() || t.backendUpdated || (t.versionUpdated && t.version > t.meta.version)
+	return t.PeerReleaseTx.ShouldCommit() || t.backendUpdated || (t.versionUpdated && t.version > t.meta.version) || t.updateActiveBackend
 }
 
 type peerBackend struct {
 	PeerBackend
 	Priority uint32
-	Disabled bool
 }
 
 type PeerBackend struct {
+	PeerBackendIndex
+	Disabled bool
+}
+
+type PeerBackendIndex struct {
 	Type     pbp.PeerBackend_BackendType
 	Endpoint string
 }
@@ -65,12 +74,12 @@ type PeerMeta struct {
 
 func (p *PeerMeta) Meta() *PeerMeta { return p }
 func (p *PeerMeta) IsSelf() bool    { return p.Self }
-func (p *PeerMeta) ActiveBackend() PeerBackend {
+func (p *PeerMeta) ActiveBackend() *PeerBackend {
 	bes := p.backendByPriority
 	if len(bes) < 1 {
-		return PeerBackend{Type: pbp.PeerBackend_UNKNOWN}
+		return &PeerBackend{PeerBackendIndex: PeerBackendIndex{Type: pbp.PeerBackend_UNKNOWN}}
 	}
-	return bes[0].PeerBackend
+	return &bes[0].PeerBackend
 }
 
 func (p *PeerMeta) updateActiveBackend() {
@@ -126,12 +135,12 @@ func (p *PeerMeta) backendEqual(backends ...backend.Backend) bool {
 	if len(backends) != len(p.backendByPriority) {
 		return false
 	}
-	set := map[PeerBackend]struct{}{}
+	set := map[PeerBackendIndex]struct{}{}
 	for idx := range p.backendByPriority {
-		set[p.backendByPriority[idx].PeerBackend] = struct{}{}
+		set[p.backendByPriority[idx].PeerBackendIndex] = struct{}{}
 	}
 	for idx := range backends {
-		if _, exist := set[PeerBackend{
+		if _, exist := set[PeerBackendIndex{
 			Type:     backends[idx].Type(),
 			Endpoint: backends[idx].Publish(),
 		}]; !exist {
@@ -163,7 +172,7 @@ func (p *PeerMeta) Tx(commit func(Peer, *PeerReleaseTx) bool) bool {
 			return false
 		}
 
-		if !tx.backendUpdated && (!tx.versionUpdated || tx.version <= tx.meta.version) {
+		if !tx.backendUpdated && (!tx.versionUpdated || tx.version <= tx.meta.version) && !tx.updateActiveBackend {
 			return true
 		}
 
@@ -180,7 +189,18 @@ func (p *PeerMeta) Tx(commit func(Peer, *PeerReleaseTx) bool) bool {
 			// update backends.
 			if onBackendUpdated := p.onBackendUpdated; onBackendUpdated != nil {
 				olds, news := make([]PeerBackend, len(p.backendByPriority)), make([]PeerBackend, len(tx.backends))
-
+				for _, be := range p.backendByPriority {
+					olds = append(olds, be.PeerBackend)
+				}
+				for _, be := range tx.backends {
+					news = append(news, PeerBackend{
+						PeerBackendIndex: PeerBackendIndex{
+							Endpoint: be.Publish(),
+							Type:     be.Type(),
+						},
+						Disabled: false,
+					})
+				}
 				onBackendUpdated(p, olds, news)
 			}
 			p.backendByPriority = make([]*peerBackend, 0, len(tx.backends))
@@ -192,12 +212,19 @@ func (p *PeerMeta) Tx(commit func(Peer, *PeerReleaseTx) bool) bool {
 				backend := &peerBackend{
 					Priority: b.Priority(),
 					PeerBackend: PeerBackend{
-						Endpoint: b.Publish(),
-						Type:     b.Type(),
+						PeerBackendIndex: PeerBackendIndex{
+							Endpoint: b.Publish(),
+							Type:     b.Type(),
+						},
+						Disabled: false,
 					},
 				}
 				p.backendByPriority = append(p.backendByPriority, backend)
 			}
+			tx.updateActiveBackend = true
+		}
+
+		if tx.updateActiveBackend {
 			p.updateActiveBackend()
 		}
 

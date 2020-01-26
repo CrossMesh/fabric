@@ -16,8 +16,6 @@ import (
 type L3Router struct {
 	BaseRouter
 
-	gossip *GossipGroup
-
 	peerIP sync.Map // map[*gossip.Peer]map[[4]byte]struct{}
 	byIP   sync.Map // map[[4]byte]*hotIP
 
@@ -28,9 +26,8 @@ func NewL3Router(arbiter *arbit.Arbiter, log *logging.Entry, recordExpire time.D
 	if log == nil {
 		log = logging.WithField("module", "l3_router")
 	}
-	r = &L2Router{
-		gossip: NewGossipGroup(),
-	}
+	r = &L2Router{}
+	r.BaseRouter.gossip = NewGossipGroup()
 	r.gossip.OnAppend(r.append).OnRemove(r.remove)
 	return
 }

@@ -24,6 +24,8 @@ type BaseRouter struct {
 
 	now time.Time
 	log *logging.Entry
+
+	gossip *GossipGroup
 }
 
 type hotPeer struct {
@@ -31,6 +33,7 @@ type hotPeer struct {
 	lastHit time.Time
 }
 
+func (r *BaseRouter) Gossip() *GossipGroup { return r.gossip }
 func (r *BaseRouter) hitPeer(p Peer) {
 	if p == nil {
 		return
