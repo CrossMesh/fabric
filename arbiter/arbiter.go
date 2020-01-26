@@ -54,6 +54,10 @@ func (a *Arbiter) Reset() {
 	a.running = true
 }
 
+func (a *Arbiter) Log() *logging.Entry {
+	return a.log
+}
+
 // Go spawns the proc (act the same as the "go" keyword) and let the arbiter traces it.
 func (a *Arbiter) Go(proc func()) *Arbiter {
 	atomic.AddInt32(&a.runningCount, 1)

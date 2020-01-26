@@ -15,6 +15,8 @@ import (
 
 type EdgeRouter struct {
 	rpc *rpc.Stub
+	rpcClient *rpc.Client
+	rpcServer *rpc.Server
 
 	lock         sync.RWMutex
 	routeArbiter *arbit.Arbiter
