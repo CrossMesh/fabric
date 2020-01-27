@@ -11,7 +11,7 @@ type Interface struct {
 	Name    string `json:"name" yaml:"name"`
 	MAC     string `json:"mac" yaml:"mac"`
 	Address string `json:"address" yaml:"address"`
-	Network string `json:"network" yaml:"network"`
+	//Network string `json:"network" yaml:"network"`
 }
 
 type Network struct {

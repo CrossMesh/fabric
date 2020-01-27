@@ -56,14 +56,15 @@ var ConstructorByID map[uint16]func() interface{} = map[uint16]func() interface{
 }
 
 const (
-	ProtocolMessageHeaderSize = 2
+	ProtocolMessageHeaderSize = 3
 )
 
 func PackProtocolMessageHeader(buf []byte, msgID uint16) []byte {
 	if len(buf) < ProtocolMessageHeaderSize {
 		return nil
 	}
-	binary.BigEndian.PutUint16(buf, msgID)
+	buf[0] = 0
+	binary.BigEndian.PutUint16(buf[1:], msgID)
 	return buf[:ProtocolMessageHeaderSize]
 }
 func PackProtocolMessageHeaderByMsg(buf []byte, msg interface{}) (packed []byte, err error) {
@@ -82,9 +83,9 @@ func PackProtocolMessageHeaderByMsg(buf []byte, msg interface{}) (packed []byte,
 	return packed[:ProtocolMessageHeaderSize], nil
 }
 
-func UnpackProtocolMessageHeader(buf []byte) uint16 {
-	if len(buf) < 2 {
-		return MsgTypeUnknown
+func UnpackProtocolMessageHeader(buf []byte) (uint16, []byte) {
+	if len(buf) < 2 || buf[0] != 0 {
+		return MsgTypeUnknown, nil
 	}
-	return binary.BigEndian.Uint16(buf)
+	return binary.BigEndian.Uint16(buf[1:]), buf[ProtocolMessageHeaderSize:]
 }

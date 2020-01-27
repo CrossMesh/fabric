@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	arbit "git.uestc.cn/sunmxt/utt/arbiter"
 	"git.uestc.cn/sunmxt/utt/config"
 	"git.uestc.cn/sunmxt/utt/edgerouter"
 	"github.com/jinzhu/configor"
@@ -24,13 +25,23 @@ func newEdgeCmd() *cli.Command {
 			if net == nil {
 				return nil
 			}
+			arbiter := arbit.New(nil)
+			arbiter.HookPreStop(func() {
+				arbiter.Log().Info("shutting down...")
+			})
+			arbiter.HookStopped(func() {
+				arbiter.Log().Info("exiting...")
+			})
 			var app *edgerouter.EdgeRouter
-			app, err = edgerouter.New()
+			app, err = edgerouter.New(arbiter)
 			if err != nil {
 				log.Error("create router failure: ", err)
 				return err
 			}
-			return app.Do(net)
+			if err = app.ApplyConfig(net); err != nil {
+				return err
+			}
+			return arbiter.Arbit()
 		},
 		Flags: []cli.Flag{
 			&cli.StringFlag{

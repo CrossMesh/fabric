@@ -53,7 +53,7 @@ func (r *EdgeRouter) updateBackends(cfgs []*config.Backend) (err error) {
 				r.log.Errorf("create backend %v:%v failure: %v", backend.GetBackendIdentityName(creator.Type()), creator.Publish, err)
 			} else {
 				r.backends.Store(index, new)
-				new.Watch(r.relayRemote)
+				new.Watch(r.receiveRemote)
 			}
 		}
 		delete(backendCreators, index)
@@ -69,7 +69,7 @@ func (r *EdgeRouter) updateBackends(cfgs []*config.Backend) (err error) {
 			r.log.Errorf("create backend %v:%v failure: %v", backend.GetBackendIdentityName(creator.Type()), creator.Publish, err)
 		} else {
 			r.backends.Store(index, new)
-			new.Watch(r.relayRemote)
+			new.Watch(r.receiveRemote)
 		}
 	}
 

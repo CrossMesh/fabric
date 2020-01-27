@@ -38,9 +38,12 @@ message RPC {
     enum Type {
         Request = 0;
         Reply = 1;
+        Error = 2;
     }
-    string function = 2;
-    bytes data = 3;
+    Type type = 2;
+    string error = 3;
+    string function = 4;
+    bytes data = 5;
 }
 
 message Ping {

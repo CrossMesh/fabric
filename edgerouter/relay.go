@@ -20,7 +20,26 @@ var (
 	ErrRelayNoBackend = errors.New("backend unavaliable")
 )
 
-func (r *EdgeRouter) relayRemote(backend backend.Backend, frame []byte, src string) {
+func (r *EdgeRouter) receiveRemote(backend backend.Backend, frame []byte, src string) {
+	msgType, data := proto.UnpackProtocolMessageHeader(frame)
+	peer := r.route.Backward(data, route.PeerBackend{
+		PeerBackendIndex: route.PeerBackendIndex{
+			Type:     backend.Type(),
+			Endpoint: src,
+		},
+	})
+	switch msgType {
+	case proto.MsgTypeRPC:
+		r.receiveRPCMessage(data, peer)
+	case proto.MsgTypeRawFrame:
+		r.backwardVTEP(data, peer)
+	default:
+		return
+	}
+}
+
+func (r *EdgeRouter) backwardVTEP(frame []byte, peer route.Peer) {
+	r.ifaceDevice.Write(frame)
 }
 
 // VTEP to remote peers.

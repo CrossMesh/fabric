@@ -19,7 +19,7 @@ func (r *EdgeRouter) RPCClient(peer route.Peer) *RPCClient {
 	return &RPCClient{
 		Client: r.rpcClient,
 		send: func(id uint32, name string, proto []byte) error {
-			return r.sendRPCMessage(peer, id, name, proto)
+			return r.sendRPCRequest(peer, id, name, proto)
 		},
 	}
 }
