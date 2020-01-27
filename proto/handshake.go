@@ -8,10 +8,6 @@ import (
 	"encoding/binary"
 )
 
-var (
-	helloMagic = []byte{'u', 't', 't', 0, 0, 0}
-)
-
 type Hello struct {
 	Lead []byte
 	IV   [12]byte
@@ -69,7 +65,7 @@ type Welcome struct {
 	Identity string
 }
 
-func (c *Welcome) Len() int { return 1 + c.MsgLen }
+func (c *Welcome) Len() int { return 1 + c.MsgLen + 2 + len([]byte(c.Identity)) }
 
 func (c *Welcome) EncodeMessage(msg string) error {
 	raw := []byte(msg)
@@ -126,7 +122,7 @@ const (
 )
 
 func (c *Connect) Len() int {
-	return 1 + len([]byte(c.Identity))
+	return 3 + len([]byte(c.Identity))
 }
 
 func (c *Connect) Encode(buf []byte) []byte {
@@ -134,7 +130,7 @@ func (c *Connect) Encode(buf []byte) []byte {
 	idBin := []byte(c.Identity)
 	buf = append(buf, c.Version)
 	buf = append(buf, 0, 0)
-	binary.BigEndian.PutUint16(buf, uint16(len(idBin)))
+	binary.BigEndian.PutUint16(buf[1:], uint16(len(idBin)))
 	buf = append(buf, idBin...)
 	return buf
 }

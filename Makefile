@@ -15,7 +15,7 @@ cover: coverage test
 	go tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html
 
 test: coverage
-	go test -v -coverprofile=$(COVERAGE_DIR)/coverage.out ./mux/... ./rpc/... ./gossip/...
+	go test -v -coverprofile=$(COVERAGE_DIR)/coverage.out ./mux/... ./rpc/... ./gossip/... ./proto
 	go tool cover -func=$(COVERAGE_DIR)/coverage.out
 
 build:
@@ -46,7 +46,7 @@ bin/goimports:
 devtools: bin/protoc-gen-go bin/gopls bin/goimports
 
 proto: bin/protoc-gen-go
-	protoc -I=$(PROJECT_ROOT)/pkg --go_out=$(PROJECT_ROOT)/pkg proto/pb/core.proto 
+	protoc -I=$(PROJECT_ROOT) --go_out=$(PROJECT_ROOT) proto/pb/core.proto 
 
 exec:
 	$(CMD)

@@ -10,8 +10,7 @@ import (
 )
 
 var (
-	ErrMessageKindUnregistered = errors.New("Message kind not registered")
-	ErrUnknownMessageType      = errors.New("Unknown message type")
+	ErrUnknownMessageType = errors.New("Unknown message type")
 )
 
 type ProtocolMessage interface {
@@ -66,21 +65,6 @@ func PackProtocolMessageHeader(buf []byte, msgID uint16) []byte {
 	buf[0] = 0
 	binary.BigEndian.PutUint16(buf[1:], msgID)
 	return buf[:ProtocolMessageHeaderSize]
-}
-func PackProtocolMessageHeaderByMsg(buf []byte, msg interface{}) (packed []byte, err error) {
-	ty := reflect.TypeOf(msg)
-	if ty.Kind() == reflect.Ptr {
-		ty = ty.Elem()
-	}
-	msgTypeID, registered := IDByProtoType[ty]
-	if !registered {
-		return nil, ErrMessageKindUnregistered
-	}
-	if len(buf) < 2 {
-		packed = make([]byte, 2)
-	}
-	binary.BigEndian.PutUint16(packed, msgTypeID)
-	return packed[:ProtocolMessageHeaderSize], nil
 }
 
 func UnpackProtocolMessageHeader(buf []byte) (uint16, []byte) {
