@@ -1,6 +1,7 @@
 package arbiter
 
 import (
+	"context"
 	"os"
 	"os/signal"
 	"sync/atomic"
@@ -12,7 +13,9 @@ import (
 // Arbiter is tracer to manage lifecycle of goroutines.
 type Arbiter struct {
 	runningCount int32
-	running      bool
+
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	sigFibreExit chan struct{}
 	sigPreStop   chan struct{}
@@ -26,7 +29,7 @@ type Arbiter struct {
 	parent *Arbiter
 }
 
-// NewWithParent create a new arbiter atteched to specified parent arbiter.
+// NewWithParent creates a new arbiter atteched to specified parent arbiter.
 // The arbiter will be shut down by the parent or a call to Arbiter.Shutdown().
 func NewWithParent(parent *Arbiter, log *logging.Entry) *Arbiter {
 	if log == nil {
@@ -37,9 +40,17 @@ func NewWithParent(parent *Arbiter, log *logging.Entry) *Arbiter {
 		sigPreStop:   make(chan struct{}, 1),
 		sigOS:        make(chan os.Signal, 0),
 		log:          log,
-		running:      true,
 		parent:       parent,
 	}
+
+	var parentCtx context.Context
+	if a.parent != nil {
+		parentCtx = parent.ctx
+	} else {
+		parentCtx = context.Background()
+	}
+	a.ctx, a.cancel = context.WithCancel(parentCtx)
+
 	a.sigPreStop <- struct{}{}
 	return a
 }
@@ -49,11 +60,7 @@ func New(log *logging.Entry) *Arbiter {
 	return NewWithParent(nil, log)
 }
 
-func (a *Arbiter) Reset() {
-	a.Join(false)
-	a.running = true
-}
-
+// Log return Entry of arbiter.
 func (a *Arbiter) Log() *logging.Entry {
 	return a.log
 }
@@ -72,6 +79,7 @@ func (a *Arbiter) Go(proc func()) *Arbiter {
 	return a
 }
 
+// TickGo spawns proc with specified period.
 func (a *Arbiter) TickGo(proc func(func(), time.Time), period time.Duration, brust uint32) (cancel func()) {
 	if brust < 1 {
 		return
@@ -122,21 +130,26 @@ func (a *Arbiter) Do(proc func()) *Arbiter {
 
 // ShouldRun is called by goroutines traced by Arbiter, indicating whether the goroutines can continue to execute.
 func (a *Arbiter) ShouldRun() bool {
-	if a.parent != nil {
-		return a.parent.ShouldRun() && a.running
+	select {
+	case <-a.ctx.Done():
+		return false
+	default:
 	}
-	return a.running
+	return true
 }
 
-// Shutdown shuts the arbiter.
+// Exit returns a channel that is closed when arbiter is shutdown.
+func (a *Arbiter) Exit() <-chan struct{} {
+	return a.ctx.Done()
+}
+
+// Shutdown shuts the arbiter, sending exit signal to all goroutines and executions.
 func (a *Arbiter) Shutdown() {
-	a.shutdown()
-	atomic.AddInt32(&a.runningCount, 1)
-	a.sigFibreExit <- struct{}{}
+	a.Do(func() { a.shutdown() })
 }
 
 func (a *Arbiter) shutdown() {
-	a.running = false
+	a.cancel()
 }
 
 // StopOSSignals chooses OS signals to shut the arbiter.
@@ -158,7 +171,7 @@ func (a *Arbiter) join() {
 				a.runningCount--
 
 			case <-a.sigOS:
-				if a.running {
+				if a.ShouldRun() {
 					a.shutdown()
 					preStop := a.preStop
 					if preStop != nil {
@@ -197,7 +210,7 @@ func (a *Arbiter) HookPreStop(proc func()) *Arbiter {
 	return a
 }
 
-// HookStopped inserts after-stop (all goroutines existed) callback function.
+// HookStopped inserts after-stop (all goroutines and executions finished) callback function.
 func (a *Arbiter) HookStopped(proc func()) *Arbiter {
 	a.afterStop = proc
 	return a
