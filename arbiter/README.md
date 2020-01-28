@@ -22,11 +22,6 @@ arbiter := arbit.New() // new arbiter
 
 ```go
 arbiter.Go(func(){
-  // ... do something.
-  if arbiter.ShouldRun() { // check whether should exit.
-    // do cleaning...
-    return
-  }
   // ... do something ...
 })
 ```
@@ -35,15 +30,11 @@ arbiter.Go(func(){
 
 ```go
 arbiter.Do(func(){
-  // ... do something.
+  // ... do something ...
 })
 ```
 
-### Join (Wait)
 
-```go
-arbiter.Join(false) // blocked until all goroutines and executions exited.
-```
 
 ### Shutdown
 
@@ -55,7 +46,36 @@ arbiter.Shutdown() // shutdown. Arbiter will send exit signal to all goroutines 
 
 ```go
 arbiter.StopOSSignals(os.Kill, os.Interrupt) // SIGKILL and SIGINT will tigger Shutdown().
-arbiter.Join(false) // just wait.
+```
+
+### Watch a shutdown
+
+*Shutdown* signal will be sent via a channel. use *select* to watch it.
+
+```go
+select {
+  case <-arbiter.Exit(): // watch for a shutdown signal.
+    // ...do cleanning...
+  case ...
+  case ...
+}
+```
+
+Or you may periodically check **arbiter.Shutdown()**. For example: 
+
+```go
+for arbiter.ShouldRun() {
+  // ... do something ...
+}
+// ...do cleanning...
+```
+
+
+
+### Join (Wait)
+
+```go
+arbiter.Join() // blocked until all goroutines and executions exited.
 ```
 
 #### Arbit
@@ -63,4 +83,19 @@ arbiter.Join(false) // just wait.
 ```go
 arbiter.Arbit() // Let SIGKILL and SIGINT tigger Shutdown() than wait.
 ```
+
+---
+
+### Arbiter tree
+
+Create derived Arbiter.
+
+```go
+child := arbit.NewWithParent(arbiter) // new child arbiter
+```
+
+Many derived arbiters forms a **arbiter tree**, which has following properties:
+
+- Derived arbiters will be **automatically shut down** when the parent does.
+- *Arbiter.Join()* waits for all goroutines and executions on the arbiter tree (i.e **childrens' included** ) to exit
 

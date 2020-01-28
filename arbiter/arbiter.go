@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -12,13 +13,14 @@ import (
 
 // Arbiter is tracer to manage lifecycle of goroutines.
 type Arbiter struct {
+	lock sync.Mutex
+
 	runningCount int32
 
 	ctx    context.Context
 	cancel context.CancelFunc
 
 	sigFibreExit chan struct{}
-	sigPreStop   chan struct{}
 	sigOS        chan os.Signal
 
 	preStop   func()
@@ -26,7 +28,7 @@ type Arbiter struct {
 
 	log *logging.Entry
 
-	parent *Arbiter
+	children map[*Arbiter]struct{}
 }
 
 // NewWithParent creates a new arbiter atteched to specified parent arbiter.
@@ -37,21 +39,24 @@ func NewWithParent(parent *Arbiter, log *logging.Entry) *Arbiter {
 	}
 	a := &Arbiter{
 		sigFibreExit: make(chan struct{}, 10),
-		sigPreStop:   make(chan struct{}, 1),
 		sigOS:        make(chan os.Signal, 0),
 		log:          log,
-		parent:       parent,
 	}
 
 	var parentCtx context.Context
-	if a.parent != nil {
+	if parent != nil {
 		parentCtx = parent.ctx
+
+		// add myself as child.
+		parent.lock.Lock()
+		parent.children[a] = struct{}{}
+		parent.lock.Unlock()
 	} else {
 		parentCtx = context.Background()
+
 	}
 	a.ctx, a.cancel = context.WithCancel(parentCtx)
 
-	a.sigPreStop <- struct{}{}
 	return a
 }
 
@@ -158,11 +163,18 @@ func (a *Arbiter) StopOSSignals(stopSignals ...os.Signal) *Arbiter {
 	return a
 }
 
-func (a *Arbiter) join() {
-	<-a.sigPreStop
-	defer func() {
-		a.sigPreStop <- struct{}{}
-	}()
+// Join waits until all goroutines exited (sync mode).
+// NOTE: Not less then one goroutines should Join() arbiter.
+func (a *Arbiter) Join() {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
+	for child := range a.children {
+		if child == nil {
+			continue
+		}
+		a.Go(func() { child.Join() })
+	}
 
 	if a.runningCount > 0 {
 		for a.runningCount > 0 {
@@ -187,20 +199,10 @@ func (a *Arbiter) join() {
 	}
 }
 
-// Join waits until all goroutines exited (sync mode).
-// NOTE: Not less then one goroutines should Join() arbiter.
-func (a *Arbiter) Join(async bool) {
-	if async {
-		go a.join()
-		return
-	}
-	a.join()
-}
-
 // Arbit configures SIGKILL and SIGINT as shutting down signal and waits until all goroutines exited.
 func (a *Arbiter) Arbit() error {
 	a.StopOSSignals(os.Kill, os.Interrupt)
-	a.join()
+	a.Join()
 	return nil
 }
 
