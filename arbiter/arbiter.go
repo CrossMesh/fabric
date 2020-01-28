@@ -177,7 +177,7 @@ func (a *Arbiter) join() {
 // Join waits until all goroutines exited (sync mode).
 // NOTE: Not less then one goroutines should Join() arbiter.
 func (a *Arbiter) Join(async bool) {
-	if !async {
+	if async {
 		go a.join()
 		return
 	}
