@@ -1,6 +1,7 @@
 package route
 
 import (
+	"git.uestc.cn/sunmxt/utt/backend"
 	"git.uestc.cn/sunmxt/utt/gossip"
 	pbp "git.uestc.cn/sunmxt/utt/proto/pb"
 )
@@ -23,6 +24,6 @@ type Peer interface {
 	PBSnapshot() (*pbp.Peer, error)
 	Tx(func(Peer, *PeerReleaseTx) bool) bool
 	RTx(func(Peer))
-	OnBackendUpdated(func(Peer, []PeerBackend, []PeerBackend))
+	OnBackendUpdated(func(Peer, []backend.PeerBackendIdentity, []backend.PeerBackendIdentity))
 	ActiveBackend() *PeerBackend
 }

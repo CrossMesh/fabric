@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"git.uestc.cn/sunmxt/utt/pkg/cmd"
+	"git.uestc.cn/sunmxt/utt/cmd"
 )
 
 func main() {

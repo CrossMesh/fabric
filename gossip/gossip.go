@@ -2,6 +2,7 @@ package gossip
 
 import (
 	"math/rand"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -113,6 +114,13 @@ func (p *Peer) Region() string                  { return p.region }
 func (p *Peer) IsSelf() bool                    { return false }
 func (p *Peer) Valid() bool                     { return true }
 func (p *Peer) GossiperStub() *Peer             { return p }
+func (p *Peer) String() string {
+	stateName, _ := StateName[p.state]
+	if stateName == "" {
+		stateName = "unknown"
+	}
+	return "liveness(" + stateName + "," + strconv.FormatInt(int64(p.stateVersion), 10) + ",\"" + p.region + "\")"
+}
 
 func (p *Peer) Tx(commit func(*PeerReleaseTx) bool) bool {
 	p.lock.Lock()

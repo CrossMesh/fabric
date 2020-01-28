@@ -8,6 +8,7 @@ import (
 	"time"
 
 	arbit "git.uestc.cn/sunmxt/utt/arbiter"
+	"git.uestc.cn/sunmxt/utt/backend"
 	"git.uestc.cn/sunmxt/utt/gossip"
 	pbp "git.uestc.cn/sunmxt/utt/proto/pb"
 	logging "github.com/sirupsen/logrus"
@@ -22,13 +23,14 @@ type L3Router struct {
 	recordExpire time.Duration
 }
 
-func NewL3Router(arbiter *arbit.Arbiter, log *logging.Entry, recordExpire time.Duration) (r *L2Router) {
+func NewL3Router(arbiter *arbit.Arbiter, log *logging.Entry, recordExpire time.Duration) (r *L3Router) {
 	if log == nil {
 		log = logging.WithField("module", "l3_router")
 	}
-	r = &L2Router{}
+	r = &L3Router{}
 	r.BaseRouter.gossip = NewGossipGroup()
 	r.gossip.OnAppend(r.append).OnRemove(r.remove)
+	r.goTasks(arbiter)
 	return
 }
 
@@ -119,41 +121,52 @@ func (r *L3Router) Forward(packet []byte) (peers []Peer) {
 	return
 }
 
-func (r *L3Router) Backward(packet []byte, backend PeerBackend) (p Peer) {
+func (r *L3Router) Backward(packet []byte, backend backend.PeerBackendIdentity) (p Peer, new bool) {
 	var src [6]byte
 
 	if p = r.BackendPeer(backend); p == nil {
-		return
+		return nil, false
 	}
 	if len(packet) < 20 {
 		// packet too small.
-		return
+		return p, false
 	}
 	if version := uint8(packet[0]) >> 4; version != 4 {
 		// not version 4.
-		return
+		return p, false
 	}
 	copy(src[:], packet[12:16])
 	ip := net.IP(src[0:4])
 	if ip.IsLoopback() || ip.IsMulticast() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() {
 		// drop lookback and unspecified address.
 		// multicast is not supported now.
-		return
+		return p, false
 	}
-	if !ip.Equal((net.IPv4bcast)) {
-		return
+	if ip.Equal(net.IPv4bcast) {
+		return p, false
 	}
 	// lookup record.
+	new = true
 	for {
 		v, loaded := r.byIP.Load(src)
 		if loaded {
 			hot, isHot := v.(*hotIP)
 			if isHot {
-				r.hitPeer(hot.p)
+				new = false
+				r.hitPeer(p)
 
 				// update record.
-				hot.lastHit = r.now
+				if hot.p != p {
+					// move IP to new set.
+					if ips := r.getIPSet(hot.p); ips != nil {
+						ips.Delete(src)
+					}
+					if ips := r.getIPSet(p); ips != nil {
+						ips.Store(src, struct{}{})
+					}
+				}
 				hot.p = p
+				hot.lastHit = r.now
 				break
 			}
 		}
@@ -170,9 +183,9 @@ func (r *L3Router) Backward(packet []byte, backend PeerBackend) (p Peer) {
 				ips.Store(src, struct{}{})
 			}
 		}
+		break
 	}
-
-	return nil
+	return
 }
 
 func (r *L3Router) append(v gossip.MembershipPeer) {

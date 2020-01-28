@@ -5,6 +5,7 @@ import (
 	"time"
 
 	arbit "git.uestc.cn/sunmxt/utt/arbiter"
+	"git.uestc.cn/sunmxt/utt/backend"
 	"git.uestc.cn/sunmxt/utt/gossip"
 	logging "github.com/sirupsen/logrus"
 )
@@ -13,7 +14,7 @@ type Router interface {
 	Gossip() *GossipGroup
 
 	Forward([]byte) []Peer
-	Backward([]byte, PeerBackend) Peer
+	Backward([]byte, PeerBackend) (Peer, bool)
 	BackendPeer(backend PeerBackend) Peer
 	HotPeers(time.Duration) []Peer
 }
@@ -45,7 +46,7 @@ func (r *BaseRouter) hitPeer(p Peer) {
 	r.hots.Store(p.GossiperStub(), hot)
 }
 
-func (r *BaseRouter) BackendPeer(backend PeerBackend) (p Peer) {
+func (r *BaseRouter) BackendPeer(backend backend.PeerBackendIdentity) (p Peer) {
 	v, ok := r.byBackend.Load(backend)
 	if !ok {
 		return nil
@@ -85,7 +86,7 @@ func (r *BaseRouter) goTasks(arbiter *arbit.Arbiter) {
 	}, time.Second*2, 1)
 }
 
-func (r *BaseRouter) backendUpdated(p Peer, olds, news []PeerBackend) {
+func (r *BaseRouter) backendUpdated(p Peer, olds, news []backend.PeerBackendIdentity) {
 	for _, backend := range olds {
 		r.byBackend.Delete(backend)
 	}
@@ -97,12 +98,12 @@ func (r *BaseRouter) backendUpdated(p Peer, olds, news []PeerBackend) {
 func (r *BaseRouter) append(v gossip.MembershipPeer) {
 	peer, ok := v.(Peer)
 	if !ok {
-		r.log.Errorf("invalid gossip member for router to append: ", v)
+		r.log.Error("invalid gossip member for router to append: ", v)
 		return
 	}
 	// map backends.
 	for _, backend := range peer.Meta().backendByPriority {
-		r.byBackend.Store(backend.PeerBackend, peer)
+		r.byBackend.Store(backend.PeerBackendIdentity, peer)
 	}
 	// watch backend changes.
 	peer.OnBackendUpdated(r.backendUpdated)
@@ -111,11 +112,11 @@ func (r *BaseRouter) append(v gossip.MembershipPeer) {
 func (r *BaseRouter) remove(v gossip.MembershipPeer) {
 	peer, ok := v.(Peer)
 	if !ok {
-		r.log.Errorf("invalid gossip member for router to remove: ", v)
+		r.log.Error("invalid gossip member for router to remove: ", v)
 		return
 	}
 	r.hots.Delete(peer.GossiperStub())
 	for _, backend := range peer.Meta().backendByPriority {
-		r.byBackend.Delete(backend.PeerBackend)
+		r.byBackend.Delete(backend.PeerBackendIdentity)
 	}
 }

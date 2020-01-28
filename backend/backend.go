@@ -40,6 +40,11 @@ type Backend interface {
 	IP() net.IP
 }
 
+type PeerBackendIdentity struct {
+	Type     pb.PeerBackend_BackendType
+	Endpoint string
+}
+
 type BackendCreator interface {
 	Type() pb.PeerBackend_BackendType
 	Priority() uint32

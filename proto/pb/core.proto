@@ -7,7 +7,7 @@ message PeerBackend {
         UNKNOWN = 0;
         TCP = 1;
     }
-    BackendType backend = 1;
+    BackendType type = 1;
     string endpoint = 2;
     uint32 priority = 3;
 }

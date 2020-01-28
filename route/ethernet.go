@@ -6,6 +6,7 @@ import (
 	"time"
 
 	arbit "git.uestc.cn/sunmxt/utt/arbiter"
+	"git.uestc.cn/sunmxt/utt/backend"
 	"git.uestc.cn/sunmxt/utt/gossip"
 	logging "github.com/sirupsen/logrus"
 )
@@ -40,6 +41,7 @@ func NewL2Router(arbiter *arbit.Arbiter, log *logging.Entry, recordExpire time.D
 	r = &L2Router{}
 	r.BaseRouter.gossip = NewGossipGroup()
 	r.gossip.OnAppend(r.append).OnRemove(r.remove)
+	r.goTasks(arbiter)
 	return
 }
 
@@ -52,29 +54,32 @@ func (r *L2Router) getMACSet(p gossip.MembershipPeer) *sync.Map {
 	return m
 }
 
+func (r *L2Router) expireHotMAC(now time.Time) {
+	r.byMAC.Range(func(k, v interface{}) bool {
+		hot, isHotMAC := v.(*hotMAC)
+		if !isHotMAC {
+			return true
+		}
+		// expired.
+		if hot.lastHit.Add(r.recordExpire).Before(now) {
+			r.byMAC.Delete(k)
+			if macSet := r.getMACSet(hot.p); macSet != nil {
+				macSet.Delete(hot.mac)
+			}
+		}
+		return true
+	})
+}
+
 func (r *L2Router) goTasks(arbiter *arbit.Arbiter) {
 	r.BaseRouter.goTasks(arbiter)
-
 	// expire records.
 	cacheCleanningDuration := time.Second
 	if r.recordExpire < cacheCleanningDuration {
 		cacheCleanningDuration = r.recordExpire
 	}
 	arbiter.TickGo(func(cancel func(), deadline time.Time) {
-		r.byMAC.Range(func(k, v interface{}) bool {
-			hot, isHotMAC := k.(*hotMAC)
-			if !isHotMAC {
-				return true
-			}
-			// expired.
-			if hot.lastHit.Add(r.recordExpire).Before(r.now) {
-				r.byMAC.Delete(k)
-				if macSet := r.getMACSet(hot.p); macSet != nil {
-					macSet.Delete(hot.mac)
-				}
-			}
-			return true
-		})
+		r.expireHotMAC(r.now)
 	}, cacheCleanningDuration, 1)
 }
 
@@ -99,7 +104,7 @@ func (r *L2Router) Forward(frame []byte) (peers []Peer) {
 			}
 		}
 	}
-	// fallback to  boardcast.
+	// fallback to boardcast.
 	r.gossip.VisitPeer(func(region string, p gossip.MembershipPeer) bool {
 		peer, isPeer := p.(Peer)
 		if !isPeer {
@@ -111,31 +116,42 @@ func (r *L2Router) Forward(frame []byte) (peers []Peer) {
 	return
 }
 
-func (r *L2Router) Backward(frame []byte, backend PeerBackend) (p Peer) {
+func (r *L2Router) Backward(frame []byte, backend backend.PeerBackendIdentity) (p Peer, new bool) {
 	var src [6]byte
 
 	// decode source MAC.
 	if len(frame) < 14 {
 		// frame too small
-		return nil
+		return nil, false
 	}
 	copy(src[:], frame[6:12])
 	if p = r.BackendPeer(backend); p == nil {
-		return
+		return nil, false
 	}
-	if 0 != bytes.Compare(src[:], EthernetBoardcastAddress[:]) {
+	if 0 == bytes.Compare(src[:], EthernetBoardcastAddress[:]) {
 		// do not learn boardcast address.
-		return
+		return p, false
 	}
+	new = true
 	// lookup record by MAC.
 	for {
 		v, loaded := r.byMAC.Load(src)
 		if loaded {
 			hot, isHot := v.(*hotMAC)
 			if isHot { // found.
-				r.hitPeer(hot.p)
+				new = false
+				r.hitPeer(p)
 
 				// update record.
+				if hot.p != p {
+					// move mac to new set.
+					if macs := r.getMACSet(hot.p); macs != nil {
+						macs.Delete(src)
+					}
+					if macs := r.getMACSet(p); macs != nil {
+						macs.Store(src, struct{}{})
+					}
+				}
 				hot.p = p
 				hot.lastHit = r.now
 				break

@@ -70,7 +70,6 @@ func TestConnect(t *testing.T) {
 	buf = msg.Encode(buf)
 	assert.Equal(t, len(buf), msg.Len())
 
-	t.Log(buf)
 	// decode
 	decoded := &Connect{}
 	assert.Error(t, decoded.Decode(buf[:1]))
