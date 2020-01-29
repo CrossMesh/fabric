@@ -44,7 +44,7 @@ type TCPBackendConfig struct {
 	SendTimeout     uint32 `json:"sendTimeout" yaml:"sendTimeout" default:"50"`
 	SendBufferSize  int    `json:"sendBuffer" yaml:"sendBuffer" default:"0"`
 	KeepalivePeriod int    `json:"keepalivePeriod" yaml:"keepalivePeriod" default:"60"`
-	ConnectTimeout  uint32 `json:"connectTimeout" yaml:"connectTimeout" default: "15"`
+	ConnectTimeout  uint32 `json:"connectTimeout" yaml:"connectTimeout" default:"15"`
 
 	Encrypt bool `json:"-" yaml:"-"`
 }
@@ -221,7 +221,7 @@ func NewTCP(arbiter *arbit.Arbiter, log *logging.Entry, cfg *TCPBackendConfig, p
 
 			t.serve(arbiter)
 		}
-	}).Join(true)
+	})
 
 	return t, nil
 }
@@ -771,7 +771,7 @@ func (t *TCP) Publish() (id string) {
 
 func (t *TCP) Shutdown() {
 	t.Arbiter.Shutdown()
-	t.Arbiter.Join(false)
+	t.Arbiter.Join()
 }
 
 func (t *TCP) resolve(endpoint string) (addr *net.TCPAddr, err error) {

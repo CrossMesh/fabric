@@ -1,6 +1,7 @@
 package route
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -11,8 +12,56 @@ import (
 	"git.uestc.cn/sunmxt/utt/backend"
 	"git.uestc.cn/sunmxt/utt/gossip"
 	pbp "git.uestc.cn/sunmxt/utt/proto/pb"
+	"github.com/golang/protobuf/ptypes"
 	logging "github.com/sirupsen/logrus"
 )
+
+// L3PeerReleaseTx is implement of transaction.
+type L3PeerReleaseTx struct {
+	*PeerReleaseTx
+
+	p *L3Peer
+
+	ip       net.IP
+	mask     net.IPMask
+	isRouter bool
+
+	isRouterUpdated bool
+}
+
+func (t *L3PeerReleaseTx) IsRouter(isRouter bool) {
+	if isRouter == t.p.isRouter {
+		t.isRouterUpdated, t.isRouter = false, t.p.isRouter
+		return
+	}
+	t.isRouterUpdated, t.isRouter = true, isRouter
+}
+
+func (t *L3PeerReleaseTx) CIDR(cidr string) error {
+	ip, n, err := net.ParseCIDR(cidr)
+	if err != nil {
+		t.mask, t.ip = nil, nil
+		return err
+	}
+	t.Net(ip, n.Mask)
+	return nil
+}
+
+func (t *L3PeerReleaseTx) Net(ip net.IP, mask net.IPMask) {
+	ip = ip.To4()
+	if ip == nil || mask == nil {
+		return
+	}
+	if ip.Equal(t.p.ip) && 0 == bytes.Compare(mask, t.p.mask) { // no need to update.
+		t.mask, t.ip = nil, nil
+		return
+	}
+	t.ip, t.mask = ip, mask
+}
+
+func (t *L3PeerReleaseTx) ShouldCommit() bool {
+	return t.PeerReleaseTx.ShouldCommit() || t.ip != nil || t.mask != nil || t.isRouterUpdated
+}
 
 type L3Router struct {
 	BaseRouter
@@ -98,31 +147,43 @@ func (r *L3Router) Forward(packet []byte) (peers []Peer) {
 		v, hasPeer := r.byIP.Load(dst)
 		if hasPeer {
 			hot, isHot := v.(*hotIP)
-			if !isHot { // found.
+			if isHot { // found.
 				r.hitPeer(hot.p)
 				hot.lastHit = r.now
 				return []Peer{hot.p}
 			}
 		}
 	}
+	network := net.IPNet{
+		IP: []byte{0, 0, 0, 0},
+	}
 	r.gossip.VisitPeer(func(region string, p gossip.MembershipPeer) bool {
 		if l3, ok := p.(*L3Peer); ok {
-			if l3.Net.Contains(ip) {
-				// route by subnet.
-				peers = append(peers, Peer(l3))
-				return true
+			network.Mask = l3.mask
+			if len(l3.ip) == len(network.Mask) {
+				for i := range network.IP {
+					network.IP[i] = l3.ip[i] & network.Mask[i]
+				}
+				if network.Contains(ip) && l3.isRouter {
+					// route by subnet.
+					peers = append(peers, Peer(l3))
+				}
 			}
-		} else if peer, ok := p.(Peer); ok {
-			// fallback to boardcast.
-			peers = append(peers, peer)
 		}
 		return true
 	})
+	// select one.
+	if len(peers) > 1 {
+		idx := (r.now.UnixNano() / 1000000) % int64(len(peers))
+		peers[0] = peers[idx]
+		peers = peers[:1]
+	}
+
 	return
 }
 
 func (r *L3Router) Backward(packet []byte, backend backend.PeerBackendIdentity) (p Peer, new bool) {
-	var src [6]byte
+	var src [4]byte
 
 	if p = r.BackendPeer(backend); p == nil {
 		return nil, false
@@ -165,6 +226,7 @@ func (r *L3Router) Backward(packet []byte, backend backend.PeerBackendIdentity) 
 						ips.Store(src, struct{}{})
 					}
 				}
+
 				hot.p = p
 				hot.lastHit = r.now
 				break
@@ -212,30 +274,101 @@ func (r *L3Router) remove(v gossip.MembershipPeer) {
 type L3Peer struct {
 	PeerMeta
 
-	Net net.IPNet
+	ip   net.IP
+	mask net.IPMask
+
+	isRouter bool
 }
 
-func (p *L3Peer) Valid() bool { return p.Net.IP.IsGlobalUnicast() }
+func (p *L3Peer) Valid() bool { return p.ip.IsGlobalUnicast() }
 
 func (p *L3Peer) String() string {
-	return "l3(" + p.Net.IP.String() + "," + p.PeerMeta.String() + ")"
+	return "l3(" + (&net.IPNet{
+		IP:   p.ip,
+		Mask: p.mask,
+	}).String() + "," + p.PeerMeta.String() + ")"
 }
 
 func (p *L3Peer) PBSnapshot() (msgPeer *pbp.Peer, err error) {
 	msgPeer, err = p.PeerMeta.PBSnapshot()
+	msgOverlay := &pbp.OverlayPeer{}
 
-	vip, vipLen := binary.Uvarint([]byte(p.Net.IP.To4()))
-	if vipLen != 4 {
+	rawIP := []byte(p.ip.To4())
+	if len(rawIP) != 4 {
 		// IPv4 should should not hit this.
-		return nil, fmt.Errorf("bug: virtual ip address is of %v bytes length", vipLen)
+		return nil, fmt.Errorf("bug: virtual ip address is of %v bytes length", len(rawIP))
 	}
-	msgPeer.VirtualIp = uint32(vip)
-	maskOnes, maskLen := p.Net.Mask.Size()
+	msgOverlay.VirtualIp = binary.BigEndian.Uint32(rawIP)
+	maskOnes, maskLen := p.mask.Size()
 	if maskLen != 32 {
 		// IPv4 should should not hit this.
 		return nil, fmt.Errorf("bug: virtual ip mask is of %v bits length", maskLen)
 	}
-	msgPeer.VirtualMask = uint32(maskOnes)
+	msgOverlay.VirtualMask = uint32(maskOnes)
 
+	if msgPeer.Details, err = ptypes.MarshalAny(msgOverlay); err != nil {
+		return nil, err
+	}
 	return
+}
+
+func (p *L3Peer) applyPBSnapshot(tx *L3PeerReleaseTx, msg *pbp.Peer) (err error) {
+	p.PeerMeta.applyPBSnapshot(tx.PeerReleaseTx, msg)
+	if !tx.IsNewVersion() {
+		return nil
+	}
+
+	overlayMsg := &pbp.OverlayPeer{}
+	if err = ptypes.UnmarshalAny(msg.Details, overlayMsg); err != nil {
+		return err
+	}
+	// overlay network
+	ip := net.IP(make([]byte, 4))
+	binary.BigEndian.PutUint32(ip, overlayMsg.VirtualIp)
+	tx.Net(ip, net.CIDRMask(int(overlayMsg.VirtualMask), 32))
+	// is router ?
+	tx.IsRouter(overlayMsg.IsRouter)
+	return nil
+}
+
+func (p *L3Peer) ApplyPBSnapshot(msg *pbp.Peer) (err error) {
+	if msg == nil {
+		return nil
+	}
+	p.Tx(func(bp Peer, tx *L3PeerReleaseTx) bool {
+		if err = p.applyPBSnapshot(tx, msg); err != nil {
+			return false
+		}
+		return tx.IsNewVersion()
+	})
+	return
+}
+
+func (p *L3Peer) Tx(commit func(Peer, *L3PeerReleaseTx) bool) (commited bool) {
+	parentCommited := p.PeerMeta.Tx(func(bp Peer, btx *PeerReleaseTx) bool {
+		tx, shouldCommit := &L3PeerReleaseTx{
+			p:             p,
+			PeerReleaseTx: btx,
+		}, false
+
+		shouldCommit = commit(p, tx)
+		if !shouldCommit {
+			return false
+		}
+		commited = true
+		tx.Version(p.generateVersion())
+
+		if tx.isRouterUpdated {
+			p.isRouter = tx.isRouter
+		}
+		if tx.ip != nil {
+			p.ip = tx.ip
+		}
+		if tx.mask != nil {
+			p.mask = tx.mask
+		}
+		return true
+	})
+
+	return parentCommited || commited
 }

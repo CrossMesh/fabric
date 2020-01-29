@@ -34,6 +34,11 @@ type hotMAC struct {
 	lastHit time.Time
 }
 
+type l2RouteKey struct {
+	peerStub *gossip.Peer
+	bondKey  string
+}
+
 func NewL2Router(arbiter *arbit.Arbiter, log *logging.Entry, recordExpire time.Duration) (r *L2Router) {
 	if log == nil {
 		log = logging.WithField("module", "l2_route")

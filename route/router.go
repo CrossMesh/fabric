@@ -71,7 +71,7 @@ func (r *BaseRouter) goTasks(arbiter *arbit.Arbiter) {
 	// time ticking.
 	arbiter.TickGo(func(cancel func(), deadline time.Time) {
 		r.now = time.Now()
-	}, time.Millisecond*50, 1)
+	}, time.Millisecond*1, 1)
 
 	// update active backends for hot peers.
 	arbiter.TickGo(func(cancel func(), deadline time.Time) {

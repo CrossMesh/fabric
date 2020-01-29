@@ -22,8 +22,7 @@ type Peer interface {
 	Meta() *PeerMeta
 	String() string
 	PBSnapshot() (*pbp.Peer, error)
-	Tx(func(Peer, *PeerReleaseTx) bool) bool
-	RTx(func(Peer))
+	ApplyPBSnapshot(*pbp.Peer) error
 	OnBackendUpdated(func(Peer, []backend.PeerBackendIdentity, []backend.PeerBackendIdentity))
 	ActiveBackend() *PeerBackend
 }

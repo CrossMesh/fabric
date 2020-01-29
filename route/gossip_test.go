@@ -109,7 +109,7 @@ func TestPeerMeta(t *testing.T) {
 	t.Log(p.String())
 	// do not accept old version.
 	assert.False(t, p.Tx(func(p Peer, tx *PeerReleaseTx) bool {
-		tx.Version(312389)
+		tx.Version(312)
 		assert.False(t, tx.ShouldCommit())
 		return true
 	}))

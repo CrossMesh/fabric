@@ -101,8 +101,7 @@ func TestL2Router(t *testing.T) {
 		return true
 	}))
 
-	r := NewL2Router(arbiter, nil, time.Second*2)
-	arbiter.Join(true)
+	r := NewL2Router(arbiter, nil, time.Second*10)
 	r.Gossip().Seed(peer[0])
 	r.Gossip().Seed(peer[1])
 	r.Gossip().Do(0, func(*gossip.GossipContext) {})
@@ -163,24 +162,24 @@ func TestL2Router(t *testing.T) {
 		ps = r.Forward(frames[3])
 		assert.NotNil(t, ps)
 		assert.Equal(t, 2, len(ps), "should boardcast, not ", ps)
+
+		t.Run("hot_expired", func(t *testing.T) {
+			p, learned := r.Backward(frames[1], peer[0].ActiveBackend().PeerBackendIdentity)
+			assert.Equal(t, peer[0].GossiperStub(), p.GossiperStub())
+			assert.True(t, learned)
+			ps := r.Forward(frames[3])
+			assert.NotNil(t, ps)
+			assert.Equal(t, 1, len(ps))
+			assert.Equal(t, peer[0].GossiperStub(), ps[0].GossiperStub())
+
+			// wait for expired.
+			r.expireHotMAC(time.Now().Add(time.Second * 30))
+			ps = r.Forward(frames[3])
+			assert.NotNil(t, ps)
+			assert.Equal(t, 2, len(ps), "should boardcast, not ", ps)
+		})
 	})
 
-	t.Run("hot_expired", func(t *testing.T) {
-		p, learned := r.Backward(frames[1], peer[0].ActiveBackend().PeerBackendIdentity)
-		assert.Equal(t, peer[0].GossiperStub(), p.GossiperStub())
-		assert.True(t, learned)
-		ps := r.Forward(frames[3])
-		assert.NotNil(t, ps)
-		assert.Equal(t, 1, len(ps))
-		assert.Equal(t, peer[0].GossiperStub(), ps[0].GossiperStub())
-
-		// wait for expired.
-		r.expireHotMAC(time.Now().Add(time.Second * 30))
-		ps = r.Forward(frames[3])
-		assert.NotNil(t, ps)
-		assert.Equal(t, 2, len(ps), "should boardcast, not ", ps)
-	})
-
-	arbiter.Shutdown()
-	arbiter.Join(false)
+	go arbiter.Shutdown()
+	arbiter.Join()
 }

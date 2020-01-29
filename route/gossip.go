@@ -38,8 +38,15 @@ func (t *PeerReleaseTx) Backend(backends ...*PeerBackend) bool {
 }
 
 func (t *PeerReleaseTx) Version(version uint64) {
-	t.versionUpdated = true
-	t.version = version
+	if version <= t.meta.version {
+		t.versionUpdated, t.version = false, t.meta.version
+		return
+	}
+	t.versionUpdated, t.version = true, version
+}
+
+func (t *PeerReleaseTx) IsNewVersion() bool {
+	return t.versionUpdated
 }
 
 func (t *PeerReleaseTx) ShouldCommit() bool {
@@ -115,6 +122,43 @@ func (p *PeerMeta) PBSnapshot() (msgPeer *pbp.Peer, err error) {
 	return
 }
 
+func (p *PeerMeta) applyPBSnapshot(tx *PeerReleaseTx, msg *pbp.Peer) {
+	tx.Version(msg.Version)
+	if !tx.IsNewVersion() {
+		return
+	}
+
+	backends := make([]*PeerBackend, 0, len(msg.Backend))
+	for idx := range msg.Backend {
+		b := msg.Backend[idx]
+		if b == nil {
+			continue
+		}
+		backends = append(backends, &PeerBackend{
+			Priority: b.Priority,
+			Disabled: false,
+			PeerBackendIdentity: backend.PeerBackendIdentity{
+				Endpoint: b.Endpoint,
+				Type:     b.Type,
+			},
+		})
+	}
+	tx.Backend(backends...)
+	tx.Region(msg.Region)
+	tx.State(int(msg.State), msg.StateVersion)
+}
+
+func (p *PeerMeta) ApplyPBSnapshot(msg *pbp.Peer) (err error) {
+	if msg == nil {
+		return nil
+	}
+	p.Tx(func(bp Peer, tx *PeerReleaseTx) bool {
+		p.applyPBSnapshot(tx, msg)
+		return tx.IsNewVersion()
+	})
+	return nil
+}
+
 func (p *PeerMeta) backendEqual(backends ...*PeerBackend) bool {
 	if len(backends) != len(p.backendByPriority) {
 		return false
@@ -144,6 +188,12 @@ func (p *PeerMeta) RTx(commit func(Peer)) {
 	})
 }
 
+func (p *PeerMeta) generateVersion() uint64 {
+	// version should be monotonic increasing number over the cluster.
+	// use unix nano as version since only publisher can create a new version.
+	return uint64(time.Now().UnixNano()) // new version.
+}
+
 func (p *PeerMeta) Tx(commit func(Peer, *PeerReleaseTx) bool) (commited bool) {
 	parentCommited := p.Peer.Tx(func(btx *gossip.PeerReleaseTx) bool {
 		tx, shouldCommit := &PeerReleaseTx{
@@ -156,7 +206,7 @@ func (p *PeerMeta) Tx(commit func(Peer, *PeerReleaseTx) bool) (commited bool) {
 			return false
 		}
 
-		if !tx.backendUpdated && (!tx.versionUpdated || tx.version <= tx.meta.version) && !tx.updateActiveBackend {
+		if !tx.backendUpdated && !tx.versionUpdated && !tx.updateActiveBackend {
 			return true
 		}
 		commited = true
@@ -165,9 +215,7 @@ func (p *PeerMeta) Tx(commit func(Peer, *PeerReleaseTx) bool) (commited bool) {
 		if tx.versionUpdated {
 			p.version = tx.version
 		} else {
-			// version should be monotonic increasing number over the cluster.
-			// use unix nano as version since only publisher can create a new version.
-			p.version = uint64(time.Now().UnixNano()) // new version.
+			p.version = p.generateVersion()
 		}
 
 		if tx.backendUpdated {
