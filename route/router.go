@@ -6,17 +6,14 @@ import (
 
 	arbit "git.uestc.cn/sunmxt/utt/arbiter"
 	"git.uestc.cn/sunmxt/utt/backend"
-	"git.uestc.cn/sunmxt/utt/gossip"
 	logging "github.com/sirupsen/logrus"
 )
 
 type Router interface {
-	Gossip() *GossipGroup
-
-	Forward([]byte) []Peer
-	Backward([]byte, PeerBackend) (Peer, bool)
-	BackendPeer(backend PeerBackend) Peer
-	HotPeers(time.Duration) []Peer
+	Forward([]byte) []MembershipPeer
+	Backward([]byte, backend.PeerBackendIdentity) (MembershipPeer, bool)
+	BackendPeer(backend backend.PeerBackendIdentity) MembershipPeer
+	HotPeers(time.Duration) []MembershipPeer
 }
 
 type BaseRouter struct {
@@ -25,17 +22,14 @@ type BaseRouter struct {
 
 	now time.Time
 	log *logging.Entry
-
-	gossip *GossipGroup
 }
 
 type hotPeer struct {
-	p       Peer
+	p       MembershipPeer
 	lastHit time.Time
 }
 
-func (r *BaseRouter) Gossip() *GossipGroup { return r.gossip }
-func (r *BaseRouter) hitPeer(p Peer) {
+func (r *BaseRouter) hitPeer(p MembershipPeer) {
 	if p == nil {
 		return
 	}
@@ -43,19 +37,20 @@ func (r *BaseRouter) hitPeer(p Peer) {
 		p:       p,
 		lastHit: r.now,
 	}
-	r.hots.Store(p.GossiperStub(), hot)
+	r.hots.Store(p.Meta(), hot)
 }
 
-func (r *BaseRouter) BackendPeer(backend backend.PeerBackendIdentity) (p Peer) {
+// BackendPeer maps backend.PeerBackendIdentity to MembershipPeer.
+func (r *BaseRouter) BackendPeer(backend backend.PeerBackendIdentity) (p MembershipPeer) {
 	v, ok := r.byBackend.Load(backend)
 	if !ok {
 		return nil
 	}
-	p, _ = v.(Peer)
+	p, _ = v.(MembershipPeer)
 	return
 }
 
-func (r *BaseRouter) HotPeers(last time.Duration) (peers []Peer) {
+func (r *BaseRouter) HotPeers(last time.Duration) (peers []MembershipPeer) {
 	r.hots.Range(func(k, v interface{}) bool {
 		hot, isPeer := v.(hotPeer)
 		if !isPeer || time.Now().Add(-last).After(hot.lastHit) {
@@ -95,21 +90,16 @@ func (r *BaseRouter) backendUpdated(p Peer, olds, news []backend.PeerBackendIden
 	}
 }
 
-func (r *BaseRouter) append(v gossip.MembershipPeer) {
-	peer, ok := v.(Peer)
-	if !ok {
-		r.log.Error("invalid gossip member for router to append: ", v)
-		return
-	}
+func (r *BaseRouter) append(v MembershipPeer) {
 	// map backends.
-	for _, backend := range peer.Meta().backendByPriority {
-		r.byBackend.Store(backend.PeerBackendIdentity, peer)
+	for _, backend := range v.Meta().backendByPriority {
+		r.byBackend.Store(backend.PeerBackendIdentity, v)
 	}
 	// watch backend changes.
-	peer.OnBackendUpdated(r.backendUpdated)
+	v.OnBackendUpdated(r.backendUpdated)
 }
 
-func (r *BaseRouter) remove(v gossip.MembershipPeer) {
+func (r *BaseRouter) remove(v MembershipPeer) {
 	peer, ok := v.(Peer)
 	if !ok {
 		r.log.Error("invalid gossip member for router to remove: ", v)

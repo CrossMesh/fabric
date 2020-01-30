@@ -6,7 +6,6 @@ import (
 
 	arbit "git.uestc.cn/sunmxt/utt/arbiter"
 	"git.uestc.cn/sunmxt/utt/backend"
-	"git.uestc.cn/sunmxt/utt/gossip"
 	"git.uestc.cn/sunmxt/utt/proto/pb"
 	"github.com/stretchr/testify/assert"
 )
@@ -84,10 +83,9 @@ func TestL3Router(t *testing.T) {
 		return true
 	}))
 
-	r := NewL3Router(arbiter, nil, time.Second*10)
-	r.Gossip().Seed(peer[0])
-	r.Gossip().Seed(peer[1])
-	r.Gossip().Do(0, func(*gossip.GossipContext) {})
+	g := NewGossipMembership()
+	r := NewL3Router(arbiter, g, nil, time.Second*10)
+	g.Discover(peer[0], peer[1])
 
 	t.Run("invalid", func(t *testing.T) {
 		// case: do not learn boardcast.
@@ -158,20 +156,19 @@ func TestL3Router(t *testing.T) {
 		assert.False(t, learned, "non-exist peer should be ignored.")
 		// learn first backend.
 		p, learned = r.Backward(packet[1], peer[1].ActiveBackend().PeerBackendIdentity)
-		assert.Equal(t, peer[0].GossiperStub(), p.GossiperStub())
+		assert.Equal(t, peer[1].Meta(), p.Meta())
 		assert.True(t, learned)
 		p, learned = r.Backward(packet[1], peer[1].ActiveBackend().PeerBackendIdentity)
-		assert.Equal(t, peer[0].GossiperStub(), p.GossiperStub())
+		assert.Equal(t, peer[1].Meta(), p.Meta())
 		assert.False(t, learned, "should not learn existing record.")
 
 		// hot peer.
 		ps := r.HotPeers(10 * time.Second)
 		assert.NotNil(t, ps)
 		assert.Equal(t, 1, len(ps))
-		assert.Equal(t, peer[0].GossiperStub(), ps[0].GossiperStub())
+		assert.Equal(t, peer[1].Meta(), ps[0].Meta())
 	})
-	r.Gossip().Seed(peer[2])
-	r.Gossip().Do(0, func(*gossip.GossipContext) {})
+	g.Discover(peer[2])
 
 	t.Run("forward", func(t *testing.T) {
 		// select peers by subnet when route not found.

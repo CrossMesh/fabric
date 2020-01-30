@@ -7,7 +7,6 @@ import (
 
 	arbit "git.uestc.cn/sunmxt/utt/arbiter"
 	"git.uestc.cn/sunmxt/utt/backend"
-	"git.uestc.cn/sunmxt/utt/gossip"
 	logging "github.com/sirupsen/logrus"
 )
 
@@ -22,36 +21,33 @@ type L2Peer struct {
 type L2Router struct {
 	BaseRouter
 
-	peerMAC sync.Map // map[*gossip.Peer]map[[6]byte]struct{}
+	peerMAC sync.Map // map[*PeerMeta]map[[6]byte]struct{}
 	byMAC   sync.Map // map[[6]byte]*hotMAC
 
 	recordExpire time.Duration
+	visitor      MembershipVistor
 }
 
 type hotMAC struct {
-	p       Peer
+	p       MembershipPeer
 	mac     [6]byte
 	lastHit time.Time
 }
 
-type l2RouteKey struct {
-	peerStub *gossip.Peer
-	bondKey  string
-}
-
-func NewL2Router(arbiter *arbit.Arbiter, log *logging.Entry, recordExpire time.Duration) (r *L2Router) {
+func NewL2Router(arbiter *arbit.Arbiter, membership Membership, log *logging.Entry, recordExpire time.Duration) (r *L2Router) {
 	if log == nil {
 		log = logging.WithField("module", "l2_route")
 	}
 	r = &L2Router{}
-	r.BaseRouter.gossip = NewGossipGroup()
-	r.gossip.OnAppend(r.append).OnRemove(r.remove)
+	membership.OnAppend(r.append)
+	membership.OnRemove(r.remove)
+	r.visitor = membership
 	r.goTasks(arbiter)
 	return
 }
 
-func (r *L2Router) getMACSet(p gossip.MembershipPeer) *sync.Map {
-	v, ok := r.peerMAC.Load(p.GossiperStub())
+func (r *L2Router) getMACSet(p MembershipPeer) *sync.Map {
+	v, ok := r.peerMAC.Load(p.Meta())
 	if !ok || v == nil {
 		return nil
 	}
@@ -88,7 +84,7 @@ func (r *L2Router) goTasks(arbiter *arbit.Arbiter) {
 	}, cacheCleanningDuration, 1)
 }
 
-func (r *L2Router) Forward(frame []byte) (peers []Peer) {
+func (r *L2Router) Forward(frame []byte) (peers []MembershipPeer) {
 	var dst [6]byte
 
 	if len(frame) < 14 {
@@ -105,23 +101,19 @@ func (r *L2Router) Forward(frame []byte) (peers []Peer) {
 			if isHot { // found.
 				r.hitPeer(hot.p)
 				hot.lastHit = r.now
-				return []Peer{hot.p}
+				return []MembershipPeer{hot.p}
 			}
 		}
 	}
 	// fallback to boardcast.
-	r.gossip.VisitPeer(func(region string, p gossip.MembershipPeer) bool {
-		peer, isPeer := p.(Peer)
-		if !isPeer {
-			return true
-		}
-		peers = append(peers, peer)
+	r.visitor.Range(func(p MembershipPeer) bool {
+		peers = append(peers, p)
 		return true
 	})
 	return
 }
 
-func (r *L2Router) Backward(frame []byte, backend backend.PeerBackendIdentity) (p Peer, new bool) {
+func (r *L2Router) Backward(frame []byte, backend backend.PeerBackendIdentity) (p MembershipPeer, new bool) {
 	var src [6]byte
 
 	// decode source MAC.
@@ -180,19 +172,19 @@ func (r *L2Router) Backward(frame []byte, backend backend.PeerBackendIdentity) (
 	return
 }
 
-func (r *L2Router) append(v gossip.MembershipPeer) {
+func (r *L2Router) append(v MembershipPeer) {
 	r.BaseRouter.append(v)
 	// allocate MAC set.
-	r.peerMAC.Store(v.GossiperStub(), &sync.Map{})
+	r.peerMAC.Store(v.Meta(), &sync.Map{})
 }
 
-func (r *L2Router) remove(v gossip.MembershipPeer) {
+func (r *L2Router) remove(v MembershipPeer) {
 	r.BaseRouter.remove(v)
 
 	// remove related records.
 	macs := r.getMACSet(v)
 	// deallocate MAC set.
-	r.peerMAC.Delete(v.GossiperStub())
+	r.peerMAC.Delete(v.Meta())
 	if macs != nil {
 		macs.Range(func(k, v interface{}) bool {
 			r.byMAC.Delete(k)

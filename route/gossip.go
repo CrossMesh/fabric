@@ -252,27 +252,50 @@ func (p *PeerMeta) Tx(commit func(Peer, *PeerReleaseTx) bool) (commited bool) {
 	return parentCommited || commited
 }
 
-type GossipGroup struct {
+type GossipMemebership struct {
 	*gossip.Gossiper
 }
 
-func NewGossipGroup() *GossipGroup {
-	return &GossipGroup{
-		Gossiper: gossip.NewGossiper(),
-	}
+func NewGossipMembership() *GossipMemebership {
+	return &GossipMemebership{Gossiper: gossip.NewGossiper()}
 }
 
-func (s *GossipGroup) PBSnapshot() (peers []*pbp.Peer, err error) {
-	peers = make([]*pbp.Peer, 0, 8)
-	s.VisitPeer(func(region string, p gossip.MembershipPeer) bool {
-		peer := p.(Peer)
-		pbMsg, merr := peer.PBSnapshot()
-		if merr != nil {
-			err = merr
-			return false
+func (m *GossipMemebership) OnAppend(callback func(MembershipPeer)) {
+	m.Gossiper.OnAppend(func(v gossip.MembershipPeer) {
+		if p, ok := v.(MembershipPeer); ok {
+			callback(p)
 		}
-		peers = append(peers, pbMsg)
+	})
+}
+
+func (m *GossipMemebership) OnRemove(callback func(MembershipPeer)) {
+	m.Gossiper.OnRemove(func(v gossip.MembershipPeer) {
+		if p, ok := v.(MembershipPeer); ok {
+			callback(p)
+		}
+	})
+}
+
+func (m *GossipMemebership) Range(callback func(MembershipPeer) bool) {
+	m.Gossiper.VisitPeer(func(region string, v gossip.MembershipPeer) bool {
+		if p, ok := v.(MembershipPeer); ok {
+			return callback(p)
+		}
 		return true
 	})
-	return
 }
+
+//func (s *GossipGroup) PBSnapshot() (peers []*pbp.Peer, err error) {
+//	peers = make([]*pbp.Peer, 0, 8)
+//	s.VisitPeer(func(region string, p gossip.MembershipPeer) bool {
+//		peer := p.(Peer)
+//		pbMsg, merr := peer.PBSnapshot()
+//		if merr != nil {
+//			err = merr
+//			return false
+//		}
+//		peers = append(peers, pbMsg)
+//		return true
+//	})
+//	return
+//}

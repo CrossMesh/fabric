@@ -101,11 +101,10 @@ func TestL2Router(t *testing.T) {
 		return true
 	}))
 
-	r := NewL2Router(arbiter, nil, time.Second*10)
-	r.Gossip().Seed(peer[0])
-	r.Gossip().Seed(peer[1])
-	r.Gossip().Do(0, func(*gossip.GossipContext) {})
+	g := NewGossipMembership()
+	r := NewL2Router(arbiter, g, nil, time.Second*10)
 
+	g.Discover(peer[0], peer[1])
 	t.Run("backward", func(t *testing.T) {
 		// ignore non-exist peer.
 		p, learned := r.Backward(frames[1], peer[2].ActiveBackend().PeerBackendIdentity)
@@ -113,10 +112,10 @@ func TestL2Router(t *testing.T) {
 		assert.False(t, learned, "non-exist peer should be ignored.")
 		// learn first backend.
 		p, learned = r.Backward(frames[1], peer[0].ActiveBackend().PeerBackendIdentity)
-		assert.Equal(t, peer[0].GossiperStub(), p.GossiperStub())
+		assert.Equal(t, peer[0].Meta(), p.Meta())
 		assert.True(t, learned)
 		p, learned = r.Backward(frames[1], peer[0].ActiveBackend().PeerBackendIdentity)
-		assert.Equal(t, peer[0].GossiperStub(), p.GossiperStub())
+		assert.Equal(t, peer[0].Meta(), p.Meta())
 		assert.False(t, learned, "should not learn existing record.")
 
 		// edge case: do not learn boardcast.
@@ -132,10 +131,9 @@ func TestL2Router(t *testing.T) {
 		ps := r.HotPeers(10 * time.Second)
 		assert.NotNil(t, ps)
 		assert.Equal(t, 1, len(ps))
-		assert.Equal(t, peer[0].GossiperStub(), ps[0].GossiperStub())
+		assert.Equal(t, peer[0].Meta(), ps[0].Meta())
 	})
-	r.Gossip().Seed(peer[2])
-	r.Gossip().Do(0, func(*gossip.GossipContext) {})
+	g.Discover(peer[2])
 
 	t.Run("forward", func(t *testing.T) {
 		// boardcast when route not found.
@@ -144,33 +142,33 @@ func TestL2Router(t *testing.T) {
 		ps := r.Forward(frames[3])
 		assert.NotNil(t, ps)
 		assert.Equal(t, 1, len(ps))
-		assert.Equal(t, peer[0].GossiperStub(), ps[0].GossiperStub())
+		assert.Equal(t, peer[0].Meta(), ps[0].Meta())
 		// refresh learning.
 		p, _ := r.Backward(frames[1], peer[1].ActiveBackend().PeerBackendIdentity)
-		assert.Equal(t, peer[1].GossiperStub(), p.GossiperStub())
+		assert.Equal(t, peer[1].Meta(), p.Meta())
 		ps = r.Forward(frames[3])
 		assert.NotNil(t, ps)
 		assert.Equal(t, 1, len(ps))
-		assert.Equal(t, peer[1].GossiperStub(), ps[0].GossiperStub())
+		assert.Equal(t, peer[1].Meta(), ps[0].Meta())
 
 		// remove peer.
 		assert.True(t, peer[1].Tx(func(p Peer, tx *PeerReleaseTx) bool {
 			tx.State(gossip.DEAD, 2039)
 			return true
 		}))
-		r.Gossip().Do(0, func(*gossip.GossipContext) {})
+		g.Clean(time.Now())
 		ps = r.Forward(frames[3])
 		assert.NotNil(t, ps)
 		assert.Equal(t, 2, len(ps), "should boardcast, not ", ps)
 
 		t.Run("hot_expired", func(t *testing.T) {
 			p, learned := r.Backward(frames[1], peer[0].ActiveBackend().PeerBackendIdentity)
-			assert.Equal(t, peer[0].GossiperStub(), p.GossiperStub())
+			assert.Equal(t, peer[0].Meta(), p.Meta())
 			assert.True(t, learned)
 			ps := r.Forward(frames[3])
 			assert.NotNil(t, ps)
 			assert.Equal(t, 1, len(ps))
-			assert.Equal(t, peer[0].GossiperStub(), ps[0].GossiperStub())
+			assert.Equal(t, peer[0].Meta(), ps[0].Meta())
 
 			// wait for expired.
 			r.expireHotMAC(time.Now().Add(time.Second * 30))

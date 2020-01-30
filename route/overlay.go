@@ -10,7 +10,6 @@ import (
 
 	arbit "git.uestc.cn/sunmxt/utt/arbiter"
 	"git.uestc.cn/sunmxt/utt/backend"
-	"git.uestc.cn/sunmxt/utt/gossip"
 	pbp "git.uestc.cn/sunmxt/utt/proto/pb"
 	"github.com/golang/protobuf/ptypes"
 	logging "github.com/sirupsen/logrus"
@@ -70,21 +69,24 @@ type L3Router struct {
 	byIP   sync.Map // map[[4]byte]*hotIP
 
 	recordExpire time.Duration
+	visitor      MembershipVistor
 }
 
-func NewL3Router(arbiter *arbit.Arbiter, log *logging.Entry, recordExpire time.Duration) (r *L3Router) {
+func NewL3Router(arbiter *arbit.Arbiter, membership Membership, log *logging.Entry, recordExpire time.Duration) (r *L3Router) {
 	if log == nil {
 		log = logging.WithField("module", "l3_router")
 	}
-	r = &L3Router{}
-	r.BaseRouter.gossip = NewGossipGroup()
-	r.gossip.OnAppend(r.append).OnRemove(r.remove)
+	r = &L3Router{
+		visitor: membership,
+	}
+	membership.OnAppend(r.append)
+	membership.OnRemove(r.remove)
 	r.goTasks(arbiter)
 	return
 }
 
 type hotIP struct {
-	p       Peer
+	p       MembershipPeer
 	IP      [4]byte
 	lastHit time.Time
 }
@@ -115,8 +117,8 @@ func (r *L3Router) goTasks(arbiter *arbit.Arbiter) {
 	}, expiredTimeout, 1)
 }
 
-func (r *L3Router) getIPSet(p gossip.MembershipPeer) *sync.Map {
-	v, ok := r.peerIP.Load(p.GossiperStub())
+func (r *L3Router) getIPSet(p MembershipPeer) *sync.Map {
+	v, ok := r.peerIP.Load(p.Meta())
 	if !ok || v == nil {
 		return nil
 	}
@@ -124,7 +126,7 @@ func (r *L3Router) getIPSet(p gossip.MembershipPeer) *sync.Map {
 	return m
 }
 
-func (r *L3Router) Forward(packet []byte) (peers []Peer) {
+func (r *L3Router) Forward(packet []byte) (peers []MembershipPeer) {
 	var dst [4]byte
 	if len(packet) < 20 {
 		// packet too small.
@@ -150,14 +152,14 @@ func (r *L3Router) Forward(packet []byte) (peers []Peer) {
 			if isHot { // found.
 				r.hitPeer(hot.p)
 				hot.lastHit = r.now
-				return []Peer{hot.p}
+				return []MembershipPeer{hot.p}
 			}
 		}
 	}
 	network := net.IPNet{
 		IP: []byte{0, 0, 0, 0},
 	}
-	r.gossip.VisitPeer(func(region string, p gossip.MembershipPeer) bool {
+	r.visitor.Range(func(p MembershipPeer) bool {
 		if l3, ok := p.(*L3Peer); ok {
 			network.Mask = l3.mask
 			if len(l3.ip) == len(network.Mask) {
@@ -166,7 +168,7 @@ func (r *L3Router) Forward(packet []byte) (peers []Peer) {
 				}
 				if network.Contains(ip) && l3.isRouter {
 					// route by subnet.
-					peers = append(peers, Peer(l3))
+					peers = append(peers, MembershipPeer(l3))
 				}
 			}
 		}
@@ -182,7 +184,7 @@ func (r *L3Router) Forward(packet []byte) (peers []Peer) {
 	return
 }
 
-func (r *L3Router) Backward(packet []byte, backend backend.PeerBackendIdentity) (p Peer, new bool) {
+func (r *L3Router) Backward(packet []byte, backend backend.PeerBackendIdentity) (p MembershipPeer, new bool) {
 	var src [4]byte
 
 	if p = r.BackendPeer(backend); p == nil {
@@ -250,19 +252,19 @@ func (r *L3Router) Backward(packet []byte, backend backend.PeerBackendIdentity) 
 	return
 }
 
-func (r *L3Router) append(v gossip.MembershipPeer) {
+func (r *L3Router) append(v MembershipPeer) {
 	r.BaseRouter.append(v)
 	// allocate
-	r.peerIP.Store(v.GossiperStub(), &sync.Map{})
+	r.peerIP.Store(v.Meta(), &sync.Map{})
 }
 
-func (r *L3Router) remove(v gossip.MembershipPeer) {
+func (r *L3Router) remove(v MembershipPeer) {
 	r.BaseRouter.remove(v)
 
 	// remove related records.
 	ips := r.getIPSet(v)
 	// deallocate.
-	r.peerIP.Delete(v.GossiperStub())
+	r.peerIP.Delete(v.Meta())
 	if ips != nil {
 		ips.Range(func(k, v interface{}) bool {
 			r.byIP.Delete(k)
