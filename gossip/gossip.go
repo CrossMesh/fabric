@@ -12,14 +12,19 @@ const (
 	ALIVE     = 0
 	SUSPECTED = 1
 	DEAD      = 2
+
+	DefaultGossipPeriod   = time.Second * 5
+	DefaultSuspectTimeout = time.Minute * 5
 )
 
+// StateName map state to it's name.
 var StateName = map[int]string{
 	ALIVE:     "alive",
 	SUSPECTED: "suspected",
 	DEAD:      "dead",
 }
 
+// MembershipPeer is gossip peer abstraction.
 type MembershipPeer interface {
 	GossiperStub() *Peer
 
@@ -96,10 +101,12 @@ func (t *PeerReleaseTx) ClaimDead() {
 	}
 }
 
+// ShouldCommit tells whether to change state of peer.
 func (t *PeerReleaseTx) ShouldCommit() bool {
 	return t.regionUpdated || t.stateUpdated
 }
 
+// Peer is minimum implement for MembershipPeer abstraction.
 type Peer struct {
 	lock            sync.RWMutex
 	g               *Gossiper
@@ -148,97 +155,55 @@ func (p *Peer) Tx(commit func(*PeerReleaseTx) bool) bool {
 	return true
 }
 
+// RTx begins new read transaction.
 func (p *Peer) RTx(commit func()) {
 	p.lock.RLock()
 	defer p.lock.RUnlock()
 	commit()
 }
 
-type GossipContext struct {
+type GossipTerm struct {
 	gossiper *Gossiper
-	term     uint32
+	ID       uint32
 	peers    []MembershipPeer
-
-	lock       sync.Mutex
-	discovered []MembershipPeer
 }
 
-func (c *GossipContext) NumOfPeers() int { return len(c.peers) }
+func (c *GossipTerm) NumOfPeers() int { return len(c.peers) }
 
-func (c *GossipContext) Peer(index int) MembershipPeer {
+func (c *GossipTerm) Peer(index int) MembershipPeer {
 	if index > len(c.peers) {
 		return nil
 	}
 	return c.peers[index]
 }
 
-func (c *GossipContext) VisitPeer(visit func(string, MembershipPeer) bool) {
-	c.gossiper.visitPeer(visit)
-}
-
-func (c *GossipContext) visitPeerByState(visit func(MembershipPeer) bool, states ...int) {
-	c.gossiper.visitPeerByState(visit, states...)
-}
-
-// Discover add new discovered peer.
-func (c *GossipContext) Discover(peer MembershipPeer) {
-	if peer == nil {
-		return
-	}
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	c.discovered = append(c.discovered, peer)
-}
-
-func (c *GossipContext) Term() uint32 { return c.term }
-
 type Gossiper struct {
-	lock     sync.RWMutex
 	term     uint32
-	newSeeds []MembershipPeer
-
-	memberLock sync.RWMutex
-	byRegion   map[string]map[*Peer]MembershipPeer
-
 	onRemove func(MembershipPeer)
 	onAppend func(MembershipPeer)
 
 	MinRegionPeers int
 	SuspectTimeout time.Duration
+
+	lock     sync.RWMutex
+	byRegion map[string]map[*Peer]MembershipPeer
 }
 
 func NewGossiper() (g *Gossiper) {
 	g = &Gossiper{
 		byRegion:       make(map[string]map[*Peer]MembershipPeer),
 		MinRegionPeers: 1,
-		SuspectTimeout: time.Minute * 5,
+		SuspectTimeout: DefaultSuspectTimeout,
 	}
 	return
 }
 
-func (g *Gossiper) applyNewSeeds() {
-	for _, seed := range g.newSeeds {
-		g.addToRegion(seed.Region(), seed)
-		seed.GossiperStub().g = g
-		if onAppend := g.onAppend; onAppend != nil {
-			onAppend(seed)
-		}
-	}
-	g.newSeeds = nil
-}
-
-func (g *Gossiper) Do(brust int32, transport func(*GossipContext)) {
-	g.lock.Lock()
-	defer g.lock.Unlock()
-
-	g.applyNewSeeds()
-
-	gctx := &GossipContext{
+func (g *Gossiper) NewTerm(brust int32) (t *GossipTerm) {
+	t = &GossipTerm{
 		peers:    make([]MembershipPeer, 0, brust),
 		gossiper: g,
 	}
-	gctx.term = atomic.AddUint32(&g.term, 1)
-
+	t.ID = atomic.AddUint32(&g.term, 1)
 	if brust > 0 {
 		// select random N peers
 		// posibility proof:
@@ -249,45 +214,15 @@ func (g *Gossiper) Do(brust int32, transport func(*GossipContext)) {
 				return true
 			}
 			if idx < brust {
-				gctx.peers = append(gctx.peers, peer)
+				t.peers = append(t.peers, peer)
 			} else if n := rand.Int31n(idx); n < brust {
-				gctx.peers[n] = peer
+				t.peers[n] = peer
 			}
 			idx++
 			return true
 		})
 	}
-
-	transport(gctx)
-	onRemove, onAppend := g.onRemove, g.onAppend
-
-	// add discovered member.
-	if len(gctx.discovered) > 0 {
-		for _, peer := range gctx.discovered {
-			if peer != nil {
-				if onAppend != nil {
-					onAppend(peer)
-				}
-				g.addToRegion(peer.Region(), peer)
-			}
-		}
-	}
-
-	// clean dead peers.
-	for _, peers := range g.byRegion {
-		for _, peer := range peers {
-			if state, _, _ := peer.State(); state != DEAD || len(peers) <= g.MinRegionPeers {
-				continue
-			}
-
-			// remove peer.
-			if onRemove != nil {
-				onRemove(peer)
-			}
-			delete(peers, peer.GossiperStub())
-			peer.GossiperStub().g = nil
-		}
-	}
+	return
 }
 
 func (g *Gossiper) getRegionSet(region string) (regionPeers map[*Peer]MembershipPeer) {
@@ -303,15 +238,12 @@ func (g *Gossiper) addToRegion(region string, peer MembershipPeer) {
 	if peer == nil {
 		return
 	}
-	g.memberLock.Lock()
-	defer g.memberLock.Unlock()
-
 	g.getRegionSet(region)[peer.GossiperStub()] = peer
 }
 
 func (g *Gossiper) refreshRegion(old, new string, peer MembershipPeer) {
-	g.memberLock.Lock()
-	defer g.memberLock.Unlock()
+	g.lock.Lock()
+	defer g.lock.Unlock()
 
 	regionPeers := g.getRegionSet(old)
 	delete(regionPeers, peer.GossiperStub())
@@ -319,15 +251,53 @@ func (g *Gossiper) refreshRegion(old, new string, peer MembershipPeer) {
 	regionPeers[peer.GossiperStub()] = peer
 }
 
-func (g *Gossiper) Seed(peers ...MembershipPeer) {
+func (g *Gossiper) Clean(now time.Time) {
 	g.lock.Lock()
 	defer g.lock.Unlock()
+
+	onRemove := g.onRemove
+	for _, peers := range g.byRegion {
+		for _, peer := range peers {
+			state, _, last := peer.State()
+			switch state {
+			case DEAD:
+				// clean dead peers.
+				if len(peers) <= g.MinRegionPeers {
+					continue
+				}
+				// remove peer.
+				if onRemove != nil {
+					onRemove(peer)
+				}
+				delete(peers, peer.GossiperStub())
+				peer.GossiperStub().g = nil
+
+			case SUSPECTED:
+				if last.Add(g.SuspectTimeout).After(now) {
+					continue
+				}
+				peer.GossiperStub().state = DEAD
+			}
+		}
+	}
+}
+
+// Discover applies new peers.
+func (g *Gossiper) Discover(peers ...MembershipPeer) {
+	g.lock.Lock()
+	defer g.lock.Unlock()
+	onAppend := g.onAppend
+	if onAppend == nil {
+		onAppend = func(MembershipPeer) {}
+	}
 
 	for _, peer := range peers {
 		if peer == nil {
 			continue
 		}
-		g.newSeeds = append(g.newSeeds, peer)
+		g.addToRegion(peer.Region(), peer)
+		peer.GossiperStub().g = g
+		onAppend(peer)
 	}
 }
 
@@ -342,8 +312,8 @@ func (g *Gossiper) visitPeer(visit func(string, MembershipPeer) bool) {
 }
 
 func (g *Gossiper) VisitPeer(visit func(string, MembershipPeer) bool) {
-	g.memberLock.RLock()
-	defer g.memberLock.RUnlock()
+	g.lock.RLock()
+	defer g.lock.RUnlock()
 
 	g.visitPeer(visit)
 }

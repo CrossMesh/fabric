@@ -2,6 +2,7 @@ package gossip
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -10,20 +11,20 @@ func TestGossip(t *testing.T) {
 	g := NewGossiper()
 	g.MinRegionPeers = 1
 	peers := []*Peer{
-		{state: ALIVE, stateVersion: 1, region: "dc1"},
-		{state: ALIVE, stateVersion: 2, region: "dc1"},
-		{state: DEAD, stateVersion: 5, region: "dc1"},
-		{state: ALIVE, stateVersion: 3, region: "dc2"},
-		{state: SUSPECTED, stateVersion: 5, region: "dc3"},
-		{state: DEAD, stateVersion: 5, region: "dc4"},
+		{state: ALIVE, stateVersion: 1, region: "dc1", lastStateUpdate: time.Now()},
+		{state: ALIVE, stateVersion: 2, region: "dc1", lastStateUpdate: time.Now()},
+		{state: DEAD, stateVersion: 5, region: "dc1", lastStateUpdate: time.Now()},
+		{state: ALIVE, stateVersion: 3, region: "dc2", lastStateUpdate: time.Now()},
+		{state: SUSPECTED, stateVersion: 5, region: "dc3", lastStateUpdate: time.Now()},
+		{state: DEAD, stateVersion: 5, region: "dc4", lastStateUpdate: time.Now()},
 	}
 	peerSet := map[*Peer]struct{}{}
 	inPeerSet := func(p MembershipPeer) bool {
 		if p, ok := p.(*Peer); !ok || p == nil {
-			t.Error("GossipContext.Peer() got invalid peer.")
+			t.Error("GossipTerm.Peer() got invalid peer.")
 			return false
 		} else if _, inPeerSet := peerSet[p]; !inPeerSet {
-			t.Error("GossipContext.Peer() not in peer set.")
+			t.Error("GossipTerm.Peer() not in peer set.")
 			return false
 		}
 		return true
@@ -39,30 +40,31 @@ func TestGossip(t *testing.T) {
 
 	// seed.
 	for _, peer := range peers {
-		g.Seed(peer)
+		g.Discover(peer)
 	}
-	g.Seed(nil)
+	g.Discover(nil, nil)
 	assert.Equal(t, uint32(0), g.term)
-
-	// basic gossip.
-	g.Do(2, func(ctx *GossipContext) {
-		assert.Equal(t, uint32(1), ctx.Term())
-		assert.Equal(t, uint32(1), ctx.term)
-		assert.Equal(t, 2, ctx.NumOfPeers())
-		assert.Nil(t, ctx.Peer(3))
-		assert.True(t, inPeerSet(ctx.Peer(0)))
-		peerCount := 0
-		ctx.VisitPeer(func(region string, peer MembershipPeer) bool {
-			assert.True(t, inPeerSet(peer))
-			assert.Equal(t, peer.(*Peer).region, region)
-			peerCount++
-			return true
-		})
-		assert.Equal(t, len(peers), peerCount)
+	peerCount := 0
+	g.VisitPeer(func(region string, peer MembershipPeer) bool {
+		assert.True(t, inPeerSet(peer))
+		assert.Equal(t, peer.(*Peer).region, region)
+		peerCount++
+		return true
 	})
+	assert.Equal(t, len(peers), peerCount)
 	assert.Equal(t, len(peers), appendCalledCount)
+
+	// term.
+	term := g.NewTerm(2)
+	assert.Equal(t, uint32(1), term.ID)
+	assert.Equal(t, uint32(1), term.ID)
+	assert.Equal(t, 2, term.NumOfPeers())
+	assert.Nil(t, term.Peer(3))
+	assert.True(t, inPeerSet(term.Peer(0)))
+
+	g.Clean(time.Now().Add(DefaultSuspectTimeout + time.Second))
 	assert.Equal(t, 1, removeCalledCount)
-	aliveCount, suspectCount := 0, 0
+	aliveCount, suspectCount, deadCount := 0, 0, 0
 	g.VisitPeerByState(func(peer MembershipPeer) bool {
 		assert.True(t, inPeerSet(peer))
 		switch s, _, _ := peer.State(); s {
@@ -70,11 +72,13 @@ func TestGossip(t *testing.T) {
 			aliveCount++
 		case SUSPECTED:
 			suspectCount++
+		case DEAD:
+			deadCount++
 		}
 		return true
 	}, ALIVE, SUSPECTED)
 	assert.Equal(t, 3, aliveCount)
-	assert.Equal(t, 1, suspectCount)
+	assert.Equal(t, 0, suspectCount)
 
 	// region change.
 	peers[0].Tx(func(tx *PeerReleaseTx) bool {
@@ -88,20 +92,13 @@ func TestGossip(t *testing.T) {
 	})
 
 	// zero peer to gossip.
-	g.Do(0, func(ctx *GossipContext) {
-		assert.Equal(t, uint32(2), ctx.Term())
-		assert.Equal(t, uint32(2), ctx.term)
-		assert.Equal(t, 0, ctx.NumOfPeers())
-	})
+	term = g.NewTerm(0)
+	assert.Equal(t, uint32(2), term.ID)
+	assert.Equal(t, 0, term.NumOfPeers())
 
 	// discover.
 	appendCalledCount, removeCalledCount = 0, 0
-	g.Do(1, func(ctx *GossipContext) {
-		assert.Equal(t, uint32(3), ctx.Term())
-		assert.Equal(t, uint32(3), ctx.term)
-		assert.Equal(t, 1, ctx.NumOfPeers())
-		ctx.Discover(&Peer{state: ALIVE, stateVersion: 2, region: "dc1"})
-	})
+	g.Discover(&Peer{state: ALIVE, stateVersion: 2, region: "dc1"})
 	assert.Equal(t, 1, appendCalledCount)
 }
 
