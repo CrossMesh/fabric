@@ -67,7 +67,7 @@ func TestL2Router(t *testing.T) {
 	}
 
 	peer := []*L2Peer{{}, {}, {}}
-	assert.True(t, peer[0].Tx(func(p Peer, tx *PeerReleaseTx) bool {
+	assert.True(t, peer[0].Tx(func(p MembershipPeer, tx *PeerReleaseTx) bool {
 		tx.Backend(&PeerBackend{
 			PeerBackendIdentity: backend.PeerBackendIdentity{
 				Type:     pb.PeerBackend_TCP,
@@ -78,7 +78,7 @@ func TestL2Router(t *testing.T) {
 		})
 		return true
 	}))
-	assert.True(t, peer[1].Tx(func(p Peer, tx *PeerReleaseTx) bool {
+	assert.True(t, peer[1].Tx(func(p MembershipPeer, tx *PeerReleaseTx) bool {
 		tx.Backend(&PeerBackend{
 			PeerBackendIdentity: backend.PeerBackendIdentity{
 				Type:     pb.PeerBackend_TCP,
@@ -89,7 +89,7 @@ func TestL2Router(t *testing.T) {
 		})
 		return true
 	}))
-	assert.True(t, peer[2].Tx(func(p Peer, tx *PeerReleaseTx) bool {
+	assert.True(t, peer[2].Tx(func(p MembershipPeer, tx *PeerReleaseTx) bool {
 		tx.Backend(&PeerBackend{
 			PeerBackendIdentity: backend.PeerBackendIdentity{
 				Type:     pb.PeerBackend_TCP,
@@ -152,7 +152,7 @@ func TestL2Router(t *testing.T) {
 		assert.Equal(t, peer[1].Meta(), ps[0].Meta())
 
 		// remove peer.
-		assert.True(t, peer[1].Tx(func(p Peer, tx *PeerReleaseTx) bool {
+		assert.True(t, peer[1].Tx(func(p MembershipPeer, tx *PeerReleaseTx) bool {
 			tx.State(gossip.DEAD, 2039)
 			return true
 		}))

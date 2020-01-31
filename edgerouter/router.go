@@ -14,17 +14,18 @@ import (
 )
 
 type EdgeRouter struct {
-	rpc *rpc.Stub
+	rpc       *rpc.Stub
 	rpcClient *rpc.Client
 	rpcServer *rpc.Server
 
 	lock         sync.RWMutex
 	routeArbiter *arbit.Arbiter
 	route        route.Router
-	peerSelf     route.Peer
+	membership   route.Membership
+	peerSelf     route.MembershipPeer
 
 	forwardArbiter *arbit.Arbiter
-	backends       sync.Map //map[route.PeerBackend]backend.Backend
+	backends       sync.Map //map[backend.PeerBackendIdentity]backend.Backend
 	ifaceDevice    *water.Interface
 
 	configID uint32
@@ -47,15 +48,24 @@ func New(arbiter *arbit.Arbiter) (a *EdgeRouter, err error) {
 	return a, nil
 }
 
-func (a *EdgeRouter) Seed(peers ...route.Peer) {
-	for idx := range peers {
-		a.route.Gossip().Seed(peers[idx])
-	}
+func (r *EdgeRouter) Membership() route.Membership {
+	return r.membership
 }
 
-func (r *EdgeRouter) visitBackends(visit func(route.PeerBackendIndex, backend.Backend) bool) {
+func (r *EdgeRouter) Mode() string {
+	switch r.route.(type) {
+	case *route.L2Router:
+		return "ethernet"
+
+	case *route.L3Router:
+		return "overlay"
+	}
+	return "unknown"
+}
+
+func (r *EdgeRouter) visitBackends(visit func(backend.PeerBackendIdentity, backend.Backend) bool) {
 	r.backends.Range(func(k, v interface{}) bool {
-		index, isIndex := k.(route.PeerBackendIndex)
+		index, isIndex := k.(backend.PeerBackendIdentity)
 		if !isIndex {
 			r.backends.Delete(k)
 			return true
@@ -69,7 +79,7 @@ func (r *EdgeRouter) visitBackends(visit func(route.PeerBackendIndex, backend.Ba
 	})
 }
 
-func (r *EdgeRouter) getBackend(index route.PeerBackendIndex) backend.Backend {
+func (r *EdgeRouter) getBackend(index backend.PeerBackendIdentity) backend.Backend {
 	v, hasBackend := r.backends.Load(index)
 	if v == nil || !hasBackend {
 		return nil

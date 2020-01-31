@@ -34,22 +34,22 @@ func TestL3Router(t *testing.T) {
 	}
 
 	peer := []*L3Peer{{}, {}, {}}
-	assert.True(t, peer[1].Tx(func(p Peer, tx *L3PeerReleaseTx) bool {
+	assert.True(t, peer[1].Tx(func(p MembershipPeer, tx *L3PeerReleaseTx) bool {
 		assert.NoError(t, tx.CIDR("10.240.5.1/24"))
 		return true
 	}))
-	assert.True(t, peer[0].Tx(func(p Peer, tx *L3PeerReleaseTx) bool {
+	assert.True(t, peer[0].Tx(func(p MembershipPeer, tx *L3PeerReleaseTx) bool {
 		assert.NoError(t, tx.CIDR("10.240.4.1/24"))
 		tx.IsRouter(true)
 		return true
 	}))
-	assert.True(t, peer[2].Tx(func(p Peer, tx *L3PeerReleaseTx) bool {
+	assert.True(t, peer[2].Tx(func(p MembershipPeer, tx *L3PeerReleaseTx) bool {
 		assert.NoError(t, tx.CIDR("10.240.4.3/24"))
 		tx.IsRouter(true)
 		return true
 	}))
 
-	assert.True(t, peer[0].Tx(func(p Peer, tx *L3PeerReleaseTx) bool {
+	assert.True(t, peer[0].Tx(func(p MembershipPeer, tx *L3PeerReleaseTx) bool {
 		tx.Backend(&PeerBackend{
 			PeerBackendIdentity: backend.PeerBackendIdentity{
 				Type:     pb.PeerBackend_TCP,
@@ -60,7 +60,7 @@ func TestL3Router(t *testing.T) {
 		})
 		return true
 	}))
-	assert.True(t, peer[1].Tx(func(p Peer, tx *L3PeerReleaseTx) bool {
+	assert.True(t, peer[1].Tx(func(p MembershipPeer, tx *L3PeerReleaseTx) bool {
 		tx.Backend(&PeerBackend{
 			PeerBackendIdentity: backend.PeerBackendIdentity{
 				Type:     pb.PeerBackend_TCP,
@@ -71,7 +71,7 @@ func TestL3Router(t *testing.T) {
 		})
 		return true
 	}))
-	assert.True(t, peer[2].Tx(func(p Peer, tx *L3PeerReleaseTx) bool {
+	assert.True(t, peer[2].Tx(func(p MembershipPeer, tx *L3PeerReleaseTx) bool {
 		tx.Backend(&PeerBackend{
 			PeerBackendIdentity: backend.PeerBackendIdentity{
 				Type:     pb.PeerBackend_TCP,

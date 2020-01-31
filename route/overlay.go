@@ -337,7 +337,7 @@ func (p *L3Peer) ApplyPBSnapshot(msg *pbp.Peer) (err error) {
 	if msg == nil {
 		return nil
 	}
-	p.Tx(func(bp Peer, tx *L3PeerReleaseTx) bool {
+	p.Tx(func(bp MembershipPeer, tx *L3PeerReleaseTx) bool {
 		if err = p.applyPBSnapshot(tx, msg); err != nil {
 			return false
 		}
@@ -346,8 +346,8 @@ func (p *L3Peer) ApplyPBSnapshot(msg *pbp.Peer) (err error) {
 	return
 }
 
-func (p *L3Peer) Tx(commit func(Peer, *L3PeerReleaseTx) bool) (commited bool) {
-	parentCommited := p.PeerMeta.Tx(func(bp Peer, btx *PeerReleaseTx) bool {
+func (p *L3Peer) Tx(commit func(MembershipPeer, *L3PeerReleaseTx) bool) (commited bool) {
+	parentCommited := p.PeerMeta.Tx(func(bp MembershipPeer, btx *PeerReleaseTx) bool {
 		tx, shouldCommit := &L3PeerReleaseTx{
 			p:             p,
 			PeerReleaseTx: btx,

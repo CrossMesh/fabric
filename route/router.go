@@ -71,7 +71,7 @@ func (r *BaseRouter) goTasks(arbiter *arbit.Arbiter) {
 	// update active backends for hot peers.
 	arbiter.TickGo(func(cancel func(), deadline time.Time) {
 		r.hots.Range(func(k, v interface{}) bool {
-			hot, isPeer := v.(Peer)
+			hot, isPeer := v.(MembershipPeer)
 			if !isPeer {
 				return true
 			}
@@ -81,7 +81,7 @@ func (r *BaseRouter) goTasks(arbiter *arbit.Arbiter) {
 	}, time.Second*2, 1)
 }
 
-func (r *BaseRouter) backendUpdated(p Peer, olds, news []backend.PeerBackendIdentity) {
+func (r *BaseRouter) backendUpdated(p MembershipPeer, olds, news []backend.PeerBackendIdentity) {
 	for _, backend := range olds {
 		r.byBackend.Delete(backend)
 	}
@@ -100,13 +100,8 @@ func (r *BaseRouter) append(v MembershipPeer) {
 }
 
 func (r *BaseRouter) remove(v MembershipPeer) {
-	peer, ok := v.(Peer)
-	if !ok {
-		r.log.Error("invalid gossip member for router to remove: ", v)
-		return
-	}
-	r.hots.Delete(peer.GossiperStub())
-	for _, backend := range peer.Meta().backendByPriority {
+	r.hots.Delete(v.Meta())
+	for _, backend := range v.Meta().backendByPriority {
 		r.byBackend.Delete(backend.PeerBackendIdentity)
 	}
 }

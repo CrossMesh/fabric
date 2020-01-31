@@ -1,6 +1,7 @@
 package route
 
 import (
+	"errors"
 	"sort"
 	"strconv"
 	"time"
@@ -64,7 +65,7 @@ type PeerMeta struct {
 
 	Self bool
 
-	onBackendUpdated func(Peer, []backend.PeerBackendIdentity, []backend.PeerBackendIdentity)
+	onBackendUpdated func(MembershipPeer, []backend.PeerBackendIdentity, []backend.PeerBackendIdentity)
 
 	version           uint64
 	backendByPriority []*PeerBackend
@@ -152,7 +153,7 @@ func (p *PeerMeta) ApplyPBSnapshot(msg *pbp.Peer) (err error) {
 	if msg == nil {
 		return nil
 	}
-	p.Tx(func(bp Peer, tx *PeerReleaseTx) bool {
+	p.Tx(func(bp MembershipPeer, tx *PeerReleaseTx) bool {
 		p.applyPBSnapshot(tx, msg)
 		return tx.IsNewVersion()
 	})
@@ -178,11 +179,11 @@ func (p *PeerMeta) backendEqual(backends ...*PeerBackend) bool {
 	return true
 }
 
-func (p *PeerMeta) OnBackendUpdated(emit func(Peer, []backend.PeerBackendIdentity, []backend.PeerBackendIdentity)) {
+func (p *PeerMeta) OnBackendUpdated(emit func(MembershipPeer, []backend.PeerBackendIdentity, []backend.PeerBackendIdentity)) {
 	p.onBackendUpdated = emit
 }
 
-func (p *PeerMeta) RTx(commit func(Peer)) {
+func (p *PeerMeta) RTx(commit func(MembershipPeer)) {
 	p.Peer.RTx(func() {
 		commit(p)
 	})
@@ -194,7 +195,7 @@ func (p *PeerMeta) generateVersion() uint64 {
 	return uint64(time.Now().UnixNano()) // new version.
 }
 
-func (p *PeerMeta) Tx(commit func(Peer, *PeerReleaseTx) bool) (commited bool) {
+func (p *PeerMeta) Tx(commit func(MembershipPeer, *PeerReleaseTx) bool) (commited bool) {
 	parentCommited := p.Peer.Tx(func(btx *gossip.PeerReleaseTx) bool {
 		tx, shouldCommit := &PeerReleaseTx{
 			meta:          p,
@@ -254,6 +255,8 @@ func (p *PeerMeta) Tx(commit func(Peer, *PeerReleaseTx) bool) (commited bool) {
 
 type GossipMemebership struct {
 	*gossip.Gossiper
+
+	New func(*pb.Peer) gossip.MembershipPeer
 }
 
 func NewGossipMembership() *GossipMemebership {
@@ -285,17 +288,59 @@ func (m *GossipMemebership) Range(callback func(MembershipPeer) bool) {
 	})
 }
 
-//func (s *GossipGroup) PBSnapshot() (peers []*pbp.Peer, err error) {
-//	peers = make([]*pbp.Peer, 0, 8)
-//	s.VisitPeer(func(region string, p gossip.MembershipPeer) bool {
-//		peer := p.(Peer)
-//		pbMsg, merr := peer.PBSnapshot()
-//		if merr != nil {
-//			err = merr
-//			return false
-//		}
-//		peers = append(peers, pbMsg)
-//		return true
-//	})
-//	return
-//}
+func (m *GossipMemebership) PBSnapshot() (peers []*pbp.Peer, err error) {
+	peers = make([]*pbp.Peer, 0, 8)
+	m.VisitPeer(func(region string, p gossip.MembershipPeer) bool {
+		peer := p.(PBSnapshotPeer)
+		pbMsg, merr := peer.PBSnapshot()
+		if merr != nil {
+			err = merr
+			return false
+		}
+		peers = append(peers, pbMsg)
+		return true
+	})
+	return
+}
+
+func (m *GossipMemebership) ApplyPBSnapshot(route Router, peers []*pb.Peer) (errs []error) {
+	if peers == nil {
+		return nil
+	}
+LoopPeer:
+	for idx := range peers {
+		var match MembershipPeer
+		for _, b := range peers[idx].Backend {
+			p := route.BackendPeer(backend.PeerBackendIdentity{
+				Type:     b.Type,
+				Endpoint: b.Endpoint,
+			})
+			if p == nil {
+				continue
+			}
+			if match == nil {
+				match = p
+				continue
+			}
+			if p != match {
+				// ignore ambigous peers.
+				continue LoopPeer
+			}
+		}
+
+		if match == nil {
+			// new peer
+			new := m.New(peers[idx])
+			if new == nil {
+				return []error{errors.New("GossipMemebership.New() return nil")}
+			}
+			m.Discover(new)
+		} else if p, able := match.(PBSnapshotPeer); able {
+			// existing peer.
+			if err := p.ApplyPBSnapshot(peers[idx]); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	return
+}

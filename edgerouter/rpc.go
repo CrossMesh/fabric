@@ -21,7 +21,7 @@ func (r *EdgeRouter) initRPCStub() (err error) {
 		r.rpc = rpc.NewStub(logging.WithField("module", "rpc_stub"))
 	}
 	fns := []interface{}{
-		r.PeerExchange,
+		r.GossipExchange,
 		r.Ping,
 	}
 	for _, fn := range fns {
@@ -33,7 +33,7 @@ func (r *EdgeRouter) initRPCStub() (err error) {
 	return nil
 }
 
-func (r *EdgeRouter) sendRPCRequest(peer route.Peer, rid uint32, name string, data []byte) (err error) {
+func (r *EdgeRouter) sendRPCRequest(peer route.MembershipPeer, rid uint32, name string, data []byte) (err error) {
 	return r.sendRPCMessage(peer, &pb.RPC{
 		Id:       rid,
 		Type:     pb.RPC_Request,
@@ -42,7 +42,7 @@ func (r *EdgeRouter) sendRPCRequest(peer route.Peer, rid uint32, name string, da
 	})
 }
 
-func (r *EdgeRouter) sendRPCMessage(peer route.Peer, msg *pb.RPC) (err error) {
+func (r *EdgeRouter) sendRPCMessage(peer route.MembershipPeer, msg *pb.RPC) (err error) {
 	data := make([]byte, pbp.Size(msg)+proto.ProtocolMessageHeaderSize)
 	buf := pbp.NewBuffer(data[proto.ProtocolMessageHeaderSize:])
 	if err = buf.EncodeMessage(msg); err != nil {
@@ -52,7 +52,7 @@ func (r *EdgeRouter) sendRPCMessage(peer route.Peer, msg *pb.RPC) (err error) {
 	return r.forwardVTEPPeer(data, peer)
 }
 
-func (r *EdgeRouter) receiveRPCMessage(data []byte, peer route.Peer) {
+func (r *EdgeRouter) receiveRPCMessage(data []byte, peer route.MembershipPeer) {
 	msg := &pb.RPC{}
 	if err := pbp.Unmarshal(data, msg); err != nil {
 		r.log.Warn("drop invalid rpc message.")
@@ -75,5 +75,21 @@ func (r *EdgeRouter) receiveRPCMessage(data []byte, peer route.Peer) {
 			}
 			return r.sendRPCMessage(peer, reply)
 		})
+	}
+}
+
+// RPC Client
+type RPCClient struct {
+	*rpc.Client
+
+	send func(id uint32, name string, bin []byte) error
+}
+
+func (r *EdgeRouter) RPCClient(peer route.MembershipPeer) *RPCClient {
+	return &RPCClient{
+		Client: r.rpcClient,
+		send: func(id uint32, name string, proto []byte) error {
+			return r.sendRPCRequest(peer, id, name, proto)
+		},
 	}
 }

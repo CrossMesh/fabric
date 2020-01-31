@@ -148,6 +148,11 @@ func (a *Arbiter) Exit() <-chan struct{} {
 	return a.ctx.Done()
 }
 
+// Context return context for goroutine control.
+func (a *Arbiter) Context() context.Context {
+	return a.ctx
+}
+
 // Shutdown shuts the arbiter, sending exit signal to all goroutines and executions.
 func (a *Arbiter) Shutdown() {
 	a.Do(func() { a.shutdown() })

@@ -23,7 +23,7 @@ func TestPeerMetaProtobuf(t *testing.T) {
 		Disabled: false,
 		Priority: 0,
 	}
-	assert.True(t, p.Tx(func(p Peer, tx *PeerReleaseTx) bool {
+	assert.True(t, p.Tx(func(p MembershipPeer, tx *PeerReleaseTx) bool {
 		tx.Backend(b)
 		return true
 	}))
@@ -40,7 +40,7 @@ func TestPeerMeta(t *testing.T) {
 	p := TestPeer{}
 	p.Self = true
 	assert.True(t, p.IsSelf())
-	p.RTx(func(Peer) {})
+	p.RTx(func(MembershipPeer) {})
 
 	backends := []*PeerBackend{
 		{
@@ -70,23 +70,23 @@ func TestPeerMeta(t *testing.T) {
 	}
 	t.Log(p.String())
 	// empty
-	assert.False(t, p.Tx(func(p Peer, tx *PeerReleaseTx) bool {
+	assert.False(t, p.Tx(func(p MembershipPeer, tx *PeerReleaseTx) bool {
 		return true
 	}))
 	// ActiveBackend() should give PeerBackend_UNKNOWN when no backend activated.
 	assert.Equal(t, pb.PeerBackend_UNKNOWN, p.ActiveBackend().Type)
 	// transaction canceled.
-	assert.False(t, p.Tx(func(p Peer, tx *PeerReleaseTx) bool {
+	assert.False(t, p.Tx(func(p MembershipPeer, tx *PeerReleaseTx) bool {
 		tx.Backend(backends...)
 		assert.True(t, tx.ShouldCommit())
 		return false
 	}))
 	// commit on backend changed
-	p.OnBackendUpdated(func(p Peer, old []backend.PeerBackendIdentity, new []backend.PeerBackendIdentity) {
+	p.OnBackendUpdated(func(p MembershipPeer, old []backend.PeerBackendIdentity, new []backend.PeerBackendIdentity) {
 		assert.Equal(t, 0, len(old))
 		assert.Equal(t, 3, len(new))
 	})
-	assert.True(t, p.Tx(func(p Peer, tx *PeerReleaseTx) bool {
+	assert.True(t, p.Tx(func(p MembershipPeer, tx *PeerReleaseTx) bool {
 		tx.Backend(backends...)
 		assert.True(t, tx.ShouldCommit())
 		return true
@@ -96,25 +96,25 @@ func TestPeerMeta(t *testing.T) {
 	assert.Equal(t, backends[1].Type, p.ActiveBackend().Type)
 	p.OnBackendUpdated(nil)
 	// do not commit when no backend changed
-	assert.False(t, p.Tx(func(p Peer, tx *PeerReleaseTx) bool {
+	assert.False(t, p.Tx(func(p MembershipPeer, tx *PeerReleaseTx) bool {
 		tx.Backend(backends...)
 		assert.False(t, tx.ShouldCommit())
 		return true
 	}))
 	// should commit when any state of parent changed.
-	assert.True(t, p.Tx(func(p Peer, tx *PeerReleaseTx) bool {
+	assert.True(t, p.Tx(func(p MembershipPeer, tx *PeerReleaseTx) bool {
 		tx.Region("dc1")
 		return true
 	}))
 	t.Log(p.String())
 	// do not accept old version.
-	assert.False(t, p.Tx(func(p Peer, tx *PeerReleaseTx) bool {
+	assert.False(t, p.Tx(func(p MembershipPeer, tx *PeerReleaseTx) bool {
 		tx.Version(312)
 		assert.False(t, tx.ShouldCommit())
 		return true
 	}))
 	// update version.
-	assert.True(t, p.Tx(func(p Peer, tx *PeerReleaseTx) bool {
+	assert.True(t, p.Tx(func(p MembershipPeer, tx *PeerReleaseTx) bool {
 		tx.Version(uint64(time.Now().UnixNano()))
 		assert.True(t, tx.ShouldCommit())
 		return true
@@ -122,7 +122,7 @@ func TestPeerMeta(t *testing.T) {
 	t.Log(p.String())
 	// update active backend.
 	backends[2].Disabled = false
-	assert.True(t, p.Tx(func(p Peer, tx *PeerReleaseTx) bool {
+	assert.True(t, p.Tx(func(p MembershipPeer, tx *PeerReleaseTx) bool {
 		tx.UpdateActiveBackend()
 		assert.True(t, tx.ShouldCommit())
 		return true
@@ -142,14 +142,13 @@ func TestPeerMeta(t *testing.T) {
 			Priority: 2,
 		},
 	)
-	p.OnBackendUpdated(func(p Peer, old []backend.PeerBackendIdentity, new []backend.PeerBackendIdentity) {
+	p.OnBackendUpdated(func(p MembershipPeer, old []backend.PeerBackendIdentity, new []backend.PeerBackendIdentity) {
 		assert.Equal(t, 3, len(old))
 		assert.Equal(t, 4, len(new))
 	})
-	assert.True(t, p.Tx(func(p Peer, tx *PeerReleaseTx) bool {
+	assert.True(t, p.Tx(func(p MembershipPeer, tx *PeerReleaseTx) bool {
 		tx.Backend(backends...)
 		assert.True(t, tx.ShouldCommit())
 		return true
 	}))
-	t.Log(p.String())
 }

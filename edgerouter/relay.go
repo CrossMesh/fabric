@@ -20,13 +20,11 @@ var (
 	ErrRelayNoBackend = errors.New("backend unavaliable")
 )
 
-func (r *EdgeRouter) receiveRemote(backend backend.Backend, frame []byte, src string) {
+func (r *EdgeRouter) receiveRemote(b backend.Backend, frame []byte, src string) {
 	msgType, data := proto.UnpackProtocolMessageHeader(frame)
-	peer := r.route.Backward(data, route.PeerBackend{
-		PeerBackendIndex: route.PeerBackendIndex{
-			Type:     backend.Type(),
-			Endpoint: src,
-		},
+	peer, _ := r.route.Backward(data, backend.PeerBackendIdentity{
+		Type:     b.Type(),
+		Endpoint: src,
 	})
 	switch msgType {
 	case proto.MsgTypeRPC:
@@ -38,12 +36,12 @@ func (r *EdgeRouter) receiveRemote(backend backend.Backend, frame []byte, src st
 	}
 }
 
-func (r *EdgeRouter) backwardVTEP(frame []byte, peer route.Peer) {
+func (r *EdgeRouter) backwardVTEP(frame []byte, peer route.MembershipPeer) {
 	r.ifaceDevice.Write(frame)
 }
 
 // VTEP to remote peers.
-func (r *EdgeRouter) forwardVTEPPeer(frame []byte, peer route.Peer) error {
+func (r *EdgeRouter) forwardVTEPPeer(frame []byte, peer route.MembershipPeer) error {
 	if frame == nil || peer == nil {
 		return nil
 	}
@@ -65,6 +63,7 @@ func (r *EdgeRouter) forwardVTEPPeer(frame []byte, peer route.Peer) error {
 		if err == backend.ErrOperationCanceled {
 			return nil
 		}
+		return nil
 	}
 	return link.Send(frame)
 }

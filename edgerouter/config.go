@@ -16,7 +16,7 @@ import (
 )
 
 func (r *EdgeRouter) updateBackends(cfgs []*config.Backend) (err error) {
-	backendCreators := make(map[route.PeerBackendIndex]backend.BackendCreator, len(cfgs))
+	backendCreators := make(map[backend.PeerBackendIdentity]backend.BackendCreator, len(cfgs))
 	for _, cfg := range cfgs {
 		var creator backend.BackendCreator
 		if cfg == nil {
@@ -30,14 +30,14 @@ func (r *EdgeRouter) updateBackends(cfgs []*config.Backend) (err error) {
 		if creator == nil {
 			return errors.New("got nil backend creator")
 		}
-		backendCreators[route.PeerBackendIndex{
+		backendCreators[backend.PeerBackendIdentity{
 			Type:     creator.Type(),
 			Endpoint: creator.Publish(),
 		}] = creator
 	}
 
 	// shutdown.
-	r.visitBackends(func(index route.PeerBackendIndex, b backend.Backend) bool {
+	r.visitBackends(func(index backend.PeerBackendIdentity, b backend.Backend) bool {
 		if _, hasBackend := backendCreators[index]; !hasBackend {
 			b.Shutdown()
 		}
@@ -73,10 +73,25 @@ func (r *EdgeRouter) updateBackends(cfgs []*config.Backend) (err error) {
 		}
 	}
 
+	// publish backends.
+	backendID := make([]*route.PeerBackend, 0)
+	r.visitBackends(func(id backend.PeerBackendIdentity, b backend.Backend) bool {
+		backendID = append(backendID, &route.PeerBackend{
+			PeerBackendIdentity: id,
+			Priority:            b.Priority(),
+			Disabled:            false,
+		})
+		return true
+	})
+	r.peerSelf.Meta().Tx(func(p route.MembershipPeer, tx *route.PeerReleaseTx) bool {
+		tx.Backend(backendID...)
+		return true
+	})
+
 	return
 }
 
-func (r *EdgeRouter) goApplyConfig(cfg *config.Network, ifaceNet *net.IPNet) {
+func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 	id := atomic.AddUint32(&r.configID, 1)
 
 	r.arbiter.Go(func() {
@@ -101,45 +116,56 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, ifaceNet *net.IPNet) {
 			}
 
 			// update peer and route.
-			switch r.route.(type) {
-			case *route.L2Router:
-				if cfg.Mode != "ethernet" {
-					r.routeArbiter.Shutdown()
-					r.routeArbiter.Join(false)
-					r.ifaceDevice.Close()
-					r.routeArbiter, r.route, r.peerSelf, r.ifaceDevice = nil, nil, nil, nil
-				}
-			case *route.L3Router:
-				if cfg.Mode != "overlay" {
-					r.routeArbiter.Shutdown()
-					r.routeArbiter.Join(false)
-					r.ifaceDevice.Close()
-					r.routeArbiter, r.route, r.peerSelf, r.ifaceDevice = nil, nil, nil, nil
-				}
-			default:
+			if current := r.Mode(); current != "unknown" && cfg.Mode != current {
 				r.routeArbiter.Shutdown()
-				r.routeArbiter.Join(false)
-				r.routeArbiter, r.route, r.peerSelf = nil, nil, nil
+				r.forwardArbiter.Shutdown()
+				r.routeArbiter.Join()
+				r.forwardArbiter.Join()
+				r.ifaceDevice.Close()
+				r.routeArbiter, r.forwardArbiter, r.route, r.peerSelf, r.ifaceDevice = nil, nil, nil, nil, nil
 			}
 			if r.routeArbiter == nil {
 				r.routeArbiter = arbit.NewWithParent(r.arbiter, nil)
 			}
+			if r.forwardArbiter == nil {
+				r.forwardArbiter = arbit.NewWithParent(r.arbiter, logging.WithField("module", "forward"))
+			}
+			// only gossip membership supported yet.
+			if r.membership == nil {
+				r.membership = route.NewGossipMembership()
+			}
 			if r.route == nil {
 				deviceConfig.PlatformSpecificParams.Name = cfg.Iface.Name
-				r.forwardArbiter.Shutdown()
-				r.forwardArbiter.Join(false)
-				r.forwardArbiter = arbit.NewWithParent(r.arbiter, logging.WithField("module", "forward"))
 
 				switch cfg.Mode {
 				case "ethernet":
-					r.route = route.NewL2Router(r.routeArbiter, nil, time.Second*180)
+					r.route = route.NewL2Router(r.routeArbiter, r.membership, nil, time.Second*180)
 					r.peerSelf = &route.L2Peer{}
 					deviceConfig.PlatformSpecificParams.Driver = water.TAP
+
 				case "overlay":
-					r.route = route.NewL3Router(r.routeArbiter, nil, time.Second*180)
-					r.peerSelf = &route.L3Peer{Net: *ifaceNet}
+					r.route = route.NewL3Router(r.routeArbiter, r.membership, nil, time.Second*180)
+					l3 := &route.L3Peer{}
+					r.peerSelf = l3
 					deviceConfig.PlatformSpecificParams.Driver = water.TUN
+					l3.Tx(func(p route.MembershipPeer, tx *route.L3PeerReleaseTx) bool {
+						if err = tx.CIDR(cidr); err != nil {
+							return false
+						}
+						return true
+					})
 				}
+				if err != nil {
+					r.log.Error("create netlink failure: ", err)
+					succeed = false
+					continue
+				}
+
+				r.peerSelf.Meta().Tx(func(p route.MembershipPeer, tx *route.PeerReleaseTx) bool {
+					tx.Region(r.cfg.Region)
+					tx.ClaimAlive()
+					return true
+				})
 
 				if r.ifaceDevice, err = water.New(deviceConfig); err != nil {
 					r.log.Error("interface create failure: ", err)
@@ -159,7 +185,7 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, ifaceNet *net.IPNet) {
 
 		if succeed {
 			// seed myself.
-			r.Seed(r.peerSelf)
+			r.goMembership()
 
 			// start forward.
 			r.forwardArbiter.Go(func() { r.forwardVTEP() })
@@ -192,8 +218,7 @@ func (r *EdgeRouter) ApplyConfig(cfg *config.Network) (err error) {
 		return
 	}
 	var (
-		//ifaceMAC net.HardwareAddr
-		ifaceNet *net.IPNet
+	//ifaceMAC net.HardwareAddr
 	)
 	switch cfg.Mode {
 	case "ethernet":
@@ -201,14 +226,9 @@ func (r *EdgeRouter) ApplyConfig(cfg *config.Network) (err error) {
 			r.log.Error("invalid hardware address: ", cfg.Iface.MAC)
 			return err
 		}
-	case "overlay":
-		if _, ifaceNet, err = net.ParseCIDR(cfg.Iface.Address); err != nil {
-			r.log.Error("invalid cidr: ", cfg.Iface.Address)
-			return err
-		}
 	}
 
-	r.goApplyConfig(cfg, ifaceNet)
+	r.goApplyConfig(cfg, cfg.Iface.Address)
 
 	return nil
 }
