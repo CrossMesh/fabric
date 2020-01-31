@@ -3,8 +3,12 @@ module git.uestc.cn/sunmxt/utt
 go 1.12
 
 require (
+	github.com/denisbrodbeck/machineid v1.0.1
+	github.com/golang/protobuf v1.3.2
 	github.com/jinzhu/configor v1.1.1
 	github.com/sirupsen/logrus v1.4.2
+	github.com/songgao/water v0.0.0-20190725173103-fd331bda3f4b
+	github.com/stretchr/testify v1.2.2
 	github.com/urfave/cli/v2 v2.1.1
 	golang.org/x/crypto v0.0.0-20191219195013-becbf705a915 // indirect
 	golang.org/x/net v0.0.0-20191209160850-c0dbc17a3553 // indirect

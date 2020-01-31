@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package pb;
+
+import "google/protobuf/any.proto";
+
+message PeerBackend {
+    enum BackendType {
+        UNKNOWN = 0;
+        TCP = 1;
+    }
+    BackendType type = 1;
+    string endpoint = 2;
+    uint32 priority = 3;
+}
+
+message OverlayPeer {
+    uint32 virtual_ip = 1;
+    uint32 virtual_mask = 2;
+    bool is_router = 3;
+}
+
+message Peer {
+    uint32 peer_type = 1;
+    uint64 version = 2;
+    google.protobuf.Any details = 3;
+    enum State {
+        ALIVE = 0;
+        SUSPECTED = 1;
+        DEAD = 2;
+        NEW = 3;
+    }
+    State state = 8;
+    uint32 state_version = 9;
+    string region = 10;
+    repeated PeerBackend backend = 11; 
+}
+
+message PeerExchange {
+    repeated Peer peer = 1;
+}
+
+message RPC {
+    uint32 id = 1;
+    enum Type {
+        Request = 0;
+        Reply = 1;
+        Error = 2;
+    }
+    Type type = 2;
+    string error = 3;
+    string function = 4;
+    bytes data = 5;
+}
+
+message Ping {
+    string echo = 1;
+}

@@ -1,3 +1,5 @@
 bin/
 build/
 .vscode/
+coverage/
+.DS_Store
