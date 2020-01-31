@@ -15,7 +15,7 @@ cover: coverage test
 	go tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html
 
 test: coverage
-	go test -v -coverprofile=$(COVERAGE_DIR)/coverage.out ./mux/... ./rpc/... ./gossip/... ./proto ./route ./arbiter
+	go test -v -coverprofile=$(COVERAGE_DIR)/coverage.out -cover ./mux/... ./rpc/... ./gossip/... ./proto ./route ./arbiter
 	go tool cover -func=$(COVERAGE_DIR)/coverage.out
 
 build:
