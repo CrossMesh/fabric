@@ -13,7 +13,7 @@ import (
 
 // Arbiter is tracer to manage lifecycle of goroutines.
 type Arbiter struct {
-	lock sync.Mutex
+	lock chan struct{}
 
 	runningCount int32
 
@@ -22,6 +22,8 @@ type Arbiter struct {
 
 	sigFibreExit chan struct{}
 	sigOS        chan os.Signal
+
+	children sync.Map
 
 	preStop   func()
 	afterStop func()
@@ -39,14 +41,20 @@ func NewWithParent(parent *Arbiter, log *logging.Entry) *Arbiter {
 		sigFibreExit: make(chan struct{}, 10),
 		sigOS:        make(chan os.Signal, 0),
 		log:          log,
+		lock:         make(chan struct{}, 1),
 	}
+	a.lock <- struct{}{}
 
 	var parentCtx context.Context
 	if parent != nil {
 		parentCtx = parent.ctx
 
 		// join parent.
-		parent.Go(func() { a.Join() })
+		parent.Go(func() {
+			parent.children.Store(a, struct{}{})
+			a.Join()
+			parent.children.Delete(a)
+		})
 	} else {
 		parentCtx = context.Background()
 
@@ -64,6 +72,19 @@ func New(log *logging.Entry) *Arbiter {
 // Log return Entry of arbiter.
 func (a *Arbiter) Log() *logging.Entry {
 	return a.log
+}
+
+// NumGoroutine returns the number of goroutines currently exists on Arbiter tree.
+func (a *Arbiter) NumGoroutine() (n int32) {
+	n = atomic.LoadInt32(&a.runningCount)
+	if n > 0 {
+		n -= int32(1 - len(a.lock))
+	}
+	a.children.Range(func(k, v interface{}) bool {
+		n += k.(*Arbiter).NumGoroutine() - 1
+		return true
+	})
+	return
 }
 
 // Go spawns the proc (act the same as the "go" keyword) and let the arbiter traces it.
@@ -167,14 +188,16 @@ func (a *Arbiter) StopOSSignals(stopSignals ...os.Signal) *Arbiter {
 // Join waits until all goroutines exited (sync mode).
 // NOTE: Not less then one goroutines should Join() arbiter.
 func (a *Arbiter) Join() {
-	a.lock.Lock()
-	defer a.lock.Unlock()
+	<-a.lock
+	defer func() { a.lock <- struct{}{} }()
 
-	if a.runningCount > 0 {
+	if a.ShouldRun() {
+		a.Go(func() { a.sigFibreExit <- <-a.Exit() })
+
 		for a.runningCount > 0 {
 			select {
 			case <-a.sigFibreExit:
-				a.runningCount--
+				atomic.AddInt32(&a.runningCount, -1)
 
 			case <-a.sigOS:
 				if a.ShouldRun() {
