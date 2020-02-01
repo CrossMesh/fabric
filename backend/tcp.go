@@ -59,17 +59,13 @@ func newTCPCreator(cfg *config.Backend) (BackendCreator, error) {
 	if cfg.Parameters == nil {
 		return nil, ErrInvalidBackendConfig
 	}
-	if backendConfig, ok := cfg.Parameters.(*TCPBackendConfig); ok {
-		c.cfg = *backendConfig
-	} else {
-		// re-parse
-		bin, err := json.Marshal(cfg.Parameters)
-		if err != nil {
-			return nil, fmt.Errorf("parse backend config failure (%v)", err)
-		}
-		if err = json.Unmarshal(bin, &c.cfg); err != nil {
-			return nil, fmt.Errorf("parse backend config failure (%v)", err)
-		}
+	// re-parse
+	bin, err := json.Marshal(cfg.Parameters)
+	if err != nil {
+		return nil, fmt.Errorf("parse backend config failure (%v)", err)
+	}
+	if err = json.Unmarshal(bin, &c.cfg); err != nil {
+		return nil, fmt.Errorf("parse backend config failure (%v)", err)
 	}
 	c.cfg.Encrypt = cfg.Encrypt
 	c.raw = cfg
