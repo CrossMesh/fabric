@@ -70,7 +70,7 @@ func (r *EdgeRouter) visitBackends(visit func(backend.PeerBackendIdentity, backe
 			r.backends.Delete(k)
 			return true
 		}
-		b, isBackend := k.(backend.Backend)
+		b, isBackend := v.(backend.Backend)
 		if !isBackend {
 			r.backends.Delete(k)
 			return true

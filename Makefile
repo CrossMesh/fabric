@@ -2,7 +2,7 @@
 
 PROJECT_ROOT:=$(shell pwd)
 export GOPATH:=$(PROJECT_ROOT)/build
-export PATH:=$(PROJECT_ROOT)/bin:$(PATH)
+export PATH:=$(PROJECT_ROOT)/bin:$(GOPATH)/bin:$(PATH)
 
 COVERAGE_DIR:=coverage
 
@@ -35,7 +35,7 @@ cloc:
 mock: bin/mockery
 	bin/mockery -name=Backend -dir=./backend -output=./backend/mocks -outpkg=mocks
 
-devtools: bin/protoc-gen-go bin/gopls bin/goimports bin/mockery
+devtools: $(GOPATH)/bin/protoc-gen-go $(GOPATH)/bin/gopls $(GOPATH)/bin/goimports $(GOPATH)/bin/mockery
 
 proto: bin/protoc-gen-go
 	protoc -I=$(PROJECT_ROOT) --go_out=$(PROJECT_ROOT) proto/pb/core.proto 
@@ -46,21 +46,21 @@ exec:
 build/bin: bin build
 	test -d build/bin || ln -s $$(pwd)/bin build/bin
 
-bin/utt:
+bin/utt: 
 	@if [ "$${TYPE:=release}" = "debug" ]; then 					\
-		go install -v -gcflags='all=-N -l' git.uestc.cn/sunmxt/utt; \
+		go build -v -gcflags='all=-N -l' -o bin/utt git.uestc.cn/sunmxt/utt; \
 	else																\
-	    go install -v -ldflags='all=-s -w' git.uestc.cn/sunmxt/utt; \
+	    go build -v -ldflags='all=-s -w' -o bin/utt git.uestc.cn/sunmxt/utt; \
 	fi
 
-bin/protoc-gen-go:
+$(GOPATH)/bin/protoc-gen-go:
 	go get -u github.com/golang/protobuf/protoc-gen-go
 
-bin/gopls:
+$(GOPATH)/bin/gopls:
 	go get -u golang.org/x/tools/gopls
 
-bin/goimports:
+$(GOPATH)/bin/goimports:
 	go get -u golang.org/x/tools/cmd/goimports
 
-bin/mockery:
+$(GOPATH)/bin/mockery:
 	go get -u github.com/vektra/mockery/cmd/mockery
