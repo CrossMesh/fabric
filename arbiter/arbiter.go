@@ -27,8 +27,6 @@ type Arbiter struct {
 	afterStop func()
 
 	log *logging.Entry
-
-	children map[*Arbiter]struct{}
 }
 
 // NewWithParent creates a new arbiter atteched to specified parent arbiter.
@@ -47,10 +45,8 @@ func NewWithParent(parent *Arbiter, log *logging.Entry) *Arbiter {
 	if parent != nil {
 		parentCtx = parent.ctx
 
-		// add myself as child.
-		parent.lock.Lock()
-		parent.children[a] = struct{}{}
-		parent.lock.Unlock()
+		// join parent.
+		parent.Go(func() { a.Join() })
 	} else {
 		parentCtx = context.Background()
 
@@ -173,13 +169,6 @@ func (a *Arbiter) StopOSSignals(stopSignals ...os.Signal) *Arbiter {
 func (a *Arbiter) Join() {
 	a.lock.Lock()
 	defer a.lock.Unlock()
-
-	for child := range a.children {
-		if child == nil {
-			continue
-		}
-		a.Go(func() { child.Join() })
-	}
 
 	if a.runningCount > 0 {
 		for a.runningCount > 0 {
