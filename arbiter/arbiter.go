@@ -94,9 +94,7 @@ func (a *Arbiter) Go(proc func()) *Arbiter {
 		defer func() {
 			a.sigFibreExit <- struct{}{}
 		}()
-		if a.ShouldRun() {
-			proc()
-		}
+		proc()
 	}()
 	return a
 }
@@ -144,9 +142,7 @@ func (a *Arbiter) Do(proc func()) *Arbiter {
 	defer func() {
 		a.sigFibreExit <- struct{}{}
 	}()
-	if a.ShouldRun() {
-		proc()
-	}
+	proc()
 	return a
 }
 
