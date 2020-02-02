@@ -199,14 +199,10 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 		}
 
 		if succeed {
-			// seed myself.
 			r.goMembership()
 
 			// start forward.
 			r.forwardArbiter.Go(func() { r.forwardVTEP() })
-
-			// start gossip.
-			//a.goGossip(30 * time.Second)
 
 			r.log.Info("new config applied.")
 			r.cfg = cfg

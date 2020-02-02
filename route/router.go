@@ -91,6 +91,8 @@ func (r *BaseRouter) backendUpdated(p MembershipPeer, olds, news []backend.PeerB
 }
 
 func (r *BaseRouter) append(v MembershipPeer) {
+	r.log.Infof("new peer up: %v", v.String())
+
 	// map backends.
 	for _, backend := range v.Meta().backendByPriority {
 		r.byBackend.Store(backend.PeerBackendIdentity, v)
@@ -100,6 +102,8 @@ func (r *BaseRouter) append(v MembershipPeer) {
 }
 
 func (r *BaseRouter) remove(v MembershipPeer) {
+	r.log.Infof("peer down: %v", v.String())
+
 	r.hots.Delete(v.Meta())
 	for _, backend := range v.Meta().backendByPriority {
 		r.byBackend.Delete(backend.PeerBackendIdentity)

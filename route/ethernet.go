@@ -38,7 +38,11 @@ func NewL2Router(arbiter *arbit.Arbiter, membership Membership, log *logging.Ent
 	if log == nil {
 		log = logging.WithField("module", "l2_route")
 	}
-	r = &L2Router{}
+	r = &L2Router{
+		BaseRouter: BaseRouter{
+			log: log,
+		},
+	}
 	membership.OnAppend(r.append)
 	membership.OnRemove(r.remove)
 	r.visitor = membership
