@@ -1,11 +1,16 @@
-peer:
-  test1:
-    tunnel:
-      address: "127.0.0.1"
-      port: 38971
-    acl:
-      "127.0.0.1:38972":
-        psk: 123456
-        reverse:
-          address: "127.0.0.1"
-          port: 38973
+link:
+  net1:
+    mode: overlay
+    encrypt: true
+    iface:
+      name: ut1
+      mac: ea:38:ab:40:00:11
+      address: 10.240.3.1/24
+    backends:
+    - psk: 123456
+      type: tcp
+      params:
+        bind: 0.0.0.0:3880
+        publish: 192.168.0.161:3880
+        priority: 1
+      

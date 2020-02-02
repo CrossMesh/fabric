@@ -11,7 +11,6 @@ import (
 	"git.uestc.cn/sunmxt/utt/backend"
 	"git.uestc.cn/sunmxt/utt/config"
 	"git.uestc.cn/sunmxt/utt/route"
-	logging "github.com/sirupsen/logrus"
 	"github.com/songgao/water"
 )
 
@@ -26,6 +25,7 @@ func (r *EdgeRouter) updateBackends(cfgs []*config.Backend) (err error) {
 			if err == backend.ErrBackendTypeUnknown {
 				return fmt.Errorf("unknown backend type \"%v\"", cfg.Type)
 			}
+			return err
 		}
 		if creator == nil {
 			return errors.New("got nil backend creator")
@@ -58,6 +58,7 @@ func (r *EdgeRouter) updateBackends(cfgs []*config.Backend) (err error) {
 		}
 		delete(backendCreators, index)
 	}
+
 	// update.
 	for index, creator := range backendCreators {
 		if backend := r.getBackend(index); backend != nil {
@@ -92,7 +93,9 @@ func (r *EdgeRouter) updateBackends(cfgs []*config.Backend) (err error) {
 }
 
 func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
-	id := atomic.AddUint32(&r.configID, 1)
+	id, log := atomic.AddUint32(&r.configID, 1), r.log.WithField("type", "config")
+
+	log.Infof("start apply configuration %v", id)
 
 	r.arbiter.Go(func() {
 		var (
@@ -101,22 +104,23 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 			err          error
 		)
 
-		succeed := false
+		succeed, nextTry := false, time.Now()
+		r.lock.Lock()
+		defer r.lock.Unlock()
 		for r.arbiter.ShouldRun() && !succeed {
-			if nextTry.After(time.Now()) {
+			if time.Now().Before(nextTry) {
 				time.Sleep(time.Second)
 				continue
 			}
 			succeed = true
 
-			r.lock.Lock()
-			defer r.lock.Unlock()
 			if thisID := r.configID; thisID != id {
 				break
 			}
 
 			// update peer and route.
 			if current := r.Mode(); current != "unknown" && cfg.Mode != current {
+				r.log.Info("shutting down forwarding...")
 				r.routeArbiter.Shutdown()
 				r.forwardArbiter.Shutdown()
 				r.routeArbiter.Join()
@@ -128,26 +132,33 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 				r.routeArbiter = arbit.NewWithParent(r.arbiter, nil)
 			}
 			if r.forwardArbiter == nil {
-				r.forwardArbiter = arbit.NewWithParent(r.arbiter, logging.WithField("module", "forward"))
+				r.forwardArbiter = arbit.NewWithParent(r.arbiter, r.log.WithField("type", "forward"))
 			}
 			// only gossip membership supported yet.
 			if r.membership == nil {
 				r.membership = route.NewGossipMembership()
 			}
+			// create route.
 			if r.route == nil {
-				deviceConfig.PlatformSpecificParams.Name = cfg.Iface.Name
+				log.Info("starting new forwarding...")
+
+				deviceConfig.Name = cfg.Iface.Name
 
 				switch cfg.Mode {
 				case "ethernet":
+					log.Info("network mode: ethernet")
+
 					r.route = route.NewL2Router(r.routeArbiter, r.membership, nil, time.Second*180)
 					r.peerSelf = &route.L2Peer{}
-					deviceConfig.PlatformSpecificParams.Driver = water.TAP
+					deviceConfig.DeviceType = water.TAP
 
 				case "overlay":
+					log.Info("network mode: overlay")
+
 					r.route = route.NewL3Router(r.routeArbiter, r.membership, nil, time.Second*180)
 					l3 := &route.L3Peer{}
 					r.peerSelf = l3
-					deviceConfig.PlatformSpecificParams.Driver = water.TUN
+					deviceConfig.DeviceType = water.TUN
 					l3.Tx(func(p route.MembershipPeer, tx *route.L3PeerReleaseTx) bool {
 						if err = tx.CIDR(cidr); err != nil {
 							return false
@@ -156,44 +167,45 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 					})
 				}
 				if err != nil {
-					r.log.Error("create netlink failure: ", err)
+					log.Error("create netlink failure: ", err)
 					succeed = false
 					continue
 				}
 
 				r.peerSelf.Meta().Tx(func(p route.MembershipPeer, tx *route.PeerReleaseTx) bool {
-					tx.Region(r.cfg.Region)
+					tx.Region(cfg.Region)
 					tx.ClaimAlive()
 					return true
 				})
 
+			}
+			// create tuntap.
+			if r.ifaceDevice == nil {
 				if r.ifaceDevice, err = water.New(deviceConfig); err != nil {
-					r.log.Error("interface create failure: ", err)
+					log.Error("interface create failure: ", err)
 					succeed = false
 				}
 			}
-
+			// update backends.
 			if err = r.updateBackends(cfg.Backend); err != nil {
-				r.log.Error("update backend failure: ", err)
+				log.Error("update backend failure: ", err)
 				succeed = false
 			}
 
 			if !succeed {
 				nextTry = time.Now().Add(15 * time.Second)
+				log.Info("retry at 15 seconds.")
 			}
 		}
 
 		if succeed {
-			// seed myself.
 			r.goMembership()
 
 			// start forward.
 			r.forwardArbiter.Go(func() { r.forwardVTEP() })
 
-			// start gossip.
-			//a.goGossip(30 * time.Second)
-
 			r.log.Info("new config applied.")
+			r.cfg = cfg
 		}
 	})
 }

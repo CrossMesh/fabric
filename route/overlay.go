@@ -78,6 +78,9 @@ func NewL3Router(arbiter *arbit.Arbiter, membership Membership, log *logging.Ent
 	}
 	r = &L3Router{
 		visitor: membership,
+		BaseRouter: BaseRouter{
+			log: log,
+		},
 	}
 	membership.OnAppend(r.append)
 	membership.OnRemove(r.remove)

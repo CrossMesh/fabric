@@ -1,10 +1,10 @@
 package config
 
 type Backend struct {
-	Encrypt    bool        `json:"encrypt" yaml:"encrypt" default:"true"`
-	PSK        string      `json:"psk" yaml:"psk"`
-	Type       string      `json:"type" yaml:"type"`
-	Parameters interface{} `json:"params" yaml:"params"`
+	Encrypt    bool                   `json:"encrypt" yaml:"encrypt" default:"true"`
+	PSK        string                 `json:"psk" yaml:"psk"`
+	Type       string                 `json:"type" yaml:"type"`
+	Parameters map[string]interface{} `json:"params" yaml:"params"`
 }
 
 type Interface struct {

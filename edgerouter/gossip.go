@@ -3,6 +3,7 @@ package edgerouter
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"git.uestc.cn/sunmxt/utt/gossip"
@@ -23,8 +24,10 @@ func (r *EdgeRouter) goGossip(m *route.GossipMemebership) {
 
 	r.routeArbiter.TickGo(func(cancel func(), deadline time.Time) {
 		term := m.NewTerm(1)
+		log.Infof("start gossip term %v.", term.ID)
 		ctx, _ := context.WithDeadline(r.routeArbiter.Context(), deadline)
 
+		peerDigest := make([]string, term.NumOfPeers())
 		for idx := 0; idx < term.NumOfPeers(); idx++ {
 			// exchange peer list with peers.
 			peer, isPeer := term.Peer(idx).(route.MembershipPeer)
@@ -32,6 +35,9 @@ func (r *EdgeRouter) goGossip(m *route.GossipMemebership) {
 				r.log.Warn("goGossip() got not route.MembershipPeer{}: ", term.Peer(idx))
 				continue
 			}
+			// log gossip peers.
+			peerDigest = append(peerDigest, peer.String())
+
 			snapshot, err := m.PBSnapshot()
 			if err != nil {
 				r.log.Error("goGossip() snapshot failure:", err)
@@ -57,6 +63,12 @@ func (r *EdgeRouter) goGossip(m *route.GossipMemebership) {
 				}
 			})
 		}
+		if len(peerDigest) < 1 {
+			log.Info("no member to gossip.")
+		} else {
+			log.Infof("gossip members: %v.", strings.Join(peerDigest, ","))
+		}
+
 	}, gossip.DefaultGossipPeriod, 1)
 }
 
