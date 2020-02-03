@@ -7,6 +7,7 @@ import (
 	arbit "git.uestc.cn/sunmxt/utt/arbiter"
 	"git.uestc.cn/sunmxt/utt/backend"
 	"git.uestc.cn/sunmxt/utt/config"
+	"git.uestc.cn/sunmxt/utt/gossip"
 	"git.uestc.cn/sunmxt/utt/route"
 	"git.uestc.cn/sunmxt/utt/rpc"
 	logging "github.com/sirupsen/logrus"
@@ -89,4 +90,20 @@ func (r *EdgeRouter) getBackend(index backend.PeerBackendIdentity) backend.Backe
 		return nil
 	}
 	return b
+}
+
+// NewEmptyPeer return empty peer according to edge router mode..
+func (r *EdgeRouter) NewEmptyPeer() (gossip.MembershipPeer, route.MembershipPeer) {
+	switch mode := r.Mode(); mode {
+	case "ethernet":
+		p := &route.L2Peer{}
+		return p, p
+	case "overlay":
+		p := &route.L3Peer{}
+		return p, p
+	default:
+		// should not hit this.
+		r.log.Errorf("EdgeRouter.NewPeer() got unknown mode %v.", mode)
+	}
+	return nil, nil
 }

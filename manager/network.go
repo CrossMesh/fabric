@@ -75,3 +75,7 @@ func (n *Network) Reload(net *config.Network) error {
 
 	return n.router.ApplyConfig(net)
 }
+
+func (n *Network) Router() *edgerouter.EdgeRouter {
+	return n.Router()
+}

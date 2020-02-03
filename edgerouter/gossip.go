@@ -19,6 +19,26 @@ func (r *EdgeRouter) goMembership() {
 	}
 }
 
+func (r *EdgeRouter) newGossipPeer(snapshot *pb.Peer) (p gossip.MembershipPeer) {
+	var snapshotPeer route.PBSnapshotPeer
+
+	switch mode := r.Mode(); mode {
+	case "ethernet":
+		l2 := &route.L2Peer{}
+		snapshotPeer, p = l2, l2
+	case "overlay":
+		l3 := &route.L3Peer{}
+		snapshotPeer, p = l3, l3
+	default:
+		// should not hit this.
+		r.log.Errorf("EdgeRouter.newGossipPeer() got unknown mode %v.", mode)
+		return nil
+	}
+
+	snapshotPeer.ApplyPBSnapshot(snapshot)
+	return
+}
+
 func (r *EdgeRouter) goGossip(m *route.GossipMemebership) {
 	log := r.log.WithField("type", "gossip")
 

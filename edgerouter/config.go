@@ -136,7 +136,9 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 			}
 			// only gossip membership supported yet.
 			if r.membership == nil {
-				r.membership = route.NewGossipMembership()
+				g := route.NewGossipMembership()
+				g.New = r.newGossipPeer
+				r.membership = g
 			}
 			// create route.
 			if r.route == nil {

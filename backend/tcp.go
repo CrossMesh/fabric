@@ -588,7 +588,8 @@ func (t *TCP) connect(addr *net.TCPAddr, publish string) (link *TCPLink, err err
 		log := t.log.WithField("conn_id", connID)
 
 		// handshake
-		ctx, _ := context.WithDeadline(context.TODO(), deadline)
+		ctx, canceled := context.WithDeadline(context.TODO(), deadline)
+		defer canceled()
 		var identity string
 		if identity, err = t.connectHandshake(ctx, log, link); err != nil {
 			link.Close()
