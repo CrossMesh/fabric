@@ -240,7 +240,7 @@ func (r *EdgeRouter) ApplyConfig(cfg *config.Network) (err error) {
 		}
 	}
 
-	r.goApplyConfig(cfg, cfg.Iface.Address)
+	r.goApplyConfig(cfg, cfg.Iface.Subnet)
 
 	return nil
 }

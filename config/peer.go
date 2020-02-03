@@ -57,7 +57,7 @@ func (c *Network) Equal(x *Network) (e bool) {
 	} else if x == nil {
 		return false
 	}
-	if e = e.PSK == x.PSK && e.Mode == x.Mode && c.Region == x.Region; !e {
+	if e = c.PSK == x.PSK && c.Mode == x.Mode && c.Region == x.Region; !e {
 		return
 	}
 	if c.Iface != x.Iface {
