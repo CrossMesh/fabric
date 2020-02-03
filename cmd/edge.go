@@ -3,7 +3,7 @@ package cmd
 import (
 	arbit "git.uestc.cn/sunmxt/utt/arbiter"
 	"git.uestc.cn/sunmxt/utt/config"
-	"git.uestc.cn/sunmxt/utt/edgerouter"
+	"git.uestc.cn/sunmxt/utt/manager"
 	"github.com/jinzhu/configor"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
@@ -16,15 +16,22 @@ func newEdgeCmd() *cli.Command {
 		Name:  "edge",
 		Usage: "run as network peer.",
 		Action: func(ctx *cli.Context) (err error) {
-			cfg := &config.Link{}
+			if ctx.Args().Len() < 1 {
+				log.Error("network missing.")
+				return nil
+			}
+			if ctx.Args().Len() > 1 {
+				log.Error("Too many networks specified.")
+				return nil
+			}
+			netName := ctx.Args().Get(0)
+
+			cfg := &config.Daemon{}
 			if err = configor.Load(cfg, configFile); err != nil {
 				log.Error("failed to load configuration: ", err)
 				return err
 			}
-			net := pickNetConfig(ctx, cfg)
-			if net == nil {
-				return nil
-			}
+
 			arbiter := arbit.New(nil)
 			arbiter.HookPreStop(func() {
 				arbiter.Log().Info("shutting down...")
@@ -32,14 +39,22 @@ func newEdgeCmd() *cli.Command {
 			arbiter.HookStopped(func() {
 				arbiter.Log().Info("exiting...")
 			})
-			var app *edgerouter.EdgeRouter
-			app, err = edgerouter.New(arbiter)
-			if err != nil {
-				log.Error("create router failure: ", err)
-				return err
+			defer arbiter.Shutdown()
+
+			mgr := manager.NewNetworkManager(arbiter, nil)
+			if errs := mgr.UpdateConfig(cfg); errs != nil {
+				log.Error("invalid config: ", errs)
+				return nil
 			}
-			if err = app.ApplyConfig(net); err != nil {
-				return err
+			// legacy.
+			net := mgr.GetNetwork(netName)
+			if net == nil {
+				log.Error("network \"%v\" not found.", netName)
+				return nil
+			}
+			if err = net.Up(); err != nil {
+				log.Error("network setup failure: ", err)
+				return nil
 			}
 			return arbiter.Arbit()
 		},

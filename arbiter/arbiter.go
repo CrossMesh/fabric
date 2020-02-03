@@ -34,6 +34,9 @@ type Arbiter struct {
 // NewWithParent creates a new arbiter atteched to specified parent arbiter.
 // The arbiter will be shut down by the parent or a call to Arbiter.Shutdown().
 func NewWithParent(parent *Arbiter, log *logging.Entry) *Arbiter {
+	if parent != nil && log == nil {
+		log = parent.log
+	}
 	if log == nil {
 		log = logging.WithField("module", "arbiter")
 	}
@@ -94,9 +97,7 @@ func (a *Arbiter) Go(proc func()) *Arbiter {
 		defer func() {
 			a.sigFibreExit <- struct{}{}
 		}()
-		if a.ShouldRun() {
-			proc()
-		}
+		proc()
 	}()
 	return a
 }
@@ -144,9 +145,7 @@ func (a *Arbiter) Do(proc func()) *Arbiter {
 	defer func() {
 		a.sigFibreExit <- struct{}{}
 	}()
-	if a.ShouldRun() {
-		proc()
-	}
+	proc()
 	return a
 }
 
