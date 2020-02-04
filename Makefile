@@ -41,8 +41,8 @@ devtools: $(GOPATH)/bin/protoc-gen-go $(GOPATH)/bin/gopls $(GOPATH)/bin/goimport
 
 proto: bin/protoc-gen-go
 	protoc -I=$(PROJECT_ROOT) --go_out=$(PROJECT_ROOT) proto/pb/core.proto
-	protoc -I=$(PROJECT_ROOT) --go_out=plugins=grpc:$(PROJECT_ROOT) manager/rpc/pb/core.proto
-	find -E . -name '*.pb.go' -type f -not -path './build/*' | xargs sed -i '' "s|\"proto/pb\"|\"$(GOMOD)/proto/pb\"|g; s|\"manager/rpc/pb\"|\"$(GOMOD)/proto/pb\"|g"
+	protoc -I=$(PROJECT_ROOT) --go_out=plugins=grpc:$(PROJECT_ROOT) control/rpc/pb/core.proto
+	find -E . -name '*.pb.go' -type f -not -path './build/*' | xargs sed -i '' "s|\"proto/pb\"|\"$(GOMOD)/proto/pb\"|g; s|\"control/rpc/pb\"|\"$(GOMOD)/control/rpc/pb\"|g"
 
 
 exec:
@@ -51,7 +51,7 @@ exec:
 build/bin: bin build
 	test -d build/bin || ln -s $$(pwd)/bin build/bin
 
-bin/utt: 
+bin/utt: build/bin
 	@if [ "$${TYPE:=release}" = "debug" ]; then 					\
 		go build -v -gcflags='all=-N -l' -o bin/utt $(GOMOD); \
 	else																\

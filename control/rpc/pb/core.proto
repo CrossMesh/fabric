@@ -2,12 +2,10 @@ syntax = "proto3";
 
 package pb;
 
-import "proto/pb/core.proto";
-
 message SeedPeerRequest {
     string network = 1;
     message EndpointIdentity {
-        PeerBackend.BackendType endpoint_type = 1;
+        string endpoint_type = 1;
         string endpoint = 2;
     }
     repeated EndpointIdentity endpoint = 2;

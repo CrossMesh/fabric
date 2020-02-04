@@ -1,11 +1,11 @@
-package manager
+package control
 
 import (
 	"net"
 
 	arbit "git.uestc.cn/sunmxt/utt/arbiter"
 	"git.uestc.cn/sunmxt/utt/config"
-	"git.uestc.cn/sunmxt/utt/manager/rpc/pb"
+	"git.uestc.cn/sunmxt/utt/control/rpc/pb"
 	logging "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 )
@@ -80,7 +80,7 @@ func (n *NetworkManager) UpdateConfig(cfg *config.Daemon) (errs []error) {
 		return nil
 	}
 
-	if err := n.ApplyControlRPCConfig(&cfg.Control); err != nil {
+	if err := n.ApplyControlRPCConfig(cfg.Control); err != nil {
 		errs = append(errs, err)
 	}
 
