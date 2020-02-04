@@ -1,0 +1,16 @@
+peer:
+  bbs_stuact:
+    tunnel:
+      address: 121.48.165.58
+      port: 4790
+
+    acl:
+      "202.115.22.195:4789":
+        reverse:
+          address: 127.0.0.1
+          port: 4790
+          
+      "222.197.183.133:4789":
+        reverse:
+          address: 127.0.0.1
+          port: 4791

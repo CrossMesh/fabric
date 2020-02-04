@@ -2,16 +2,12 @@ package cmd
 
 import (
 	arbit "git.uestc.cn/sunmxt/utt/arbiter"
-	"git.uestc.cn/sunmxt/utt/config"
-	"git.uestc.cn/sunmxt/utt/manager"
-	"github.com/jinzhu/configor"
+	"git.uestc.cn/sunmxt/utt/control"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 )
 
-func newEdgeCmd() *cli.Command {
-	configFile := ""
-
+func newEdgeCmd(app *App) *cli.Command {
 	cmd := &cli.Command{
 		Name:  "edge",
 		Usage: "run as network peer.",
@@ -26,12 +22,6 @@ func newEdgeCmd() *cli.Command {
 			}
 			netName := ctx.Args().Get(0)
 
-			cfg := &config.Daemon{}
-			if err = configor.Load(cfg, configFile); err != nil {
-				log.Error("failed to load configuration: ", err)
-				return err
-			}
-
 			arbiter := arbit.New(nil)
 			arbiter.HookPreStop(func() {
 				arbiter.Log().Info("shutting down...")
@@ -41,8 +31,8 @@ func newEdgeCmd() *cli.Command {
 			})
 			defer arbiter.Shutdown()
 
-			mgr := manager.NewNetworkManager(arbiter, nil)
-			if errs := mgr.UpdateConfig(cfg); errs != nil {
+			mgr := control.NewNetworkManager(arbiter, nil)
+			if errs := mgr.UpdateConfig(app.cfg); errs != nil {
 				log.Error("invalid config: ", errs)
 				return nil
 			}
@@ -58,15 +48,7 @@ func newEdgeCmd() *cli.Command {
 			}
 			return arbiter.Arbit()
 		},
-		Flags: []cli.Flag{
-			&cli.StringFlag{
-				Name:        "config",
-				Aliases:     []string{"c"},
-				Usage:       "config file",
-				Required:    true,
-				Destination: &configFile,
-			},
-		}}
+	}
 
 	return cmd
 }

@@ -6,10 +6,17 @@ import (
 	"strings"
 	"time"
 
+	"git.uestc.cn/sunmxt/utt/backend"
 	"git.uestc.cn/sunmxt/utt/gossip"
 	"git.uestc.cn/sunmxt/utt/proto/pb"
 	"git.uestc.cn/sunmxt/utt/route"
 	"git.uestc.cn/sunmxt/utt/rpc"
+)
+
+var (
+	ErrNotGossipMembership    = errors.New("not gossip membership")
+	ErrUnknownMode            = errors.New("unknown edge router mode")
+	ErrGossipNoActiveEndpoint = errors.New("no active endpoint to gossip")
 )
 
 func (r *EdgeRouter) goMembership() {
@@ -90,6 +97,52 @@ func (r *EdgeRouter) goGossip(m *route.GossipMemebership) {
 		}
 
 	}, gossip.DefaultGossipPeriod, 1)
+}
+
+func (r *EdgeRouter) GossipSeedPeer(bs ...backend.PeerBackendIdentity) error {
+	if len(bs) < 1 {
+		return ErrGossipNoActiveEndpoint
+	}
+
+	// get membership. allow only gossip membership.
+	m, isGossip := r.membership.(*route.GossipMemebership)
+	if !isGossip || m == nil {
+		return ErrNotGossipMembership
+	}
+
+	backends := make([]*route.PeerBackend, 0, len(bs))
+	for _, b := range bs {
+		backends = append(backends, &route.PeerBackend{
+			PeerBackendIdentity: backend.PeerBackendIdentity{
+				Type:     b.Type,
+				Endpoint: b.Endpoint,
+			},
+		})
+	}
+
+	// create new peer.
+	switch mode := r.Mode(); mode {
+	case "ethernet":
+		l2 := &route.L2Peer{}
+		l2.Tx(func(p route.MembershipPeer, tx *route.PeerReleaseTx) bool {
+			tx.Backend(backends...)
+			return true
+		})
+		m.Discover(l2)
+	case "overlay":
+		l3 := &route.L3Peer{}
+		l3.Tx(func(p route.MembershipPeer, tx *route.L3PeerReleaseTx) bool {
+			tx.Backend(backends...)
+			return true
+		})
+		m.Discover(l3)
+	default:
+		// should not hit this.
+		r.log.Errorf("EdgeRouter.newGossipPeer() got unknown mode %v.", mode)
+		return ErrUnknownMode
+	}
+
+	return nil
 }
 
 // GossipExchange is RPC method to gossip memberlist.
