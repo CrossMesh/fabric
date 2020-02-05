@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	ErrRPCCanceled = errors.New("RPC Requesr canceled")
+	ErrRPCCanceled = errors.New("RPC Request canceled")
 )
 
 type Client struct {

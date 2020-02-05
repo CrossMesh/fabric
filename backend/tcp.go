@@ -87,17 +87,53 @@ type TCPLink struct {
 	remote  *net.TCPAddr
 	publish string
 
+	buf       []byte
+	cursor    int
+	maxCursor int
+
 	lock chan struct{}
 
 	backend *TCP
 }
 
-func NewTCPLink() (r *TCPLink) {
+func newTCPLink(backend *TCP) (r *TCPLink) {
 	r = &TCPLink{
-		lock: make(chan struct{}, 1),
+		lock:      make(chan struct{}, 1),
+		backend:   backend,
+		buf:       make([]byte, defaultBufferSize),
+		cursor:    0,
+		maxCursor: 0,
 	}
 	r.lock <- struct{}{}
 	return r
+}
+
+func (l *TCPLink) read(emit func(frame []byte) bool) (err error) {
+	conn, feed, cont := l.conn, 0, true
+	if conn == nil {
+		return ErrConnectionClosed
+	}
+	for cont && err == nil {
+		if l.maxCursor > 0 {
+			// feed demuxer.
+			feed, err = l.demuxer.Demux(l.buf[l.cursor:l.maxCursor], func(frame []byte) bool {
+				cont = emit(frame)
+				return cont
+			})
+			l.cursor += feed
+		} else {
+			// read stream.
+			feed, err = conn.Read(l.buf)
+			if err != nil {
+				break
+			}
+			l.cursor, l.maxCursor = 0, feed
+		}
+		if l.cursor == l.maxCursor {
+			l.cursor, l.maxCursor = 0, 0
+		}
+	}
+	return
 }
 
 func (l *TCPLink) Send(frame []byte) (err error) {
@@ -123,15 +159,12 @@ func (l *TCPLink) Send(frame []byte) (err error) {
 			l.Close()
 		}
 	}
-
 	return
 }
 
 func (l *TCPLink) InitializeAESGCM(key []byte, nonce []byte) (err error) {
-	if blk, err := aes.NewCipher(key[:]); err != nil {
+	if l.crypt, err = aes.NewCipher(key[:]); err != nil {
 		return err
-	} else {
-		l.crypt = blk
 	}
 	if l.muxer, err = mux.NewGCMStreamMuxer(l.conn, l.crypt, nonce); err != nil {
 		return err
@@ -313,6 +346,11 @@ func (t *TCP) handshakeConnect(arbiter *arbit.Arbiter, log *logging.Entry, connI
 		log.Error("got non-tcp connection. rejected.")
 		return false, nil
 	}
+	// handshake should be finished in 20 seconds.
+	if err := conn.SetDeadline(time.Now().Add(time.Second * 20)); err != nil {
+		log.Error("conn.SetDeadline() failure: ", err)
+		return false, nil
+	}
 
 	// wait for hello.
 	hello := proto.Hello{}
@@ -329,15 +367,12 @@ func (t *TCP) handshakeConnect(arbiter *arbit.Arbiter, log *logging.Entry, connI
 			}
 		}
 	default:
-		log.Warn("unknwon start code setting. skip.")
+		log.Warn("unknown start code setting. skip.")
 	}
 
 	var read int
+	// hello message has fixed length.
 	for arbiter.ShouldRun() && read < hello.Len() {
-		if err := conn.SetDeadline(time.Now().Add(time.Second * 15)); err != nil {
-			log.Error("conn.SetDeadline() failure: ", err)
-			return false, nil
-		}
 		newRead, err := conn.Read(buf[read:cap(buf)])
 		if err != nil {
 			if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
@@ -374,7 +409,7 @@ func (t *TCP) handshakeConnect(arbiter *arbit.Arbiter, log *logging.Entry, connI
 	log.Info("authentication success.")
 
 	// init cipher.
-	link := NewTCPLink()
+	link := newTCPLink(t)
 	link.conn = conn
 	buf = buf[:0]
 	buf = append(buf, hello.Lead...)
@@ -409,32 +444,21 @@ func (t *TCP) handshakeConnect(arbiter *arbit.Arbiter, log *logging.Entry, connI
 	// wait for connect
 	log.Info("negotiate peering information.")
 	var connectReq *proto.Connect
-	buf = buf[:cap(buf)]
-	for arbiter.ShouldRun() && connectReq == nil && err != nil {
-		if err := conn.SetReadDeadline(time.Now().Add(time.Second * 15)); err != nil {
-			log.Error("set deadline error:", err)
-			return false, err
+	if rerr := link.read(func(frame []byte) bool {
+		connectReq = &proto.Connect{}
+		if err = connectReq.Decode(frame); err != nil {
+			log.Info("corrupted connect handshake packet.")
 		}
-		if read, err = conn.Read(buf); err != nil {
-			if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
-				log.Info("deny due to inactivity.")
-				return false, nil
-			}
-			if err == io.EOF {
-				log.Info("connection closed by foreign peer.")
-				return false, nil
-			}
-			return false, err
+		return false
+	}); rerr != nil {
+		if nerr, ok := rerr.(net.Error); ok && nerr.Timeout() {
+			log.Info("deny due to inactivity.")
+			return false, nil
 		}
-		_, err = link.demuxer.Demux(buf[:read], func(pkt []byte) {
-			if connectReq != nil {
-				return
-			}
-			connectReq = &proto.Connect{}
-			if err = connectReq.Decode(pkt); err != nil {
-				log.Info("corrupted connect handshake packet.")
-			}
-		})
+		if rerr == io.EOF {
+			log.Info("connection closed by foreign peer.")
+			return false, nil
+		}
 	}
 	if !arbiter.ShouldRun() || err != nil {
 		return false, err
@@ -469,10 +493,11 @@ func (t *TCP) acceptTCPLink(arbiter *arbit.Arbiter, log *logging.Entry, link *TC
 		return false, nil
 	}
 	if _, exists := t.link.LoadOrStore(key, link); exists {
-		log.Warnf("link to foreign peer \"%v\" exists. closing...")
+		log.Warnf("link to foreign peer \"%v\" exists. closing...", key)
 		return false, nil
 	}
 	link.remote = addr
+	link.publish = key
 	log.Infof("link to foreign peer \"%v\" established.", key)
 
 	t.goTCPLinkDaemon(log, key, link)
@@ -483,14 +508,11 @@ func (t *TCP) acceptTCPLink(arbiter *arbit.Arbiter, log *logging.Entry, link *TC
 func (t *TCP) goTCPLinkDaemon(log *logging.Entry, key string, link *TCPLink) {
 	t.Arbiter.Go(func() {
 		defer func() {
-			link.conn.Close()
+			link.Close()
 		}()
+		var err error
 
-		var (
-			err  error
-			read int
-		)
-
+		log.Info("receiver start.")
 		// TCP options.
 		if bufSize := t.config.SendBufferSize; bufSize > 0 {
 			if err = link.conn.SetWriteBuffer(bufSize); err != nil {
@@ -513,46 +535,45 @@ func (t *TCP) goTCPLinkDaemon(log *logging.Entry, key string, link *TCPLink) {
 			}
 		}
 
-		buf := make([]byte, defaultBufferSize)
+		// pump.
 		for t.Arbiter.ShouldRun() {
 			if err = link.conn.SetDeadline(time.Now().Add(time.Second * 2)); err != nil {
 				log.Info("conn.SetDeadline() error: ", err)
 				break
 			}
-			if err == io.EOF {
-				log.Info("connection closed by peer.")
-				break
-			}
-			if read, err = link.conn.Read(buf); err != nil {
+			if err = link.read(func(frame []byte) bool {
+				// deliver frame to all watchers.
+				t.watch.Range(func(k, v interface{}) bool {
+					if emit, ok := v.(func(Backend, []byte, string)); ok {
+						emit(t, frame, link.publish)
+					}
+					return true
+				})
+				return true
+			}); err != nil {
+				// handle errors.
+				if err == io.EOF {
+					log.Info("connection closed by peer.")
+					break
+				}
 				if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
 					err = nil
 				}
 			}
-			if _, err = link.demuxer.Demux(buf[:read], func(pkt []byte) {
-				// deliver frame to all watchers.
-				t.watch.Range(func(k, v interface{}) bool {
-					if emit, ok := v.(func(Backend, []byte, string)); ok {
-						emit(t, pkt, link.publish)
-					}
-					return true
-				})
-			}); err != nil {
-				log.Error("demux error: ", err)
-			}
 		}
-		log.Error("receiver existing...")
+		log.Info("receiver existing...")
 	})
 }
 
 func (t *TCP) connect(addr *net.TCPAddr, publish string) (link *TCPLink, err error) {
-	key := addr.IP.To4().String() + strconv.FormatInt(int64(addr.Port), 10)
+	key := addr.IP.To4().String() + ":" + strconv.FormatInt(int64(addr.Port), 10)
 	if v, exists := t.link.Load(key); exists {
 		return v.(*TCPLink), nil
 	}
 
 	// dial
 	t.log.Info("connecting to ", addr.String())
-	link = NewTCPLink()
+	link = newTCPLink(t)
 	link.publish = publish
 	done := make(chan struct{}, 1)
 	t.Arbiter.Go(func() {
@@ -568,7 +589,7 @@ func (t *TCP) connect(addr *net.TCPAddr, publish string) (link *TCPLink, err err
 		dialer.Deadline = deadline
 
 		if conn, ierr := dialer.Dial("tcp", addr.String()); ierr != nil {
-			t.log.Error(err)
+			t.log.Error(ierr)
 			err = ierr
 			return
 		} else if tcpConn, isTCP := conn.(*net.TCPConn); !isTCP {
@@ -590,31 +611,22 @@ func (t *TCP) connect(addr *net.TCPAddr, publish string) (link *TCPLink, err err
 		// handshake
 		ctx, canceled := context.WithDeadline(context.TODO(), deadline)
 		defer canceled()
-		var identity string
-		if identity, err = t.connectHandshake(ctx, log, link); err != nil {
-			link.Close()
+		var accepted bool
+		if accepted, err = t.connectHandshake(ctx, log, link); err != nil {
+			log.Error("handshake failure: ", err)
+			return
+		}
+		if !accepted {
+			log.Error("denied by remote peer.")
 			return
 		}
 
-		// resolve identity.
-		if peerAddr, ierr := net.ResolveTCPAddr("tcp", identity); ierr != nil {
-			log.Errorf("cannot resolve \"%v\": %v", identity, ierr)
-			err = ierr
-			return
-		} else if !validTCPPublishEndpoint(peerAddr) {
-			err = fmt.Errorf("invalid publish endpoint")
-			log.Error(err)
-		} else {
-			identity = peerAddr.IP.To4().String() + strconv.FormatInt(int64(peerAddr.Port), 10)
-		}
-
-		if v, exists := t.link.LoadOrStore(identity, link); exists {
+		if _, exists := t.link.LoadOrStore(key, link); exists {
 			link.Close()
-			log.Warnf("link to foreign peer \"%v\" exists. closing...")
-			link = v.(*TCPLink)
+			log.Warnf("link to foreign peer \"%v\" exists. closing...", key)
 		} else {
 			// start receiver for new link.
-			t.goTCPLinkDaemon(log, identity, link)
+			t.goTCPLinkDaemon(log, key, link)
 		}
 	})
 
@@ -627,8 +639,17 @@ func (t *TCP) connect(addr *net.TCPAddr, publish string) (link *TCPLink, err err
 	return
 }
 
-func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TCPLink) (identity string, err error) {
+func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TCPLink) (accepted bool, err error) {
 	buf := make([]byte, defaultBufferSize)
+
+	// deadline.
+	deadline, hasDeadline := ctx.Deadline()
+	if hasDeadline {
+		if err = link.conn.SetDeadline(deadline); err != nil {
+			log.Error("conn.SetDeadline() failure: ", err)
+			return false, err
+		}
+	}
 
 	log.Info("handshaking...")
 	// hello
@@ -660,10 +681,11 @@ func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TC
 		} else {
 			log.Info("send error: ", err)
 		}
-		return "", err
+		return false, err
 	}
 
 	// can init cipher now.
+	log.Info("initialize cipher.")
 	buf = buf[:0]
 	buf = append(buf, hello.Lead...)
 	if t.psk != nil {
@@ -673,51 +695,45 @@ func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TC
 	key := sha256.Sum256(buf)
 	if err = link.InitializeAESGCM(key[:], hello.IV[:]); err != nil {
 		log.Error("cipher initializion failure: ", err)
-		return "", err
+		return false, err
 	}
 
 	// wait for welcome.
+	log.Info("wait for authentication.")
 	var welcome *proto.Welcome
-	for welcome == nil && err == nil {
-		if done := ctx.Done(); done != nil {
-			select {
-			case <-done:
-				return "", ErrOperationCanceled
-			}
+	if rerr := link.read(func(frame []byte) bool {
+		welcome = &proto.Welcome{}
+		if err = welcome.Decode(frame); err != nil {
+			log.Info("corrupted welcome handshake packet.")
 		}
-		deadline, hasDeadline := ctx.Deadline()
-		if hasDeadline {
-			if err = link.conn.SetDeadline(deadline); err != nil {
-				log.Error("conn.SetDeadline() failure: ", err)
-				return "", err
-			}
+		return false
+	}); rerr != nil {
+		if nerr, ok := rerr.(net.Error); ok && nerr.Timeout() {
+			log.Info("canceled for deadline exceeded.")
+			return false, ErrOperationCanceled
 		}
-
-		var read int
-		if read, err = link.conn.Read(buf); err != nil {
-			if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
-				log.Info("canceled for deadline exceeded.")
-				return "", ErrOperationCanceled
-			}
-			if err == io.EOF {
-				log.Info("connection closed by foreign peer.")
-				return "", ErrConnectionClosed
-			}
+		if rerr == io.EOF {
+			log.Info("connection closed by foreign peer.")
+			return false, ErrConnectionClosed
 		}
-		_, err = link.demuxer.Demux(buf[:read], func(frame []byte) {
-			if welcome != nil {
-				return
-			}
-			welcome = &proto.Welcome{}
-			if err = welcome.Decode(frame); err != nil {
-				log.Info("corrupted welcome handshake packet.")
-			}
-		})
+		log.Info("link read failure: ", rerr)
+		return false, rerr
 	}
 	if err != nil {
-		return "", err
+		return false, err
+	}
+	if done := ctx.Done(); done != nil {
+		select {
+		case <-done:
+			return false, ErrOperationCanceled
+		default:
+		}
+	}
+	if !welcome.Welcome { // denied.
+		return false, nil
 	}
 
+	log.Info("good authentication. connecting...")
 	// send connect request.
 	connectReq := proto.Connect{
 		Identity: t.config.Publish,
@@ -725,7 +741,7 @@ func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TC
 	if connectReq.Identity == "" {
 		err = fmt.Errorf("empty publish endpoint")
 		log.Error(err)
-		return "", err
+		return false, err
 	}
 	if t.config.Encrypt {
 		connectReq.Version = proto.ConnectAES256GCM
@@ -735,7 +751,7 @@ func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TC
 	buf = connectReq.Encode(buf[:0])
 	if _, err = link.muxer.Mux(buf); err != nil {
 		log.Info("mux error: ", err)
-		return "", err
+		return false, err
 	}
 	// switch protocol
 	switch connectReq.Version {
@@ -748,10 +764,10 @@ func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TC
 		// should not hit this.
 		err = fmt.Errorf("invalid connecting protocol version %v", connectReq.Version)
 		log.Error(err)
-		return "", err
+		return false, err
 	}
 
-	return connectReq.Identity, nil
+	return true, nil
 }
 
 func (t *TCP) Port() uint16 {

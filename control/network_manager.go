@@ -69,6 +69,17 @@ func (n *NetworkManager) ApplyControlRPCConfig(cfg *config.ControlRPC) (err erro
 					n.log.Error("grpc.Server.Serve() failure: ", err)
 				}
 			})
+			// clean up on exit.
+			n.arbiter.Go(func() {
+				<-n.arbiter.Exit()
+				listener, rpcServer := n.controlListener, n.controlRPCServer
+				if rpcServer != nil {
+					rpcServer.Stop()
+				}
+				if listener != nil {
+					listener.Close()
+				}
+			})
 		}
 	}
 

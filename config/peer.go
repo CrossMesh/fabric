@@ -76,7 +76,7 @@ func (c *ControlRPC) Equal(x *ControlRPC) bool { return reflect.DeepEqual(c, x) 
 
 // Daemon contains UTT daemon configuration.
 type Daemon struct {
-	Control *ControlRPC         `json:"clientRPC" yaml:"clientRPC"`
+	Control *ControlRPC         `json:"control" yaml:"control" default:"{}"`
 	Net     map[string]*Network `json:"link" yaml:"link"`
 }
 

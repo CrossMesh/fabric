@@ -17,13 +17,15 @@ type App struct {
 }
 
 func NewApp() (a *App) {
-	a = &App{}
+	a = &App{
+		cfg: &config.Daemon{},
+	}
 	a.App = &cli.App{
 		Name:  "utt",
 		Usage: "Overlay L2/L3 edge router",
 		Commands: []*cli.Command{
 			newEdgeCmd(a),
-			newSeedCmd(a),
+			newNetworkCmd(a),
 		},
 		Flags: []cli.Flag{
 			&cli.StringFlag{

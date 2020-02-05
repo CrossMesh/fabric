@@ -21,6 +21,27 @@ type controlRPCServer struct {
 	log *logging.Entry
 }
 
+func (s *controlRPCServer) SetNetwork(ctx context.Context, req *cpb.SetNetworkRequest) (*cpb.Result, error) {
+	if req == nil {
+		return resultInvalidRequest, nil
+	}
+	// find network.
+	net := s.GetNetwork(req.Network)
+	if net == nil {
+		return &cpb.Result{Succeed: false, Message: "netwotk \"" + req.Network + "%v\" not found"}, nil
+	}
+	var err error
+	if req.Start {
+		err = net.Up()
+	} else {
+		err = net.Down()
+	}
+	if err != nil {
+		return &cpb.Result{Succeed: false, Message: "operation failed: " + err.Error()}, nil
+	}
+	return resultOK, nil
+}
+
 func (s *controlRPCServer) SeedPeer(ctx context.Context, req *cpb.SeedPeerRequest) (*cpb.Result, error) {
 	if req == nil {
 		return resultInvalidRequest, nil

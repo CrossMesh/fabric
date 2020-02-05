@@ -20,16 +20,17 @@ func (r *EdgeRouter) initRPCStub() (err error) {
 	if r.rpc == nil {
 		r.rpc = rpc.NewStub(logging.WithField("module", "rpc_stub"))
 	}
-	fns := []interface{}{
-		r.GossipExchange,
-		r.Ping,
+	fns := map[string]interface{}{
+		"GossipExchange": r.GossipExchange,
+		"Ping":           r.Ping,
 	}
-	for _, fn := range fns {
-		if err = r.rpc.Register(fn); err != nil {
+	for name, fn := range fns {
+		if err = r.rpc.RegisterWithName(name, fn); err != nil {
 			return err
 		}
 	}
-	r.rpcClient = r.rpc.NewClient(logging.WithField("module", "edge_router_rpc_server"))
+	r.rpcClient = r.rpc.NewClient(logging.WithField("module", "edge_router_rpc_client"))
+	r.rpcServer = r.rpc.NewServer(logging.WithField("module", "edge_router_rpc_server"))
 	return nil
 }
 
@@ -43,19 +44,19 @@ func (r *EdgeRouter) sendRPCRequest(peer route.MembershipPeer, rid uint32, name 
 }
 
 func (r *EdgeRouter) sendRPCMessage(peer route.MembershipPeer, msg *pb.RPC) (err error) {
-	data := make([]byte, pbp.Size(msg)+proto.ProtocolMessageHeaderSize)
-	buf := pbp.NewBuffer(data[proto.ProtocolMessageHeaderSize:])
-	if err = buf.EncodeMessage(msg); err != nil {
+	var dummy [proto.ProtocolMessageHeaderSize]byte
+	buf := pbp.NewBuffer(dummy[:proto.ProtocolMessageHeaderSize]) // internal buffer will be replaced by protobuf.
+	proto.PackProtocolMessageHeader(dummy[:proto.ProtocolMessageHeaderSize], proto.MsgTypeRPC)
+	if err = buf.Marshal(msg); err != nil {
 		return err
 	}
-	proto.PackProtocolMessageHeader(data[:proto.ProtocolMessageHeaderSize], proto.MsgTypeRPC)
-	return r.forwardVTEPPeer(data, peer)
+	return r.forwardVTEPPeer(buf.Bytes(), peer)
 }
 
 func (r *EdgeRouter) receiveRPCMessage(data []byte, peer route.MembershipPeer) {
 	msg := &pb.RPC{}
 	if err := pbp.Unmarshal(data, msg); err != nil {
-		r.log.Warn("drop invalid rpc message.")
+		r.log.Warn("drop invalid rpc message: ", err)
 		return
 	}
 	switch msg.Type {
@@ -68,6 +69,8 @@ func (r *EdgeRouter) receiveRPCMessage(data []byte, peer route.MembershipPeer) {
 			reply := &pb.RPC{
 				Id:       msg.Id,
 				Function: msg.Function,
+				Type:     pb.RPC_Reply,
+				Data:     data,
 			}
 			if err != nil {
 				reply.Error = err.Error()

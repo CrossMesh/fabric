@@ -20,7 +20,6 @@ type BaseRouter struct {
 	hots      sync.Map
 	byBackend sync.Map
 
-	now time.Time
 	log *logging.Entry
 }
 
@@ -35,7 +34,7 @@ func (r *BaseRouter) hitPeer(p MembershipPeer) {
 	}
 	hot := hotPeer{
 		p:       p,
-		lastHit: r.now,
+		lastHit: time.Now(),
 	}
 	r.hots.Store(p.Meta(), hot)
 }
@@ -63,11 +62,6 @@ func (r *BaseRouter) HotPeers(last time.Duration) (peers []MembershipPeer) {
 }
 
 func (r *BaseRouter) goTasks(arbiter *arbit.Arbiter) {
-	// time ticking.
-	arbiter.TickGo(func(cancel func(), deadline time.Time) {
-		r.now = time.Now()
-	}, time.Millisecond*1, 1)
-
 	// update active backends for hot peers.
 	arbiter.TickGo(func(cancel func(), deadline time.Time) {
 		r.hots.Range(func(k, v interface{}) bool {

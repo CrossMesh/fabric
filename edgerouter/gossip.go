@@ -49,12 +49,25 @@ func (r *EdgeRouter) newGossipPeer(snapshot *pb.Peer) (p gossip.MembershipPeer) 
 func (r *EdgeRouter) goGossip(m *route.GossipMemebership) {
 	log := r.log.WithField("type", "gossip")
 
+	// seed myself.
+	r.peerSelf.Meta().Self = true
+	m.Discover(r.peerSelf.(gossip.MembershipPeer))
+	//go func() {
+	//	for {
+	//		m.Range(func(p route.MembershipPeer) bool {
+	//			fmt.Println(p)
+	//			return true
+	//		})
+	//		time.Sleep(time.Second * 1)
+	//	}
+	//}()
+
 	r.routeArbiter.TickGo(func(cancel func(), deadline time.Time) {
 		term := m.NewTerm(1)
 		log.Infof("start gossip term %v.", term.ID)
 		ctx, _ := context.WithDeadline(r.routeArbiter.Context(), deadline)
 
-		peerDigest := make([]string, term.NumOfPeers())
+		peerDigest := make([]string, 0, term.NumOfPeers())
 		for idx := 0; idx < term.NumOfPeers(); idx++ {
 			// exchange peer list with peers.
 			peer, isPeer := term.Peer(idx).(route.MembershipPeer)
@@ -77,9 +90,10 @@ func (r *EdgeRouter) goGossip(m *route.GossipMemebership) {
 				log, client := log.WithField("remote", peer.String()), r.RPCClient(peer)
 				remote, err := client.GossipExchange(ctx, pb)
 				if err != nil {
-					if err != rpc.ErrRPCCanceled || r.routeArbiter.ShouldRun() {
+					if err != rpc.ErrRPCCanceled || !r.routeArbiter.ShouldRun() {
 						log.Warn("gossip with ", peer.String(), " failure: ", err)
 					}
+					log.Warn(err)
 					return
 				}
 				if remote == nil {
@@ -128,6 +142,7 @@ func (r *EdgeRouter) GossipSeedPeer(bs ...backend.PeerBackendIdentity) error {
 			tx.Backend(backends...)
 			return true
 		})
+		l2.Reset()
 		m.Discover(l2)
 	case "overlay":
 		l3 := &route.L3Peer{}
@@ -135,6 +150,7 @@ func (r *EdgeRouter) GossipSeedPeer(bs ...backend.PeerBackendIdentity) error {
 			tx.Backend(backends...)
 			return true
 		})
+		l3.Reset()
 		m.Discover(l3)
 	default:
 		// should not hit this.

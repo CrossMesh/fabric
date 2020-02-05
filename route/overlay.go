@@ -81,6 +81,7 @@ func NewL3Router(arbiter *arbit.Arbiter, membership Membership, log *logging.Ent
 		BaseRouter: BaseRouter{
 			log: log,
 		},
+		recordExpire: recordExpire,
 	}
 	membership.OnAppend(r.append)
 	membership.OnRemove(r.remove)
@@ -109,7 +110,7 @@ func (r *L3Router) goTasks(arbiter *arbit.Arbiter) {
 				return true
 			}
 			// exipred.
-			if hot.lastHit.Add(r.recordExpire).Before(r.now) {
+			if hot.lastHit.Add(r.recordExpire).Before(time.Now()) {
 				r.byIP.Delete(k)
 				if ips := r.getIPSet(hot.p); ips != nil {
 					ips.Delete(hot.IP)
@@ -154,7 +155,7 @@ func (r *L3Router) Forward(packet []byte) (peers []MembershipPeer) {
 			hot, isHot := v.(*hotIP)
 			if isHot { // found.
 				r.hitPeer(hot.p)
-				hot.lastHit = r.now
+				hot.lastHit = time.Now()
 				return []MembershipPeer{hot.p}
 			}
 		}
@@ -179,7 +180,7 @@ func (r *L3Router) Forward(packet []byte) (peers []MembershipPeer) {
 	})
 	// select one.
 	if len(peers) > 1 {
-		idx := (r.now.UnixNano() / 1000000) % int64(len(peers))
+		idx := (time.Now().UnixNano() / 1000000) % int64(len(peers))
 		peers[0] = peers[idx]
 		peers = peers[:1]
 	}
@@ -233,7 +234,7 @@ func (r *L3Router) Backward(packet []byte, backend backend.PeerBackendIdentity) 
 				}
 
 				hot.p = p
-				hot.lastHit = r.now
+				hot.lastHit = time.Now()
 				break
 			}
 		}
@@ -241,7 +242,7 @@ func (r *L3Router) Backward(packet []byte, backend backend.PeerBackendIdentity) 
 		// learn
 		new := &hotIP{
 			p:       p,
-			lastHit: r.now,
+			lastHit: time.Now(),
 		}
 		copy(new.IP[:], src[:])
 		if v, loaded = r.byIP.LoadOrStore(src, new); !loaded { // changed by me.
@@ -298,18 +299,23 @@ func (p *L3Peer) PBSnapshot() (msgPeer *pbp.Peer, err error) {
 	msgPeer, err = p.PeerMeta.PBSnapshot()
 	msgOverlay := &pbp.OverlayPeer{}
 
-	rawIP := []byte(p.ip.To4())
-	if len(rawIP) != 4 {
-		// IPv4 should should not hit this.
-		return nil, fmt.Errorf("bug: virtual ip address is of %v bytes length", len(rawIP))
+	if p.ip != nil {
+		rawIP := []byte(p.ip.To4())
+		if len(rawIP) != 4 {
+			// IPv4 should should not hit this.
+			return nil, fmt.Errorf("bug: virtual ip address is of %v bytes length", len(rawIP))
+		}
+		msgOverlay.VirtualIp = binary.BigEndian.Uint32(rawIP)
 	}
-	msgOverlay.VirtualIp = binary.BigEndian.Uint32(rawIP)
-	maskOnes, maskLen := p.mask.Size()
-	if maskLen != 32 {
-		// IPv4 should should not hit this.
-		return nil, fmt.Errorf("bug: virtual ip mask is of %v bits length", maskLen)
+
+	if p.mask != nil {
+		maskOnes, maskLen := p.mask.Size()
+		if maskLen != 32 {
+			// IPv4 should should not hit this.
+			return nil, fmt.Errorf("bug: virtual ip mask is of %v bits length", maskLen)
+		}
+		msgOverlay.VirtualMask = uint32(maskOnes)
 	}
-	msgOverlay.VirtualMask = uint32(maskOnes)
 
 	if msgPeer.Details, err = ptypes.MarshalAny(msgOverlay); err != nil {
 		return nil, err

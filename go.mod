@@ -5,6 +5,7 @@ go 1.13
 require (
 	github.com/creack/pty v1.1.9 // indirect
 	github.com/denisbrodbeck/machineid v1.0.1
+	github.com/ernesto-jimenez/gogen v0.0.0-20180125220232-d7d4131e6607 // indirect
 	github.com/golang/protobuf v1.3.3
 	github.com/haya14busa/goplay v1.0.0 // indirect
 	github.com/jinzhu/configor v1.1.1

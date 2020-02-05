@@ -8,6 +8,7 @@ import (
 	"git.uestc.cn/sunmxt/utt/backend"
 	"git.uestc.cn/sunmxt/utt/config"
 	"git.uestc.cn/sunmxt/utt/gossip"
+	"git.uestc.cn/sunmxt/utt/proto/pb"
 	"git.uestc.cn/sunmxt/utt/route"
 	"git.uestc.cn/sunmxt/utt/rpc"
 	logging "github.com/sirupsen/logrus"
@@ -26,7 +27,7 @@ type EdgeRouter struct {
 	peerSelf     route.MembershipPeer
 
 	forwardArbiter *arbit.Arbiter
-	backends       sync.Map //map[backend.PeerBackendIdentity]backend.Backend
+	backends       sync.Map // map[pb.PeerBackend_BackendType]map[string]backend.Backend
 	ifaceDevice    *water.Interface
 
 	configID uint32
@@ -64,32 +65,103 @@ func (r *EdgeRouter) Mode() string {
 	return "unknown"
 }
 
-func (r *EdgeRouter) visitBackends(visit func(backend.PeerBackendIdentity, backend.Backend) bool) {
-	r.backends.Range(func(k, v interface{}) bool {
-		index, isIndex := k.(backend.PeerBackendIdentity)
-		if !isIndex {
-			r.backends.Delete(k)
+func visitBackendEndpointMap(byEndpoint *sync.Map, visit func(string, backend.Backend) bool) {
+	byEndpoint.Range(func(k, v interface{}) bool {
+		endpoint, isEndpoint := k.(string)
+		if !isEndpoint {
+			byEndpoint.Delete(k)
 			return true
 		}
 		b, isBackend := v.(backend.Backend)
 		if !isBackend {
-			r.backends.Delete(k)
+			byEndpoint.Delete(k)
 			return true
 		}
-		return visit(index, b)
+		return visit(endpoint, b)
 	})
 }
 
+func (r *EdgeRouter) visitBackendsWithType(ty pb.PeerBackend_BackendType, visit func(string, backend.Backend) bool) {
+	raw, hasType := r.backends.Load(ty)
+	if !hasType {
+		return
+	}
+	byEndpoint, isMap := raw.(*sync.Map)
+	if !isMap {
+		return
+	}
+	visitBackendEndpointMap(byEndpoint, visit)
+}
+
+func (r *EdgeRouter) visitBackends(visit func(backend.PeerBackendIdentity, backend.Backend) bool) {
+	r.backends.Range(func(k, v interface{}) (cont bool) {
+		ty, isTy := k.(pb.PeerBackend_BackendType)
+		if !isTy {
+			r.backends.Delete(k)
+			return true
+		}
+		byEndpoint, isMap := v.(*sync.Map)
+		if !isMap || byEndpoint == nil {
+			r.backends.Delete(k)
+			return true
+		}
+		visitBackendEndpointMap(byEndpoint, func(endpoint string, b backend.Backend) bool {
+			cont = visit(backend.PeerBackendIdentity{
+				Type:     ty,
+				Endpoint: endpoint,
+			}, b)
+			return cont
+		})
+		return
+	})
+}
+
+func (r *EdgeRouter) getEndpointBackendMap(ty pb.PeerBackend_BackendType, create bool) (m *sync.Map) {
+	rm, hasType := r.backends.Load(ty)
+	if rm == nil || !hasType {
+		if create {
+			m = &sync.Map{}
+			rm, hasType = r.backends.LoadOrStore(ty, m)
+			if !hasType {
+				return m
+			}
+		} else {
+			return nil
+		}
+	}
+	return rm.(*sync.Map) // let it crash.
+}
+
 func (r *EdgeRouter) getBackend(index backend.PeerBackendIdentity) backend.Backend {
-	v, hasBackend := r.backends.Load(index)
-	if v == nil || !hasBackend {
+	byEndpoint := r.getEndpointBackendMap(index.Type, false)
+	if byEndpoint == nil {
 		return nil
 	}
-	b, isBackend := v.(backend.Backend)
+	rb, hasBackend := byEndpoint.Load(index.Endpoint)
+	if !hasBackend {
+		return nil
+	}
+	b, isBackend := rb.(backend.Backend)
 	if !isBackend {
 		return nil
 	}
 	return b
+}
+
+func (r *EdgeRouter) deleteBackend(index backend.PeerBackendIdentity) {
+	m := r.getEndpointBackendMap(index.Type, false)
+	if m == nil {
+		return
+	}
+	m.Delete(index.Endpoint)
+}
+
+func (r *EdgeRouter) storeBackend(index backend.PeerBackendIdentity, b backend.Backend) {
+	m := r.getEndpointBackendMap(index.Type, true)
+	if m == nil {
+		return
+	}
+	m.Store(index.Endpoint, b)
 }
 
 // NewEmptyPeer return empty peer according to edge router mode..

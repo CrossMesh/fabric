@@ -11,6 +11,11 @@ message SeedPeerRequest {
     repeated EndpointIdentity endpoint = 2;
 }
 
+message SetNetworkRequest {
+    string network = 1;
+    bool start = 2;
+}
+
 message Result {
     bool succeed = 1;
     string message = 2;
@@ -18,4 +23,5 @@ message Result {
 
 service NetworkManagment {
     rpc SeedPeer(SeedPeerRequest) returns(Result) {} 
+    rpc SetNetwork(SetNetworkRequest) returns(Result) {}
 }
