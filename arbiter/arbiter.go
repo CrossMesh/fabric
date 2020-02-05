@@ -51,18 +51,20 @@ func NewWithParent(parent *Arbiter, log *logging.Entry) *Arbiter {
 	var parentCtx context.Context
 	if parent != nil {
 		parentCtx = parent.ctx
+	} else {
+		parentCtx = context.Background()
 
+	}
+	a.ctx, a.cancel = context.WithCancel(parentCtx)
+
+	if parent != nil {
 		// join parent.
 		parent.Go(func() {
 			parent.children.Store(a, struct{}{})
 			a.Join()
 			parent.children.Delete(a)
 		})
-	} else {
-		parentCtx = context.Background()
-
 	}
-	a.ctx, a.cancel = context.WithCancel(parentCtx)
 
 	return a
 }
