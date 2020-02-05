@@ -6,7 +6,7 @@ Overlay L2/L3 network router, designed for connecting cloud network infrastructu
 
 ### Features
 
-- Gossip-based membership and failure detection.
+- Gossip-based membership and failure detection. Completely decentralized.
 - Layer-2 and Layer-3 ovarlay support.
 
 #### Planning
