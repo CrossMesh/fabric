@@ -121,6 +121,7 @@ func (p *Peer) Region() string                  { return p.region }
 func (p *Peer) IsSelf() bool                    { return false }
 func (p *Peer) Valid() bool                     { return true }
 func (p *Peer) GossiperStub() *Peer             { return p }
+func (p *Peer) Reset()                          { p.stateVersion = 0 }
 func (p *Peer) String() string {
 	stateName, _ := StateName[p.state]
 	if stateName == "" {
