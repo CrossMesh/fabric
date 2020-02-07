@@ -42,6 +42,7 @@ func NewL2Router(arbiter *arbit.Arbiter, membership Membership, log *logging.Ent
 		BaseRouter: BaseRouter{
 			log: log,
 		},
+		recordExpire: recordExpire,
 	}
 	membership.OnAppend(r.append)
 	membership.OnRemove(r.remove)
@@ -84,7 +85,7 @@ func (r *L2Router) goTasks(arbiter *arbit.Arbiter) {
 		cacheCleanningDuration = r.recordExpire
 	}
 	arbiter.TickGo(func(cancel func(), deadline time.Time) {
-		r.expireHotMAC(r.now)
+		r.expireHotMAC(time.Now())
 	}, cacheCleanningDuration, 1)
 }
 
@@ -104,7 +105,7 @@ func (r *L2Router) Forward(frame []byte) (peers []MembershipPeer) {
 			hot, isHot := v.(*hotMAC)
 			if isHot { // found.
 				r.hitPeer(hot.p)
-				hot.lastHit = r.now
+				hot.lastHit = time.Now()
 				return []MembershipPeer{hot.p}
 			}
 		}
@@ -154,7 +155,7 @@ func (r *L2Router) Backward(frame []byte, backend backend.PeerBackendIdentity) (
 					}
 				}
 				hot.p = p
-				hot.lastHit = r.now
+				hot.lastHit = time.Now()
 				break
 			}
 		}
@@ -162,7 +163,7 @@ func (r *L2Router) Backward(frame []byte, backend backend.PeerBackendIdentity) (
 		// learn mac.
 		new := &hotMAC{
 			p:       p,
-			lastHit: r.now,
+			lastHit: time.Now(),
 		}
 		copy(new.mac[:], src[:])
 		if v, loaded = r.byMAC.LoadOrStore(src, new); !loaded { // changed by me.

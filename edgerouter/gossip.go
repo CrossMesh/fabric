@@ -6,10 +6,17 @@ import (
 	"strings"
 	"time"
 
+	"git.uestc.cn/sunmxt/utt/backend"
 	"git.uestc.cn/sunmxt/utt/gossip"
 	"git.uestc.cn/sunmxt/utt/proto/pb"
 	"git.uestc.cn/sunmxt/utt/route"
 	"git.uestc.cn/sunmxt/utt/rpc"
+)
+
+var (
+	ErrNotGossipMembership    = errors.New("not gossip membership")
+	ErrUnknownMode            = errors.New("unknown edge router mode")
+	ErrGossipNoActiveEndpoint = errors.New("no active endpoint to gossip")
 )
 
 func (r *EdgeRouter) goMembership() {
@@ -19,15 +26,48 @@ func (r *EdgeRouter) goMembership() {
 	}
 }
 
+func (r *EdgeRouter) newGossipPeer(snapshot *pb.Peer) (p gossip.MembershipPeer) {
+	var snapshotPeer route.PBSnapshotPeer
+
+	switch mode := r.Mode(); mode {
+	case "ethernet":
+		l2 := &route.L2Peer{}
+		snapshotPeer, p = l2, l2
+	case "overlay":
+		l3 := &route.L3Peer{}
+		snapshotPeer, p = l3, l3
+	default:
+		// should not hit this.
+		r.log.Errorf("EdgeRouter.newGossipPeer() got unknown mode %v.", mode)
+		return nil
+	}
+
+	snapshotPeer.ApplyPBSnapshot(snapshot)
+	return
+}
+
 func (r *EdgeRouter) goGossip(m *route.GossipMemebership) {
 	log := r.log.WithField("type", "gossip")
+
+	// seed myself.
+	r.peerSelf.Meta().Self = true
+	m.Discover(r.peerSelf.(gossip.MembershipPeer))
+	//go func() {
+	//	for {
+	//		m.Range(func(p route.MembershipPeer) bool {
+	//			fmt.Println(p)
+	//			return true
+	//		})
+	//		time.Sleep(time.Second * 1)
+	//	}
+	//}()
 
 	r.routeArbiter.TickGo(func(cancel func(), deadline time.Time) {
 		term := m.NewTerm(1)
 		log.Infof("start gossip term %v.", term.ID)
 		ctx, _ := context.WithDeadline(r.routeArbiter.Context(), deadline)
 
-		peerDigest := make([]string, term.NumOfPeers())
+		peerDigest := make([]string, 0, term.NumOfPeers())
 		for idx := 0; idx < term.NumOfPeers(); idx++ {
 			// exchange peer list with peers.
 			peer, isPeer := term.Peer(idx).(route.MembershipPeer)
@@ -50,9 +90,10 @@ func (r *EdgeRouter) goGossip(m *route.GossipMemebership) {
 				log, client := log.WithField("remote", peer.String()), r.RPCClient(peer)
 				remote, err := client.GossipExchange(ctx, pb)
 				if err != nil {
-					if err != rpc.ErrRPCCanceled || r.routeArbiter.ShouldRun() {
+					if err != rpc.ErrRPCCanceled || !r.routeArbiter.ShouldRun() {
 						log.Warn("gossip with ", peer.String(), " failure: ", err)
 					}
+					log.Warn(err)
 					return
 				}
 				if remote == nil {
@@ -70,6 +111,54 @@ func (r *EdgeRouter) goGossip(m *route.GossipMemebership) {
 		}
 
 	}, gossip.DefaultGossipPeriod, 1)
+}
+
+func (r *EdgeRouter) GossipSeedPeer(bs ...backend.PeerBackendIdentity) error {
+	if len(bs) < 1 {
+		return ErrGossipNoActiveEndpoint
+	}
+
+	// get membership. allow only gossip membership.
+	m, isGossip := r.membership.(*route.GossipMemebership)
+	if !isGossip || m == nil {
+		return ErrNotGossipMembership
+	}
+
+	backends := make([]*route.PeerBackend, 0, len(bs))
+	for _, b := range bs {
+		backends = append(backends, &route.PeerBackend{
+			PeerBackendIdentity: backend.PeerBackendIdentity{
+				Type:     b.Type,
+				Endpoint: b.Endpoint,
+			},
+		})
+	}
+
+	// create new peer.
+	switch mode := r.Mode(); mode {
+	case "ethernet":
+		l2 := &route.L2Peer{}
+		l2.Tx(func(p route.MembershipPeer, tx *route.PeerReleaseTx) bool {
+			tx.Backend(backends...)
+			return true
+		})
+		l2.Reset()
+		m.Discover(l2)
+	case "overlay":
+		l3 := &route.L3Peer{}
+		l3.Tx(func(p route.MembershipPeer, tx *route.L3PeerReleaseTx) bool {
+			tx.Backend(backends...)
+			return true
+		})
+		l3.Reset()
+		m.Discover(l3)
+	default:
+		// should not hit this.
+		r.log.Errorf("EdgeRouter.newGossipPeer() got unknown mode %v.", mode)
+		return ErrUnknownMode
+	}
+
+	return nil
 }
 
 // GossipExchange is RPC method to gossip memberlist.

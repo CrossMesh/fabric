@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package pb;
+
+message SeedPeerRequest {
+    string network = 1;
+    message EndpointIdentity {
+        string endpoint_type = 1;
+        string endpoint = 2;
+    }
+    repeated EndpointIdentity endpoint = 2;
+}
+
+message SetNetworkRequest {
+    string network = 1;
+    bool start = 2;
+}
+
+message Result {
+    bool succeed = 1;
+    string message = 2;
+}
+
+service NetworkManagment {
+    rpc SeedPeer(SeedPeerRequest) returns(Result) {} 
+    rpc SetNetwork(SetNetworkRequest) returns(Result) {}
+}

@@ -57,8 +57,12 @@ var creators = map[string]func(*config.Backend) (BackendCreator, error){
 	"tcp": newTCPCreator,
 }
 
-var nameByType = map[pb.PeerBackend_BackendType]string{
+var NameByType = map[pb.PeerBackend_BackendType]string{
 	pb.PeerBackend_TCP: "tcp",
+}
+
+var TypeByName = map[string]pb.PeerBackend_BackendType{
+	"tcp": pb.PeerBackend_TCP,
 }
 
 func GetCreator(ty string, cfg *config.Backend) (BackendCreator, error) {
@@ -70,7 +74,7 @@ func GetCreator(ty string, cfg *config.Backend) (BackendCreator, error) {
 }
 
 func GetBackendIdentityName(ty pb.PeerBackend_BackendType) string {
-	name, ok := nameByType[ty]
+	name, ok := NameByType[ty]
 	if !ok {
 		return "unknown"
 	}

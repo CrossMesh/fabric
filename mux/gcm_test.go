@@ -52,7 +52,7 @@ func TestGCMMuxDemux(t *testing.T) {
 					if end >= buf.Len() {
 						end = buf.Len()
 					}
-					if _, err = demuxer.Demux(buf.Bytes()[idx:end], func(frame []byte) {
+					if _, err = demuxer.Demux(buf.Bytes()[idx:end], func(frame []byte) bool {
 						if caseN >= len(cases) {
 							t.Fatalf("more then %v frame decoded.", len(cases))
 						}
@@ -62,6 +62,7 @@ func TestGCMMuxDemux(t *testing.T) {
 							t.Logf("decoded %v: %v, pass.", caseN, cases[caseN])
 						}
 						caseN++
+						return true
 					}); err != nil {
 						t.Fatal(err)
 					}

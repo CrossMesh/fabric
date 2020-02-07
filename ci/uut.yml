@@ -3,7 +3,7 @@ link:
     mode: overlay
     encrypt: true
     iface:
-      name: ut1
+      name: tun2
       mac: ea:38:ab:40:00:11
       address: 10.240.3.1/24
     backends:
@@ -12,5 +12,20 @@ link:
       params:
         bind: 0.0.0.0:3880
         publish: 192.168.0.161:3880
+        priority: 1
+
+  net2:
+    mode: overlay
+    encrypt: true
+    iface:
+      name: tun3
+      mac: ea:38:ab:40:00:11
+      address: 10.240.3.2/24
+    backends:
+    - psk: 123456
+      type: tcp
+      params:
+        bind: 0.0.0.0:3880
+        publish: 192.168.0.188:3880
         priority: 1
       

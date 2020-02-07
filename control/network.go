@@ -1,4 +1,4 @@
-package manager
+package control
 
 import (
 	"sync"
@@ -74,4 +74,8 @@ func (n *Network) Reload(net *config.Network) error {
 	n.cfg = net
 
 	return n.router.ApplyConfig(net)
+}
+
+func (n *Network) Router() *edgerouter.EdgeRouter {
+	return n.router
 }

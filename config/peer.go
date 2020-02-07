@@ -69,19 +69,19 @@ func (c *Network) Equal(x *Network) (e bool) {
 // ControlRPC contains configuration of control port.
 type ControlRPC struct {
 	Type     string `json:"type" yaml:"type" default:"unix"`
-	Endpoint string `json:"endpoint" yaml:"endpoint" default:"/var/run/utt.sock"`
+	Endpoint string `json:"endpoint" yaml:"endpoint" default:"/var/run/utt_control.sock"`
 }
 
 func (c *ControlRPC) Equal(x *ControlRPC) bool { return reflect.DeepEqual(c, x) }
 
 // Daemon contains UTT daemon configuration.
 type Daemon struct {
-	RPC ControlRPC          `json:"clientRPC" yaml:"clientRPC"`
-	Net map[string]*Network `json:"link" yaml:"link"`
+	Control *ControlRPC         `json:"control" yaml:"control" default:"{}"`
+	Net     map[string]*Network `json:"link" yaml:"link"`
 }
 
 func (c *Daemon) Equal(x *Daemon) (e bool) {
-	if e = c.RPC.Equal(&x.RPC); !e {
+	if e = c.Control.Equal(x.Control); !e {
 		return false
 	}
 	if len(c.Net) != len(x.Net) {

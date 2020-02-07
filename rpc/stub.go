@@ -54,7 +54,11 @@ func validProtocolMessageType(ty reflect.Type) bool {
 	return true
 }
 
-func (s *Stub) Register(proc interface{}) error {
+func (s *Stub) RegisterWithName(name string, proc interface{}) error {
+	return s.register(proc, func(interface{}) string { return name })
+}
+
+func (s *Stub) register(proc interface{}, resolveName func(interface{}) string) error {
 	ty := reflect.TypeOf(proc)
 
 	// check function type
@@ -78,11 +82,17 @@ func (s *Stub) Register(proc interface{}) error {
 	serviceFunction.inMessageConstructor = proto.ConstructorByID[proto.IDByProtoType[serviceFunction.inMessageType]]
 	serviceFunction.outMessageConstructor = proto.ConstructorByID[proto.IDByProtoType[serviceFunction.outMessageType]]
 
-	// function name as service function name
-	v := reflect.ValueOf(proc)
-	name := strings.TrimPrefix(filepath.Ext(runtime.FuncForPC(v.Pointer()).Name()), ".")
+	name := resolveName(proc)
 	s.functions[name] = serviceFunction
 
+	return nil
+}
+
+func (s *Stub) Register(proc interface{}) error {
+	return s.register(proc, func(p interface{}) string {
+		v := reflect.ValueOf(p)
+		return strings.TrimPrefix(filepath.Ext(runtime.FuncForPC(v.Pointer()).Name()), ".")
+	})
 	return nil
 }
 

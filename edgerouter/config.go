@@ -41,35 +41,23 @@ func (r *EdgeRouter) updateBackends(cfgs []*config.Backend) (err error) {
 		if _, hasBackend := backendCreators[index]; !hasBackend {
 			b.Shutdown()
 		}
+		r.deleteBackend(index)
 		return true
 	})
 
-	// new.
 	for index, creator := range backendCreators {
 		var new backend.Backend
-		_, hasBackend := r.backends.Load(index)
-		if !hasBackend {
-			if new, err = creator.New(r.arbiter, nil); err != nil {
-				r.log.Errorf("create backend %v:%v failure: %v", backend.GetBackendIdentityName(creator.Type()), creator.Publish, err)
-			} else {
-				r.backends.Store(index, new)
-				new.Watch(r.receiveRemote)
-			}
+		b := r.getBackend(index)
+		if b != nil {
+			// update
+			b.Shutdown()
+			r.deleteBackend(index)
 		}
-		delete(backendCreators, index)
-	}
-
-	// update.
-	for index, creator := range backendCreators {
-		if backend := r.getBackend(index); backend != nil {
-			backend.Shutdown()
-			r.backends.Delete(index)
-		}
-		var new backend.Backend
+		// new.
 		if new, err = creator.New(r.arbiter, nil); err != nil {
 			r.log.Errorf("create backend %v:%v failure: %v", backend.GetBackendIdentityName(creator.Type()), creator.Publish, err)
 		} else {
-			r.backends.Store(index, new)
+			r.storeBackend(index, new)
 			new.Watch(r.receiveRemote)
 		}
 	}
@@ -136,13 +124,15 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 			}
 			// only gossip membership supported yet.
 			if r.membership == nil {
-				r.membership = route.NewGossipMembership()
+				g := route.NewGossipMembership()
+				g.New = r.newGossipPeer
+				r.membership = g
 			}
 			// create route.
 			if r.route == nil {
 				log.Info("starting new forwarding...")
 
-				deviceConfig.Name = cfg.Iface.Name
+				setupTuntapPlatformParameters(cfg.Iface, &deviceConfig)
 
 				switch cfg.Mode {
 				case "ethernet":

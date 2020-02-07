@@ -73,6 +73,11 @@ type PeerMeta struct {
 
 func (p *PeerMeta) Meta() *PeerMeta { return p }
 func (p *PeerMeta) IsSelf() bool    { return p.Self }
+func (p *PeerMeta) Reset() {
+	p.version = 0
+	p.Peer.Reset()
+}
+
 func (p *PeerMeta) ActiveBackend() *PeerBackend {
 	bes := p.backendByPriority
 	if len(bes) < 1 {
@@ -307,9 +312,11 @@ func (m *GossipMemebership) ApplyPBSnapshot(route Router, peers []*pb.Peer) (err
 	if peers == nil {
 		return nil
 	}
+
+	var match MembershipPeer
 LoopPeer:
 	for idx := range peers {
-		var match MembershipPeer
+		match = nil
 		for _, b := range peers[idx].Backend {
 			p := route.BackendPeer(backend.PeerBackendIdentity{
 				Type:     b.Type,

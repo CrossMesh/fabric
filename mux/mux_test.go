@@ -61,13 +61,14 @@ func TestMuxDemux(t *testing.T) {
 		demuxer := NewStreamDemuxer()
 		cidx := 0
 		t.Logf("decode seq: %v", seq.Bytes())
-		demuxer.Demux(seq.Bytes(), func(pkt []byte) {
+		demuxer.Demux(seq.Bytes(), func(pkt []byte) bool {
 			if bytes.Compare(pkt, cases[cidx]) != 0 {
 				t.Fatalf("decoded %v: %v, not equal %v", cidx, pkt, cases[cidx])
 			} else {
 				t.Logf("decoded %v: %v, pass.", cidx, cases[cidx])
 			}
 			cidx++
+			return true
 		})
 		if cidx != len(res) {
 			t.Fatalf("package count error.")
@@ -90,13 +91,14 @@ func TestMuxDemux(t *testing.T) {
 					if end >= seq.Len() {
 						end = seq.Len()
 					}
-					demuxer.Demux(seq.Bytes()[idx:end], func(pkt []byte) {
+					demuxer.Demux(seq.Bytes()[idx:end], func(pkt []byte) bool {
 						if bytes.Compare(pkt, cases[cidx]) != 0 {
 							t.Fatalf("decoded %v: %v, not equal %v", cidx, pkt, cases[cidx])
 						} else {
 							t.Logf("decoded %v: %v, pass.", cidx, cases[cidx])
 						}
 						cidx++
+						return true
 					})
 				}
 				if cidx != len(res) {
@@ -178,7 +180,7 @@ func BenchmarkRandomDecodeBlock1MB(t *testing.B) {
 				if written >= streamBuf.Len()-didx {
 					written = streamBuf.Len() - didx
 				}
-				if _, err := demuxer.Demux(streamBuf.Bytes()[didx:didx+written], func(pkt []byte) {
+				if _, err := demuxer.Demux(streamBuf.Bytes()[didx:didx+written], func(pkt []byte) bool {
 					if cidx >= len(cuts) {
 						t.Fatal("more packets decoded.")
 					}
@@ -188,6 +190,7 @@ func BenchmarkRandomDecodeBlock1MB(t *testing.B) {
 					}
 					lastCut = cuts[cidx]
 					cidx++
+					return true
 				}); err != nil {
 					t.Fatal(err)
 				}

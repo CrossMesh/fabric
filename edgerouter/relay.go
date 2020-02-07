@@ -43,26 +43,31 @@ func (r *EdgeRouter) backwardVTEP(frame []byte, peer route.MembershipPeer) {
 // VTEP to remote peers.
 func (r *EdgeRouter) forwardVTEPPeer(frame []byte, peer route.MembershipPeer) error {
 	if frame == nil || peer == nil {
+		// drop nil frame and unknown destination.
 		return nil
 	}
 	desp := peer.ActiveBackend()
 	if desp.Type == pb.PeerBackend_UNKNOWN {
-		// no active backend.
+		// no active backend. drop.
+		r.log.Error("no active backend drop")
 		return nil
 	}
-	v, hasBackend := r.backends.Load(desp.Type)
-	if !hasBackend || v == nil {
-		return ErrRelayNoBackend
-	}
-	b, isBackend := v.(backend.Backend)
-	if !isBackend {
+	var b backend.Backend
+	r.visitBackendsWithType(desp.Type, func(endpoint string, be backend.Backend) bool {
+		b = be
+		return false
+	})
+	if b == nil {
+		r.log.Error("no relay backend drop")
 		return ErrRelayNoBackend
 	}
 	link, err := b.Connect(desp.Endpoint)
 	if err != nil {
 		if err == backend.ErrOperationCanceled {
+			r.log.Error("op cancel drop")
 			return nil
 		}
+		r.log.Error("connect failure drop: ", err)
 		return nil
 	}
 	return link.Send(frame)

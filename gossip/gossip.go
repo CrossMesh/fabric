@@ -121,6 +121,7 @@ func (p *Peer) Region() string                  { return p.region }
 func (p *Peer) IsSelf() bool                    { return false }
 func (p *Peer) Valid() bool                     { return true }
 func (p *Peer) GossiperStub() *Peer             { return p }
+func (p *Peer) Reset()                          { p.stateVersion = 0 }
 func (p *Peer) String() string {
 	stateName, _ := StateName[p.state]
 	if stateName == "" {
@@ -210,7 +211,7 @@ func (g *Gossiper) NewTerm(brust int32) (t *GossipTerm) {
 		//	P = m/i * (1 - 1/(i+1)) * (1 - 1/(i+2)) * ... * (1 - 1/n) = m/i * i/(i+1) * (i+1)/(i+2) * ... * (n-1)/n = m/n
 		idx := int32(0)
 		g.visitPeer(func(region string, peer MembershipPeer) bool {
-			if peer.IsSelf() || !peer.Valid() {
+			if peer.IsSelf() {
 				return true
 			}
 			if idx < brust {
