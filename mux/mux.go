@@ -28,7 +28,7 @@ type Muxer interface {
 }
 
 type Demuxer interface {
-	Demux([]byte, func([]byte)) (int, error)
+	Demux([]byte, func([]byte) bool) (int, error)
 	Reset() error
 }
 
@@ -194,7 +194,7 @@ loopForStartCode:
 	return idx
 }
 
-func (d *StreamDemuxer) Demux(raw []byte, emit func([]byte)) (read int, err error) {
+func (d *StreamDemuxer) Demux(raw []byte, emit func([]byte) bool) (read int, err error) {
 	idx := 0
 	if d.buf == nil {
 		idx = d.indexStartCode(raw)
@@ -204,7 +204,7 @@ func (d *StreamDemuxer) Demux(raw []byte, emit func([]byte)) (read int, err erro
 	}
 
 	buf, left := d.buf, d.left
-	preserved := len(d.buf)
+	preserved, cont := len(d.buf), true
 	defer func() {
 		if err != nil {
 			if d.buf != nil {
@@ -216,7 +216,7 @@ func (d *StreamDemuxer) Demux(raw []byte, emit func([]byte)) (read int, err erro
 		}
 	}()
 
-	for idx < len(raw) {
+	for idx < len(raw) && cont {
 		c := raw[idx]
 		switch left {
 		case 0:
@@ -252,7 +252,7 @@ func (d *StreamDemuxer) Demux(raw []byte, emit func([]byte)) (read int, err erro
 				break
 			}
 			if c == 0x01 {
-				emit(buf)
+				cont = emit(buf)
 				buf = buf[0:0]
 			} else if c != 0x02 {
 				buf = append(buf, 0x00, 0x00, 0x00, c)
@@ -264,5 +264,5 @@ func (d *StreamDemuxer) Demux(raw []byte, emit func([]byte)) (read int, err erro
 		idx++
 	}
 
-	return
+	return idx, nil
 }

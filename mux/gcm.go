@@ -120,8 +120,8 @@ func (m *GCMStreamDemuxer) freeBuffer(buf []byte) {
 	m.bufs.Put(buf)
 }
 
-func (d *GCMStreamDemuxer) Demux(raw []byte, emit func([]byte)) (read int, err error) {
-	rawLen, buf, frameLength, headerLength := len(raw), d.buf, d.frameLength, d.aead.Overhead()+3
+func (d *GCMStreamDemuxer) Demux(raw []byte, emit func([]byte) bool) (read int, err error) {
+	originLen, buf, frameLength, headerLength, cont := len(raw), d.buf, d.frameLength, d.aead.Overhead()+3, true
 
 	defer func() {
 		if err != nil {
@@ -131,19 +131,22 @@ func (d *GCMStreamDemuxer) Demux(raw []byte, emit func([]byte)) (read int, err e
 		d.buf, d.frameLength = buf, frameLength
 	}()
 
-	if len(raw) > 0 {
+	if len(raw) > 0 && cont {
 		openBuf := d.allocBuffer()
 		defer d.freeBuffer(openBuf)
 
 		for {
+			// no enough bytes to open header.
 			if frameLength < 0 {
 				// decrypt header.
 				fill := headerLength - len(buf)
 				if fill > len(raw) {
 					fill = len(raw)
 				}
+				// fill buffer.
 				buf, raw = append(buf, raw[:fill]...), raw[fill:]
 				if len(buf) < headerLength {
+					// no bytes left to fill.
 					break
 				}
 				if openBuf, err = d.aead.Open(openBuf[:0], d.nonce, buf[:headerLength], nil); err != nil {
@@ -159,23 +162,24 @@ func (d *GCMStreamDemuxer) Demux(raw []byte, emit func([]byte)) (read int, err e
 			}
 
 			// decrypt data.
-			fill := frameLength + headerLength - len(buf)
+			fill := frameLength + headerLength - len(buf) // frameLength calculated by muxer. overhead has included.
 			if fill > len(raw) {
 				fill = len(raw)
 			}
 			buf, raw = append(buf, raw[:fill]...), raw[fill:]
 			if len(buf) < headerLength+frameLength {
+				// no bytes left to fill.
 				break
 			}
 			if openBuf, err = d.aead.Open(openBuf[:0], d.nonce, buf[headerLength:headerLength+frameLength], buf[:headerLength]); err != nil {
 				return 0, err
 			}
-			emit(openBuf)
+			cont = emit(openBuf)
 			buf, frameLength = buf[0:0], -1
 		}
 	}
 
-	return rawLen - len(raw), nil
+	return originLen - len(raw), nil
 }
 
 func (d *GCMStreamDemuxer) Reset() error {
