@@ -109,35 +109,28 @@ func (a *Arbiter) TickGo(proc func(func(), time.Time), period time.Duration, bru
 	if brust < 1 {
 		return
 	}
+	var tickCtx context.Context
+	ticker := time.NewTicker(period)
+	tickCtx, cancel = context.WithCancel(a.ctx)
 
-	runningCount, canceled := uint32(0), false
-	cancel = func() { canceled = true } // cancel function.
 	a.Go(func() {
-		nextSpawn := time.Now()
+		defer ticker.Stop()
+		defer cancel()
+		<-tickCtx.Done()
+	})
+	for idx := uint32(0); idx < brust; idx++ {
+		a.Go(func() {
+			for {
+				select {
+				case <-ticker.C:
+					a.Do(func() { proc(cancel, time.Now().Add(period)) })
 
-		for a.ShouldRun() && !canceled {
-			if nextSpawn.Before(time.Now()) {
-				nextSpawn = time.Now().Add(period)
-
-				if runningCount < brust {
-					atomic.AddUint32(&runningCount, 1)
-					a.Go(func() {
-						defer func() {
-							atomic.AddUint32(&runningCount, uint32(0xFFFFFFFF))
-						}()
-						proc(cancel, nextSpawn)
-					})
+				case <-tickCtx.Done():
+					return
 				}
 			}
-
-			sleepTimeout := nextSpawn.Sub(time.Now())
-			if sleepTimeout > time.Second {
-				sleepTimeout = time.Second
-			}
-			time.Sleep(sleepTimeout)
-		}
-	})
-
+		})
+	}
 	return
 }
 
