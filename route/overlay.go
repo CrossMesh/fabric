@@ -166,7 +166,12 @@ func (r *L3Router) Forward(packet []byte) (peers []MembershipPeer) {
 	r.visitor.Range(func(p MembershipPeer) bool {
 		if l3, ok := p.(*L3Peer); ok {
 			network.Mask = l3.mask
-			if len(l3.ip) == len(network.Mask) {
+			if l3.ip.Equal(ip) {
+				// match ip.
+				peers = []MembershipPeer{l3}
+				return false
+			} else if len(l3.ip) == len(network.Mask) {
+				// peer contains ip and is router.
 				for i := range network.IP {
 					network.IP[i] = l3.ip[i] & network.Mask[i]
 				}
@@ -178,6 +183,7 @@ func (r *L3Router) Forward(packet []byte) (peers []MembershipPeer) {
 		}
 		return true
 	})
+
 	// select one.
 	if len(peers) > 1 {
 		idx := (time.Now().UnixNano() / 1000000) % int64(len(peers))

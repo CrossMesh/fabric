@@ -21,7 +21,7 @@ var (
 
 func (r *EdgeRouter) goMembership() {
 	switch v := r.membership.(type) {
-	case *route.GossipMemebership:
+	case *route.GossipMembership:
 		r.goGossip(v)
 	}
 }
@@ -46,7 +46,7 @@ func (r *EdgeRouter) newGossipPeer(snapshot *pb.Peer) (p gossip.MembershipPeer) 
 	return
 }
 
-func (r *EdgeRouter) goGossip(m *route.GossipMemebership) {
+func (r *EdgeRouter) goGossip(m *route.GossipMembership) {
 	log := r.log.WithField("type", "gossip")
 
 	// seed myself.
@@ -119,7 +119,7 @@ func (r *EdgeRouter) GossipSeedPeer(bs ...backend.PeerBackendIdentity) error {
 	}
 
 	// get membership. allow only gossip membership.
-	m, isGossip := r.membership.(*route.GossipMemebership)
+	m, isGossip := r.membership.(*route.GossipMembership)
 	if !isGossip || m == nil {
 		return ErrNotGossipMembership
 	}
@@ -163,7 +163,7 @@ func (r *EdgeRouter) GossipSeedPeer(bs ...backend.PeerBackendIdentity) error {
 
 // GossipExchange is RPC method to gossip memberlist.
 func (r *EdgeRouter) GossipExchange(peers *pb.PeerExchange) (*pb.PeerExchange, error) {
-	m, isGossip := r.membership.(*route.GossipMemebership)
+	m, isGossip := r.membership.(*route.GossipMembership)
 	if !isGossip {
 		return nil, errors.New("no gossip membership")
 	}

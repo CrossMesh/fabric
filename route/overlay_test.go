@@ -31,11 +31,24 @@ func TestL3Router(t *testing.T) {
 			0x0a, 0xF0, 0x05, 0x01, // src IP: 10.240.5.1
 			0x0a, 0xF0, 0x04, 0x02, // dst IP: 10.240.4.2
 		},
+		[]byte{
+			0x45, 0x00,
+			0x00, 0x54, // length.
+			0xa8, 0x52, 0x00, 0x00, 0x40,
+			0x01, // type: icmp
+			0xd5, 0xed,
+			0x0a, 0xF0, 0x05, 0x01, // src IP: 10.240.5.1
+			0x0a, 0xF0, 0x05, 0x03, // dst IP: 10.240.5.3
+		},
 	}
 
-	peer := []*L3Peer{{}, {}, {}}
+	peer := []*L3Peer{{}, {}, {}, {}}
 	assert.True(t, peer[1].Tx(func(p MembershipPeer, tx *L3PeerReleaseTx) bool {
 		assert.NoError(t, tx.CIDR("10.240.5.1/24"))
+		return true
+	}))
+	assert.True(t, peer[3].Tx(func(p MembershipPeer, tx *L3PeerReleaseTx) bool {
+		assert.NoError(t, tx.CIDR("10.240.5.3/24"))
 		return true
 	}))
 	assert.True(t, peer[0].Tx(func(p MembershipPeer, tx *L3PeerReleaseTx) bool {
@@ -45,7 +58,6 @@ func TestL3Router(t *testing.T) {
 	}))
 	assert.True(t, peer[2].Tx(func(p MembershipPeer, tx *L3PeerReleaseTx) bool {
 		assert.NoError(t, tx.CIDR("10.240.4.3/24"))
-		tx.IsRouter(true)
 		return true
 	}))
 
@@ -82,10 +94,21 @@ func TestL3Router(t *testing.T) {
 		})
 		return true
 	}))
+	assert.True(t, peer[3].Tx(func(p MembershipPeer, tx *L3PeerReleaseTx) bool {
+		tx.Backend(&PeerBackend{
+			PeerBackendIdentity: backend.PeerBackendIdentity{
+				Type:     pb.PeerBackend_TCP,
+				Endpoint: "172.17.0.4",
+			},
+			Disabled: false,
+			Priority: 0,
+		})
+		return true
+	}))
 
 	g := NewGossipMembership()
 	r := NewL3Router(arbiter, g, nil, time.Second*10)
-	g.Discover(peer[0], peer[1])
+	g.Discover(peer[0], peer[1], peer[3])
 
 	t.Run("invalid", func(t *testing.T) {
 		// case: do not learn boardcast.
@@ -179,6 +202,12 @@ func TestL3Router(t *testing.T) {
 		assert.True(t, p.ip.String() == peer[0].ip.String() || p.ip.String() == peer[2].ip.String())
 
 		// normal route.
+		target = r.Forward(packet[2])
+		assert.Equal(t, 1, len(target))
+		t.Log(target[0])
+		p = target[0].(*L3Peer)
+		assert.Equal(t, peer[3].ip.String(), p.ip.String())
+
 		target = r.Forward(packet[0])
 		assert.Equal(t, 1, len(target))
 		t.Log(target[0])

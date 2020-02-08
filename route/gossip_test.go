@@ -34,6 +34,17 @@ func TestPeerMetaProtobuf(t *testing.T) {
 	assert.Equal(t, b.Priority, msg.Backend[0].Priority)
 	assert.Equal(t, b.Endpoint, msg.Backend[0].Endpoint)
 	assert.Equal(t, b.Type, msg.Backend[0].Type)
+
+	// test apply: do not accept old version.
+	oldVersion := msg.Version
+	msg.Version -= 10
+	assert.NoError(t, p.ApplyPBSnapshot(msg))
+	assert.Equal(t, oldVersion, p.version)
+	// test apply: accept new version.
+	msg.Version = oldVersion + 1
+	msg.Region = "dc1"
+	assert.NoError(t, p.ApplyPBSnapshot(msg))
+	assert.Equal(t, msg.Version, p.version)
 }
 
 func TestPeerMeta(t *testing.T) {
