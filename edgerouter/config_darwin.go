@@ -7,5 +7,11 @@ import (
 
 func setupTuntapPlatformParameters(cfg *config.Interface, deviceConfig *water.Config) {
 	deviceConfig.Name = cfg.Name
-	deviceConfig.Driver = water.MacOSDriverTunTapOSX
+	if deviceConfig.DeviceType == water.TAP {
+		// tap supported by tuntaposx driver only.
+		deviceConfig.Driver = water.MacOSDriverTunTapOSX
+	}
+	if deviceConfig.DeviceType == water.TUN {
+		deviceConfig.Driver = water.MacOSDriverSystem
+	}
 }
