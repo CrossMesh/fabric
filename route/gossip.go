@@ -130,10 +130,17 @@ func (p *PeerMeta) PBSnapshot() (msgPeer *pbp.Peer, err error) {
 
 func (p *PeerMeta) applyPBSnapshot(tx *PeerReleaseTx, msg *pbp.Peer) {
 	tx.Version(msg.Version)
-	if !tx.IsNewVersion() {
+	newMeta := tx.IsNewVersion()
+
+	// for failure detection.
+	tx.State(int(msg.State), msg.StateVersion)
+	tx.Region(msg.Region)
+
+	if !newMeta {
 		return
 	}
 
+	// apply backend.
 	backends := make([]*PeerBackend, 0, len(msg.Backend))
 	for idx := range msg.Backend {
 		b := msg.Backend[idx]
@@ -150,8 +157,6 @@ func (p *PeerMeta) applyPBSnapshot(tx *PeerReleaseTx, msg *pbp.Peer) {
 		})
 	}
 	tx.Backend(backends...)
-	tx.Region(msg.Region)
-	tx.State(int(msg.State), msg.StateVersion)
 }
 
 func (p *PeerMeta) ApplyPBSnapshot(msg *pbp.Peer) (err error) {
@@ -160,7 +165,7 @@ func (p *PeerMeta) ApplyPBSnapshot(msg *pbp.Peer) (err error) {
 	}
 	p.Tx(func(bp MembershipPeer, tx *PeerReleaseTx) bool {
 		p.applyPBSnapshot(tx, msg)
-		return tx.IsNewVersion()
+		return true
 	})
 	return nil
 }
@@ -258,17 +263,17 @@ func (p *PeerMeta) Tx(commit func(MembershipPeer, *PeerReleaseTx) bool) (commite
 	return parentCommited || commited
 }
 
-type GossipMemebership struct {
+type GossipMembership struct {
 	*gossip.Gossiper
 
 	New func(*pb.Peer) gossip.MembershipPeer
 }
 
-func NewGossipMembership() *GossipMemebership {
-	return &GossipMemebership{Gossiper: gossip.NewGossiper()}
+func NewGossipMembership() *GossipMembership {
+	return &GossipMembership{Gossiper: gossip.NewGossiper()}
 }
 
-func (m *GossipMemebership) OnAppend(callback func(MembershipPeer)) {
+func (m *GossipMembership) OnAppend(callback func(MembershipPeer)) {
 	m.Gossiper.OnAppend(func(v gossip.MembershipPeer) {
 		if p, ok := v.(MembershipPeer); ok {
 			callback(p)
@@ -276,7 +281,7 @@ func (m *GossipMemebership) OnAppend(callback func(MembershipPeer)) {
 	})
 }
 
-func (m *GossipMemebership) OnRemove(callback func(MembershipPeer)) {
+func (m *GossipMembership) OnRemove(callback func(MembershipPeer)) {
 	m.Gossiper.OnRemove(func(v gossip.MembershipPeer) {
 		if p, ok := v.(MembershipPeer); ok {
 			callback(p)
@@ -284,7 +289,7 @@ func (m *GossipMemebership) OnRemove(callback func(MembershipPeer)) {
 	})
 }
 
-func (m *GossipMemebership) Range(callback func(MembershipPeer) bool) {
+func (m *GossipMembership) Range(callback func(MembershipPeer) bool) {
 	m.Gossiper.VisitPeer(func(region string, v gossip.MembershipPeer) bool {
 		if p, ok := v.(MembershipPeer); ok {
 			return callback(p)
@@ -293,7 +298,7 @@ func (m *GossipMemebership) Range(callback func(MembershipPeer) bool) {
 	})
 }
 
-func (m *GossipMemebership) PBSnapshot() (peers []*pbp.Peer, err error) {
+func (m *GossipMembership) PBSnapshot() (peers []*pbp.Peer, err error) {
 	peers = make([]*pbp.Peer, 0, 8)
 	m.VisitPeer(func(region string, p gossip.MembershipPeer) bool {
 		peer := p.(PBSnapshotPeer)
@@ -308,7 +313,7 @@ func (m *GossipMemebership) PBSnapshot() (peers []*pbp.Peer, err error) {
 	return
 }
 
-func (m *GossipMemebership) ApplyPBSnapshot(route Router, peers []*pb.Peer) (errs []error) {
+func (m *GossipMembership) ApplyPBSnapshot(route Router, peers []*pb.Peer) (errs []error) {
 	if peers == nil {
 		return nil
 	}
@@ -339,7 +344,7 @@ LoopPeer:
 			// new peer
 			new := m.New(peers[idx])
 			if new == nil {
-				return []error{errors.New("GossipMemebership.New() return nil")}
+				return []error{errors.New("GossipMembership.New() return nil")}
 			}
 			m.Discover(new)
 		} else if p, able := match.(PBSnapshotPeer); able {
