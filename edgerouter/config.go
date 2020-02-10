@@ -80,6 +80,66 @@ func (r *EdgeRouter) updateBackends(cfgs []*config.Backend) (err error) {
 	return
 }
 
+func (r *EdgeRouter) initializeVTEP(mode string, cfg *config.Interface) (succeed bool, err error) {
+	if cfg == nil {
+		return false, nil
+	}
+	if r.ifaceDevice != nil {
+		return true, nil
+	}
+	defer func() {
+		if err != nil && r.ifaceDevice != nil {
+			r.ifaceDevice.Close()
+		}
+	}()
+
+	var (
+		ip           net.IP
+		subnet, vnet *net.IPNet
+		deviceConfig water.Config
+		hwAddr       net.HardwareAddr
+	)
+
+	if cfg.Subnet != "" {
+		if ip, subnet, err = net.ParseCIDR(cfg.Subnet); err != nil {
+			return false, err
+		}
+		subnet.IP = ip
+		if cfg.Network != "" && mode == "overlay" {
+			if _, vnet, err = net.ParseCIDR(cfg.Network); err != nil {
+				return false, err
+			}
+		}
+	}
+	if cfg.MAC != "" {
+		if hwAddr, err = net.ParseMAC(cfg.MAC); err != nil {
+			return false, err
+		}
+	}
+
+	switch mode {
+	case "ethernet":
+		deviceConfig.DeviceType = water.TAP
+
+	case "overlay":
+		deviceConfig.DeviceType = water.TUN
+
+	default:
+		return false, ErrUnknownMode
+	}
+
+	setupTuntapPlatformParameters(cfg, &deviceConfig)
+
+	// create tuntap.
+	if r.ifaceDevice, err = water.New(deviceConfig); err != nil {
+		r.log.Error("interface create failure: ", err)
+	}
+
+	err = upConfigVTEP(mode, r.ifaceDevice.Name(), hwAddr, subnet, vnet)
+
+	return err == nil, err
+}
+
 func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 	id, log := atomic.AddUint32(&r.configID, 1), r.log.WithField("type", "config")
 
@@ -87,9 +147,8 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 
 	r.arbiter.Go(func() {
 		var (
-			deviceConfig water.Config
-			nextTry      time.Time
-			err          error
+			nextTry time.Time
+			err     error
 		)
 
 		succeed, nextTry := false, time.Now()
@@ -132,15 +191,12 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 			if r.route == nil {
 				log.Info("starting new forwarding...")
 
-				setupTuntapPlatformParameters(cfg.Iface, &deviceConfig)
-
 				switch cfg.Mode {
 				case "ethernet":
 					log.Info("network mode: ethernet")
 
 					r.route = route.NewL2Router(r.routeArbiter, r.membership, nil, time.Second*180)
 					r.peerSelf = &route.L2Peer{}
-					deviceConfig.DeviceType = water.TAP
 
 				case "overlay":
 					log.Info("network mode: overlay")
@@ -148,7 +204,6 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 					r.route = route.NewL3Router(r.routeArbiter, r.membership, nil, time.Second*180)
 					l3 := &route.L3Peer{}
 					r.peerSelf = l3
-					deviceConfig.DeviceType = water.TUN
 					l3.Tx(func(p route.MembershipPeer, tx *route.L3PeerReleaseTx) bool {
 						if err = tx.CIDR(cidr); err != nil {
 							return false
@@ -170,12 +225,11 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 
 			}
 			// create tuntap.
-			if r.ifaceDevice == nil {
-				if r.ifaceDevice, err = water.New(deviceConfig); err != nil {
-					log.Error("interface create failure: ", err)
-					succeed = false
-				}
+			if succeed, err = r.initializeVTEP(cfg.Mode, cfg.Iface); err != nil {
+				log.Error("interface create failure: ", err)
+				succeed = false
 			}
+
 			// update backends.
 			if err = r.updateBackends(cfg.Backend); err != nil {
 				log.Error("update backend failure: ", err)
@@ -219,14 +273,14 @@ func (r *EdgeRouter) ApplyConfig(cfg *config.Network) (err error) {
 		err = fmt.Errorf("unknwon network mode: %v", cfg.Mode)
 		return
 	}
-	var (
-	//ifaceMAC net.HardwareAddr
-	)
+
 	switch cfg.Mode {
 	case "ethernet":
-		if _, err = net.ParseMAC(cfg.Iface.MAC); err != nil {
-			r.log.Error("invalid hardware address: ", cfg.Iface.MAC)
-			return err
+		if cfg.Iface.MAC != "" {
+			if _, err = net.ParseMAC(cfg.Iface.MAC); err != nil {
+				r.log.Error("invalid hardware address: ", cfg.Iface.MAC)
+				return err
+			}
 		}
 	}
 

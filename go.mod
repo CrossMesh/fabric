@@ -12,6 +12,7 @@ require (
 	github.com/karrick/godirwalk v1.15.2 // indirect
 	github.com/kr/pretty v0.2.0 // indirect
 	github.com/kr/pty v1.1.8 // indirect
+	github.com/mitchellh/mapstructure v1.1.2 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rogpeppe/go-internal v1.5.2 // indirect
 	github.com/sergi/go-diff v1.1.0 // indirect
@@ -29,7 +30,7 @@ require (
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e // indirect
 	golang.org/x/sys v0.0.0-20200124204421-9fbb57f87de9 // indirect
 	golang.org/x/text v0.3.2 // indirect
-	golang.org/x/tools v0.0.0-20200206152323-64a0f23fc32d // indirect
+	golang.org/x/tools v0.0.0-20200207224406-61798d64f025 // indirect
 	golang.org/x/tools/gopls v0.3.1 // indirect
 	golang.org/x/xerrors v0.0.0-20191204190536-9bdfabe68543 // indirect
 	google.golang.org/grpc v1.27.0
