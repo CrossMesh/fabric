@@ -164,6 +164,9 @@ func (r *L3Router) Forward(packet []byte) (peers []MembershipPeer) {
 		IP: []byte{0, 0, 0, 0},
 	}
 	r.visitor.Range(func(p MembershipPeer) bool {
+		if p.Meta().IsSelf() {
+			return true
+		}
 		if l3, ok := p.(*L3Peer); ok {
 			network.Mask = l3.mask
 			if l3.ip.Equal(ip) {
