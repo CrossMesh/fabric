@@ -97,6 +97,9 @@ func (r *L2Router) Forward(frame []byte) (peers []MembershipPeer) {
 		return nil
 	}
 	copy(dst[:], frame[0:6])
+	if dst[0]&0x01 != 0 { // multicast not supported now.
+		return nil
+	}
 
 	// lookup.
 	if 0 != bytes.Compare(dst[:], EthernetBoardcastAddress[:]) { // unicast.
@@ -112,6 +115,10 @@ func (r *L2Router) Forward(frame []byte) (peers []MembershipPeer) {
 	}
 	// fallback to boardcast.
 	r.visitor.Range(func(p MembershipPeer) bool {
+		// not boardcast myself.
+		if p.Meta().IsSelf() {
+			return true
+		}
 		peers = append(peers, p)
 		return true
 	})

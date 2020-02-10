@@ -64,9 +64,34 @@ func TestL2Router(t *testing.T) {
 			0x0a, 0x14, 0x01, 0x02, // dst IP: 10.20.1.2
 			// ...
 		},
+		// test boardcast frame.
+		[]byte{
+			0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // dst
+			0xf6, 0xd4, 0xbd, 0x58, 0x72, 0xab, // src
+			0x08, 0x00, // type: IPv4
+			0x45, 0x00,
+			0x00, 0x54, // length.
+			0xa8, 0x52, 0x00, 0x00, 0x40,
+			0x01, // type: icmp
+			0xd5, 0xed,
+			0x0a, 0x14, 0x01, 0x03, // src IP: 10.20.1.3
+			0x0a, 0x14, 0x01, 0x02, // dst IP: 10.20.1.2
+			// ...
+		},
+		// test multicast STP frames.
+		[]byte{
+			0x01, 0x80, 0xC2, 0x00, 0x00, 0x00, // dst
+			0xf6, 0xd4, 0xbd, 0x58, 0x72, 0xab, // src
+			0x08, 0x00, // type: IPv4
+			0x45, 0x00,
+			0x00, 0x54, // length.
+			0xa8, 0x52, 0x00, 0x00, 0x40,
+			0x01, // type: icmp
+			// ...
+		},
 	}
 
-	peer := []*L2Peer{{}, {}, {}}
+	peer := []*L2Peer{{PeerMeta{Self: true}}, {}, {}}
 	assert.True(t, peer[0].Tx(func(p MembershipPeer, tx *PeerReleaseTx) bool {
 		tx.Backend(&PeerBackend{
 			PeerBackendIdentity: backend.PeerBackendIdentity{
@@ -137,7 +162,7 @@ func TestL2Router(t *testing.T) {
 
 	t.Run("forward", func(t *testing.T) {
 		// boardcast when route not found.
-		assert.Equal(t, 3, len(r.Forward(frames[2])))
+		assert.Equal(t, 2, len(r.Forward(frames[2])))
 		// normal unicast forward.
 		ps := r.Forward(frames[3])
 		assert.NotNil(t, ps)
@@ -159,7 +184,7 @@ func TestL2Router(t *testing.T) {
 		g.Clean(time.Now())
 		ps = r.Forward(frames[3])
 		assert.NotNil(t, ps)
-		assert.Equal(t, 2, len(ps), "should boardcast, not ", ps)
+		assert.Equal(t, 1, len(ps), "should boardcast, not ", ps)
 
 		t.Run("hot_expired", func(t *testing.T) {
 			p, learned := r.Backward(frames[1], peer[0].ActiveBackend().PeerBackendIdentity)
@@ -174,7 +199,7 @@ func TestL2Router(t *testing.T) {
 			r.expireHotMAC(time.Now().Add(time.Second * 30))
 			ps = r.Forward(frames[3])
 			assert.NotNil(t, ps)
-			assert.Equal(t, 2, len(ps), "should boardcast, not ", ps)
+			assert.Equal(t, 1, len(ps), "should boardcast, not ", ps)
 		})
 	})
 
