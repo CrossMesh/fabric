@@ -26,14 +26,13 @@ type Interface struct {
 	// interface name.
 	Name string `json:"name" yaml:"name"`
 
-	// ethernet hardware address.
+	// (ethernet only) ethernet hardware address.
 	MAC string `json:"mac" yaml:"mac"`
 
-	// (overlay only) network CIDR representing l3 peer address over virtual network
-	// and subnet.
+	// subnet CIDR representing l3 peer address over virtual network.
 	Subnet string `json:"address" yaml:"address"`
 
-	// (overlay only) network CIDR representing whole virtual network.
+	// network CIDR representing whole virtual network.
 	Network string `json:"network" yaml:"network"`
 }
 
