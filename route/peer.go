@@ -20,6 +20,7 @@ type MembershipPeer interface {
 	String() string
 	OnBackendUpdated(func(MembershipPeer, []backend.PeerBackendIdentity, []backend.PeerBackendIdentity))
 	ActiveBackend() *PeerBackend
+	Backends() []*PeerBackend
 }
 
 type PBSnapshotPeer interface {
