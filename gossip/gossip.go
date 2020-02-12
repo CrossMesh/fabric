@@ -273,6 +273,10 @@ func (g *Gossiper) Clean(now time.Time) {
 				if len(peers) <= g.MinRegionPeers {
 					continue
 				}
+				// do not remove myself.
+				if peer.IsSelf() {
+					continue
+				}
 				// remove peer.
 				if onRemove != nil {
 					onRemove(peer)
