@@ -15,6 +15,7 @@ import (
 	"github.com/songgao/water"
 )
 
+// EdgeRouter builds overlay network.
 type EdgeRouter struct {
 	rpc       *rpc.Stub
 	rpcClient *rpc.Client
@@ -30,12 +31,15 @@ type EdgeRouter struct {
 	backends       sync.Map // map[pb.PeerBackend_BackendType]map[string]backend.Backend
 	ifaceDevice    *water.Interface
 
+	endpointFailures sync.Map // map[backend.PeerBackendIdentity]time.Time
+
 	configID uint32
 	cfg      *config.Network
 	log      *logging.Entry
 	arbiter  *arbit.Arbiter
 }
 
+// New creates a new EdgeRouter.
 func New(arbiter *arbit.Arbiter) (a *EdgeRouter, err error) {
 	if arbiter == nil {
 		return nil, errors.New("arbiter missing")
@@ -50,10 +54,13 @@ func New(arbiter *arbit.Arbiter) (a *EdgeRouter, err error) {
 	return a, nil
 }
 
+// Membership gives current membership of edge router.
 func (r *EdgeRouter) Membership() route.Membership {
 	return r.membership
 }
 
+// Mode returns name of edge router working mode.
+// values can be: ethernet, overlay.
 func (r *EdgeRouter) Mode() string {
 	switch r.route.(type) {
 	case *route.L2Router:

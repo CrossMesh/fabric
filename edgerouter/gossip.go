@@ -52,15 +52,6 @@ func (r *EdgeRouter) goGossip(m *route.GossipMembership) {
 	// seed myself.
 	r.peerSelf.Meta().Self = true
 	m.Discover(r.peerSelf.(gossip.MembershipPeer))
-	//go func() {
-	//	for {
-	//		m.Range(func(p route.MembershipPeer) bool {
-	//			fmt.Println(p)
-	//			return true
-	//		})
-	//		time.Sleep(time.Second * 1)
-	//	}
-	//}()
 
 	r.routeArbiter.TickGo(func(cancel func(), deadline time.Time) {
 		term := m.NewTerm(1)
@@ -83,32 +74,51 @@ func (r *EdgeRouter) goGossip(m *route.GossipMembership) {
 				r.log.Error("goGossip() snapshot failure:", err)
 				break
 			}
-			pb := &pb.PeerExchange{Peer: snapshot}
+			pbMsg := &pb.PeerExchange{Peer: snapshot}
 
-			// RPC
-			r.routeArbiter.Go(func() {
-				log, client := log.WithField("remote", peer.String()), r.RPCClient(peer)
-				remote, err := client.GossipExchange(ctx, pb)
-				if err != nil {
-					if err != rpc.ErrRPCCanceled || !r.routeArbiter.ShouldRun() {
-						log.Warn("gossip with ", peer.String(), " failure: ", err)
+			// trigger backend healthy check.
+			r.goBackendHealthCheckOnce(peer)
+
+			// Exchage memberlist
+			if ab := peer.ActiveBackend(); ab == nil || ab.Type == pb.PeerBackend_UNKNOWN {
+				// can not reach this peer.
+				peer.Meta().GossiperStub().Tx(func(tx *gossip.PeerReleaseTx) bool {
+					tx.ClaimDead()
+					return true
+				})
+			} else {
+				// Peer exchange RPC.
+				r.routeArbiter.Go(func() {
+					log, client := log.WithField("remote", peer.String()), r.RPCClient(peer)
+					remote, err := client.GossipExchange(ctx, pbMsg)
+					// A RPC failure doesn't mean death of peer.
+					if err != nil {
+						if err != rpc.ErrRPCCanceled || !r.routeArbiter.ShouldRun() {
+							log.Warn("gossip with ", peer.String(), " failure: ", err)
+						}
+						log.Warn(err)
+						return
 					}
-					log.Warn(err)
-					return
-				}
-				if remote == nil {
-					log.Warn("empty peer list from ", peer.String())
-				}
-				for _, err = range m.ApplyPBSnapshot(r.route, remote.Peer) {
-					log.Warn("apply snapshot failure: ", err)
-				}
-			})
+					// I know the peer is alive.
+					peer.Meta().GossiperStub().Tx(func(tx *gossip.PeerReleaseTx) bool {
+						tx.ClaimAlive()
+						return true
+					})
+					if remote == nil {
+						log.Warn("empty peer list from ", peer.String())
+					}
+					for _, err = range m.ApplyPBSnapshot(r.route, remote.Peer) {
+						log.Warn("apply snapshot failure: ", err)
+					}
+				})
+			}
 		}
 		if len(peerDigest) < 1 {
 			log.Info("no member to gossip.")
 		} else {
 			log.Infof("gossip members: %v.", strings.Join(peerDigest, ","))
 		}
+		m.Clean(time.Now())
 
 	}, gossip.DefaultGossipPeriod, 1)
 }

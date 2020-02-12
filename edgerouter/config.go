@@ -133,6 +133,7 @@ func (r *EdgeRouter) initializeVTEP(mode string, cfg *config.Interface) (succeed
 	// create tuntap.
 	if r.ifaceDevice, err = water.New(deviceConfig); err != nil {
 		r.log.Error("interface create failure: ", err)
+		return false, err
 	}
 
 	err = upConfigVTEP(mode, r.ifaceDevice.Name(), hwAddr, subnet, vnet)
