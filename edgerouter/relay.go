@@ -40,17 +40,7 @@ func (r *EdgeRouter) backwardVTEP(frame []byte, peer route.MembershipPeer) {
 	r.ifaceDevice.Write(frame)
 }
 
-// VTEP to remote peers.
-func (r *EdgeRouter) forwardVTEPPeer(frame []byte, peer route.MembershipPeer) error {
-	if frame == nil || peer == nil {
-		// drop nil frame and unknown destination.
-		return nil
-	}
-	desp := peer.ActiveBackend()
-	if desp.Type == pb.PeerBackend_UNKNOWN {
-		// no active backend. drop.
-		return nil
-	}
+func (r *EdgeRouter) forwardVTEPBackend(frame []byte, desp *route.PeerBackend) error {
 	var b backend.Backend
 	r.visitBackendsWithType(desp.Type, func(endpoint string, be backend.Backend) bool {
 		b = be
@@ -67,6 +57,20 @@ func (r *EdgeRouter) forwardVTEPPeer(frame []byte, peer route.MembershipPeer) er
 		return nil
 	}
 	return link.Send(frame)
+}
+
+// VTEP to remote peers.
+func (r *EdgeRouter) forwardVTEPPeer(frame []byte, peer route.MembershipPeer) error {
+	if frame == nil || peer == nil {
+		// drop nil frame and unknown destination.
+		return nil
+	}
+	desp := peer.ActiveBackend()
+	if desp.Type == pb.PeerBackend_UNKNOWN {
+		// no active backend. drop.
+		return nil
+	}
+	return r.forwardVTEPBackend(frame, desp)
 }
 
 func (r *EdgeRouter) forwardVTEP() {

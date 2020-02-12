@@ -163,14 +163,17 @@ func (p *Peer) RTx(commit func()) {
 	commit()
 }
 
+// GossipTerm contains details in gossip term.
 type GossipTerm struct {
 	gossiper *Gossiper
 	ID       uint32
 	peers    []MembershipPeer
 }
 
+// NumOfPeers returns the number of peers that should be gossip with.
 func (c *GossipTerm) NumOfPeers() int { return len(c.peers) }
 
+// Peer returns gossip peer by index.
 func (c *GossipTerm) Peer(index int) MembershipPeer {
 	if index > len(c.peers) {
 		return nil
@@ -178,6 +181,7 @@ func (c *GossipTerm) Peer(index int) MembershipPeer {
 	return c.peers[index]
 }
 
+// Gossiper implements basic gossip protocol.
 type Gossiper struct {
 	term     uint32
 	onRemove func(MembershipPeer)
@@ -190,6 +194,7 @@ type Gossiper struct {
 	byRegion map[string]map[*Peer]MembershipPeer
 }
 
+// NewGossiper creates new gossiper.
 func NewGossiper() (g *Gossiper) {
 	g = &Gossiper{
 		byRegion:       make(map[string]map[*Peer]MembershipPeer),
@@ -199,6 +204,7 @@ func NewGossiper() (g *Gossiper) {
 	return
 }
 
+// NewTerm creates new gossip term.
 func (g *Gossiper) NewTerm(brust int32) (t *GossipTerm) {
 	t = &GossipTerm{
 		peers:    make([]MembershipPeer, 0, brust),
@@ -252,6 +258,7 @@ func (g *Gossiper) refreshRegion(old, new string, peer MembershipPeer) {
 	regionPeers[peer.GossiperStub()] = peer
 }
 
+// Clean updates states of peers and clean dead ones.
 func (g *Gossiper) Clean(now time.Time) {
 	g.lock.Lock()
 	defer g.lock.Unlock()
@@ -264,6 +271,10 @@ func (g *Gossiper) Clean(now time.Time) {
 			case DEAD:
 				// clean dead peers.
 				if len(peers) <= g.MinRegionPeers {
+					continue
+				}
+				// do not remove myself.
+				if peer.IsSelf() {
 					continue
 				}
 				// remove peer.
@@ -312,6 +323,7 @@ func (g *Gossiper) visitPeer(visit func(string, MembershipPeer) bool) {
 	}
 }
 
+// VisitPeer visits peers in memberlist.
 func (g *Gossiper) VisitPeer(visit func(string, MembershipPeer) bool) {
 	g.lock.RLock()
 	defer g.lock.RUnlock()
@@ -335,12 +347,15 @@ func (g *Gossiper) visitPeerByState(visit func(MembershipPeer) bool, states ...i
 	}
 }
 
+// VisitPeerByState visits peers in memberlist by states.
 func (g *Gossiper) VisitPeerByState(visit func(MembershipPeer) bool, states ...int) {
 	g.lock.RLock()
 	defer g.lock.RUnlock()
 	g.visitPeerByState(visit, states...)
 }
 
+// OnRemove inserts callback to receive peer "remove" event.
 func (g *Gossiper) OnRemove(callback func(MembershipPeer)) *Gossiper { g.onRemove = callback; return g }
 
+// OnAppend inserts callback to receive peer "append" event.
 func (g *Gossiper) OnAppend(callback func(MembershipPeer)) *Gossiper { g.onAppend = callback; return g }

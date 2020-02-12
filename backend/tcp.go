@@ -2,8 +2,6 @@ package backend
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -17,7 +15,6 @@ import (
 
 	arbit "git.uestc.cn/sunmxt/utt/arbiter"
 	"git.uestc.cn/sunmxt/utt/config"
-	"git.uestc.cn/sunmxt/utt/mux"
 	"git.uestc.cn/sunmxt/utt/proto"
 	"git.uestc.cn/sunmxt/utt/proto/pb"
 	logging "github.com/sirupsen/logrus"
@@ -32,7 +29,7 @@ func validTCPPublishEndpoint(arr *net.TCPAddr) bool {
 
 const (
 	defaultSendTimeout    = 50
-	defaultConnectTimeout = 15
+	defaultConnectTimeout = 15000
 )
 
 type TCPBackendConfig struct {
@@ -77,116 +74,6 @@ func (c *tcpCreator) Priority() uint32                 { return c.cfg.Priority }
 func (c *tcpCreator) Publish() string                  { return c.cfg.Publish }
 func (c *tcpCreator) New(arbiter *arbit.Arbiter, log *logging.Entry) (Backend, error) {
 	return NewTCP(arbiter, log, &c.cfg, &c.raw.PSK)
-}
-
-type TCPLink struct {
-	muxer   mux.Muxer
-	demuxer mux.Demuxer
-	conn    *net.TCPConn
-	crypt   cipher.Block
-	remote  *net.TCPAddr
-	publish string
-
-	buf       []byte
-	cursor    int
-	maxCursor int
-
-	lock chan struct{}
-
-	backend *TCP
-}
-
-func newTCPLink(backend *TCP) (r *TCPLink) {
-	r = &TCPLink{
-		lock:      make(chan struct{}, 1),
-		backend:   backend,
-		buf:       make([]byte, defaultBufferSize),
-		cursor:    0,
-		maxCursor: 0,
-	}
-	r.lock <- struct{}{}
-	return r
-}
-
-func (l *TCPLink) read(emit func(frame []byte) bool) (err error) {
-	conn, feed, cont := l.conn, 0, true
-	if conn == nil {
-		return ErrConnectionClosed
-	}
-	for cont && err == nil {
-		if l.maxCursor > 0 {
-			// feed demuxer.
-			feed, err = l.demuxer.Demux(l.buf[l.cursor:l.maxCursor], func(frame []byte) bool {
-				cont = emit(frame)
-				return cont
-			})
-			l.cursor += feed
-		} else {
-			// read stream.
-			feed, err = conn.Read(l.buf)
-			if err != nil {
-				break
-			}
-			l.cursor, l.maxCursor = 0, feed
-		}
-		if l.cursor == l.maxCursor {
-			l.cursor, l.maxCursor = 0, 0
-		}
-	}
-	return
-}
-
-func (l *TCPLink) Send(frame []byte) (err error) {
-	t := l.backend
-
-	select {
-	case <-time.After(t.getSendTimeout()):
-		return ErrOperationCanceled
-	case <-l.lock:
-		defer func() { l.lock <- struct{}{} }()
-	}
-
-	t.Arbiter.Do(func() {
-		_, err = l.muxer.Mux(frame)
-	})
-
-	if err != nil {
-		if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
-			err = ErrOperationCanceled
-		} else {
-			// close corrupted link.
-			t.log.Error("mux error: ", err)
-			l.Close()
-		}
-	}
-	return
-}
-
-func (l *TCPLink) InitializeAESGCM(key []byte, nonce []byte) (err error) {
-	if l.crypt, err = aes.NewCipher(key[:]); err != nil {
-		return err
-	}
-	if l.muxer, err = mux.NewGCMStreamMuxer(l.conn, l.crypt, nonce); err != nil {
-		return err
-	}
-	if l.demuxer, err = mux.NewGCMStreamDemuxer(l.crypt, nonce); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (l *TCPLink) InitializeNoCryption() {
-	l.muxer, l.demuxer = mux.NewStreamMuxer(l.conn), mux.NewStreamDemuxer()
-}
-
-func (l *TCPLink) Close() (err error) {
-	conn := l.conn
-	if conn != nil {
-		conn.Close()
-		l.backend.link.Delete(l.publish)
-		l.conn = nil
-	}
-	return
 }
 
 type TCP struct {
@@ -259,12 +146,19 @@ func (t *TCP) Priority() uint32 {
 	return t.config.Priority
 }
 
-func (t *TCP) getSendTimeout() (timeout time.Duration) {
-	timeout = time.Microsecond * time.Duration(t.config.SendTimeout)
-	if timeout > 0 {
-		return
+func getDefaultUint32(ori, def uint32) uint32 {
+	if ori > 0 {
+		return ori
 	}
-	return time.Duration(defaultSendTimeout) * time.Millisecond
+	return def
+}
+
+func (t *TCP) getSendTimeout() time.Duration {
+	return time.Duration(getDefaultUint32(t.config.SendTimeout, defaultSendTimeout)) * time.Millisecond
+}
+
+func (t *TCP) getConnectTimeout() time.Duration {
+	return time.Duration(getDefaultUint32(t.config.ConnectTimeout, defaultConnectTimeout)) * time.Millisecond
 }
 
 func (t *TCP) serve(arbiter *arbit.Arbiter) (err error) {
@@ -338,6 +232,24 @@ func (t *TCP) goServeConnection(arbiter *arbit.Arbiter, connID uint32, conn net.
 
 }
 
+func (t *TCP) getStartCode(log *logging.Entry) (lead []byte) {
+	switch v := t.config.StartCode.(type) {
+	case string:
+		lead = []byte(v)
+	case []int:
+		lead = make([]byte, len(v))
+		for i := range v {
+			if v[i] > 255 || v[i] < 0 {
+				log.Warn("start code should be in range 0x00 - 0xff. skip.")
+				return nil
+			}
+		}
+	default:
+		log.Warn("unknown start code setting. skip.")
+	}
+	return
+}
+
 func (t *TCP) handshakeConnect(arbiter *arbit.Arbiter, log *logging.Entry, connID uint32, adaptedConn net.Conn) (accepted bool, err error) {
 	buf := make([]byte, defaultBufferSize)
 
@@ -353,21 +265,8 @@ func (t *TCP) handshakeConnect(arbiter *arbit.Arbiter, log *logging.Entry, connI
 	}
 
 	// wait for hello.
-	hello := proto.Hello{}
-	switch v := t.config.StartCode.(type) {
-	case string:
-		hello.Lead = []byte(v)
-	case []int:
-		hello.Lead = make([]byte, len(v))
-		for i := range v {
-			if v[i] > 255 || v[i] < 0 {
-				hello.Lead = nil
-				log.Warn("start code should be in range 0x00 - 0xff. skip.")
-				break
-			}
-		}
-	default:
-		log.Warn("unknown start code setting. skip.")
+	hello := proto.Hello{
+		Lead: t.getStartCode(log),
 	}
 
 	var read int
@@ -487,18 +386,19 @@ func (t *TCP) acceptTCPLink(arbiter *arbit.Arbiter, log *logging.Entry, link *TC
 		log.Errorf("cannot resolve \"%v\": %v", connectArg.Identity, err)
 		return false, err
 	}
-	key := fmt.Sprintf("%v:%v", addr.IP.To4().String(), addr.Port)
 	if !validTCPPublishEndpoint(addr) {
 		log.Info("invalid publish endpoint. deined.")
 		return false, nil
 	}
-	if _, exists := t.link.LoadOrStore(key, link); exists {
+	key := fmt.Sprintf("%v:%v", addr.IP.To4().String(), addr.Port)
+	leftLink := t.getLink(key)
+	link.publish = key
+	link.remote = addr
+	if leftLink.Active() || !leftLink.assign(link) {
 		log.Warnf("link to foreign peer \"%v\" exists. closing...", key)
 		return false, nil
 	}
-	link.remote = addr
-	link.publish = key
-	log.Infof("link to foreign peer \"%v\" established.", key)
+	link = leftLink
 
 	t.goTCPLinkDaemon(log, key, link)
 
@@ -512,6 +412,7 @@ func (t *TCP) goTCPLinkDaemon(log *logging.Entry, key string, link *TCPLink) {
 		}()
 		var err error
 
+		log.Infof("link to foreign peer \"%v\" established.", key)
 		log.Info("receiver start.")
 		// TCP options.
 		if bufSize := t.config.SendBufferSize; bufSize > 0 {
@@ -565,19 +466,51 @@ func (t *TCP) goTCPLinkDaemon(log *logging.Entry, key string, link *TCPLink) {
 	})
 }
 
+func (t *TCP) getLink(key string) (link *TCPLink) {
+	init := func() {
+		link = newTCPLink(t)
+		link.publish = key
+	}
+	v, loaded := t.link.Load(key)
+	for {
+		if loaded && v != nil {
+			link, loaded = v.(*TCPLink)
+			if loaded && link != nil {
+				return
+			}
+			// Defensive code
+			init()
+			t.link.Store(key, newTCPLink(t))
+		} else {
+			init()
+		}
+		if v, loaded = t.link.LoadOrStore(key, link); loaded {
+			continue
+		}
+		break
+	}
+	return
+}
+
 func (t *TCP) connect(addr *net.TCPAddr, publish string) (link *TCPLink, err error) {
 	key := addr.IP.To4().String() + ":" + strconv.FormatInt(int64(addr.Port), 10)
-	if v, exists := t.link.Load(key); exists {
-		return v.(*TCPLink), nil
+	link = t.getLink(key)
+	if link.conn != nil {
+		return link, nil
 	}
 
 	// dial
-	t.log.Info("connecting to ", addr.String())
-	link = newTCPLink(t)
-	link.publish = publish
 	done := make(chan struct{}, 1)
 	t.Arbiter.Go(func() {
 		defer func() { done <- struct{}{} }()
+
+		<-link.lock
+		defer func() { link.lock <- struct{}{} }()
+		if link.conn != nil {
+			return
+		}
+
+		t.log.Info("connecting to ", addr.String())
 
 		dialer, connectTimeout := net.Dialer{}, time.Duration(0)
 		if connectTimeoutSeconds := t.config.ConnectTimeout; connectTimeoutSeconds > 0 {
@@ -618,21 +551,16 @@ func (t *TCP) connect(addr *net.TCPAddr, publish string) (link *TCPLink, err err
 		}
 		if !accepted {
 			log.Error("denied by remote peer.")
+			link.Close()
 			return
 		}
 
-		if _, exists := t.link.LoadOrStore(key, link); exists {
-			link.Close()
-			log.Warnf("link to foreign peer \"%v\" exists. closing...", key)
-		} else {
-			// start receiver for new link.
-			t.goTCPLinkDaemon(log, key, link)
-		}
+		t.goTCPLinkDaemon(log, key, link)
 	})
 
 	select {
 	case <-done:
-	case <-time.After(t.getSendTimeout()):
+	case <-time.After(t.getConnectTimeout()):
 		return nil, ErrOperationCanceled
 	}
 
@@ -653,22 +581,10 @@ func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TC
 
 	log.Info("handshaking...")
 	// hello
-	hello := proto.Hello{}
-	hello.Refresh()
-	switch v := t.config.StartCode.(type) {
-	case string:
-		hello.Lead = []byte(v)
-
-	case []int:
-		hello.Lead = make([]byte, len(v))
-		for i := range v {
-			if v[i] > 255 || v[i] < 0 {
-				hello.Lead = nil
-				log.Warn("start code should be in range 0x00 - 0xff. skip.")
-				break
-			}
-		}
+	hello := proto.Hello{
+		Lead: t.getStartCode(log),
 	}
+	hello.Refresh()
 	if t.psk != nil {
 		hello.Sign([]byte(*t.psk))
 	} else {

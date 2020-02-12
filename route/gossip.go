@@ -78,14 +78,24 @@ func (p *PeerMeta) Reset() {
 	p.Peer.Reset()
 }
 
+var backendUnknown = &PeerBackend{
+	PeerBackendIdentity: backend.PeerBackendIdentity{Type: pb.PeerBackend_UNKNOWN},
+}
+
 func (p *PeerMeta) ActiveBackend() *PeerBackend {
 	bes := p.backendByPriority
 	if len(bes) < 1 {
-		return &PeerBackend{
-			PeerBackendIdentity: backend.PeerBackendIdentity{Type: pb.PeerBackend_UNKNOWN},
-		}
+		return backendUnknown
 	}
-	return bes[0]
+	b := bes[0]
+	if b.Disabled {
+		return backendUnknown
+	}
+	return b
+}
+
+func (p *PeerMeta) Backends() []*PeerBackend {
+	return p.backendByPriority
 }
 
 func (p *PeerMeta) updateActiveBackend() {

@@ -34,23 +34,36 @@ func (r *EdgeRouter) initRPCStub() (err error) {
 	return nil
 }
 
-func (r *EdgeRouter) sendRPCRequest(peer route.MembershipPeer, rid uint32, name string, data []byte) (err error) {
-	return r.sendRPCMessage(peer, &pb.RPC{
-		Id:       rid,
-		Type:     pb.RPC_Request,
-		Function: name,
-		Data:     data,
-	})
-}
-
-func (r *EdgeRouter) sendRPCMessage(peer route.MembershipPeer, msg *pb.RPC) (err error) {
+func sendRPCMessage(msg *pb.RPC, forward func([]byte) error) (err error) {
 	var dummy [proto.ProtocolMessageHeaderSize]byte
 	buf := pbp.NewBuffer(dummy[:proto.ProtocolMessageHeaderSize]) // internal buffer will be replaced by protobuf.
 	proto.PackProtocolMessageHeader(dummy[:proto.ProtocolMessageHeaderSize], proto.MsgTypeRPC)
 	if err = buf.Marshal(msg); err != nil {
 		return err
 	}
-	return r.forwardVTEPPeer(buf.Bytes(), peer)
+	return forward(buf.Bytes())
+}
+
+func (r *EdgeRouter) sendRPCRequestViaBackend(b *route.PeerBackend, rid uint32, name string, data []byte) (err error) {
+	return sendRPCMessage(&pb.RPC{
+		Id:       rid,
+		Type:     pb.RPC_Request,
+		Function: name,
+		Data:     data,
+	}, func(frame []byte) error {
+		return r.forwardVTEPBackend(frame, b)
+	})
+}
+
+func (r *EdgeRouter) sendRPCRequest(peer route.MembershipPeer, rid uint32, name string, data []byte) (err error) {
+	return sendRPCMessage(&pb.RPC{
+		Id:       rid,
+		Type:     pb.RPC_Request,
+		Function: name,
+		Data:     data,
+	}, func(frame []byte) error {
+		return r.forwardVTEPPeer(frame, peer)
+	})
 }
 
 func (r *EdgeRouter) receiveRPCMessage(data []byte, peer route.MembershipPeer) {
@@ -76,7 +89,9 @@ func (r *EdgeRouter) receiveRPCMessage(data []byte, peer route.MembershipPeer) {
 				reply.Error = err.Error()
 				reply.Type = pb.RPC_Error
 			}
-			return r.sendRPCMessage(peer, reply)
+			return sendRPCMessage(reply, func(frame []byte) error {
+				return r.forwardVTEPPeer(frame, peer)
+			})
 		})
 	}
 }
@@ -93,6 +108,15 @@ func (r *EdgeRouter) RPCClient(peer route.MembershipPeer) *RPCClient {
 		Client: r.rpcClient,
 		send: func(id uint32, name string, proto []byte) error {
 			return r.sendRPCRequest(peer, id, name, proto)
+		},
+	}
+}
+
+func (r *EdgeRouter) RPCClientViaBackend(b *route.PeerBackend) *RPCClient {
+	return &RPCClient{
+		Client: r.rpcClient,
+		send: func(id uint32, name string, proto []byte) error {
+			return r.sendRPCRequestViaBackend(b, id, name, proto)
 		},
 	}
 }
