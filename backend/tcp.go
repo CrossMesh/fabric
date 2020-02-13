@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,10 +34,10 @@ const (
 )
 
 type TCPBackendConfig struct {
-	Bind      string      `json:"bind" yaml:"bind"`
-	Publish   string      `json:"publish" yaml:"publish"`
-	Priority  uint32      `json:"priority" yaml:"priority"`
-	StartCode interface{} `json:"startCode" yaml:"startCode"`
+	Bind      string `json:"bind" yaml:"bind"`
+	Publish   string `json:"publish" yaml:"publish"`
+	Priority  uint32 `json:"priority" yaml:"priority"`
+	StartCode string `json:"startCode" yaml:"startCode"`
 
 	SendTimeout     uint32 `json:"sendTimeout" yaml:"sendTimeout" default:"50"`
 	SendBufferSize  int    `json:"sendBuffer" yaml:"sendBuffer" default:"0"`
@@ -233,19 +234,14 @@ func (t *TCP) goServeConnection(arbiter *arbit.Arbiter, connID uint32, conn net.
 }
 
 func (t *TCP) getStartCode(log *logging.Entry) (lead []byte) {
-	switch v := t.config.StartCode.(type) {
-	case string:
-		lead = []byte(v)
-	case []int:
-		lead = make([]byte, len(v))
-		for i := range v {
-			if v[i] > 255 || v[i] < 0 {
-				log.Warn("start code should be in range 0x00 - 0xff. skip.")
-				return nil
-			}
-		}
-	default:
-		log.Warn("unknown start code setting. skip.")
+	if t.config.StartCode == "" {
+		return
+	}
+	lead = make([]byte, hex.DecodedLen(len(t.config.StartCode)))
+	_, err := hex.Decode(lead, []byte(t.config.StartCode))
+	if err != nil {
+		log.Warnf("invalid startcode config: %v. (parse get error \"%v\")", t.config.StartCode, err)
+		return nil
 	}
 	return
 }
@@ -534,7 +530,7 @@ func (t *TCP) connect(addr *net.TCPAddr, publish string) (link *TCPLink, err err
 		}
 		defer func() {
 			if err != nil {
-				link.Close()
+				link.close()
 			}
 		}()
 
