@@ -147,14 +147,17 @@ func (l *TCPLink) InitializeNoCryption() {
 	l.muxer, l.demuxer = mux.NewStreamMuxer(l.conn), mux.NewStreamDemuxer()
 }
 
-func (l *TCPLink) Close() (err error) {
-	<-l.lock
-	defer func() { l.lock <- struct{}{} }()
-
+func (l *TCPLink) close() (err error) {
 	conn := l.conn
 	if conn != nil {
 		conn.Close()
 		l.reset()
 	}
 	return
+}
+
+func (l *TCPLink) Close() (err error) {
+	<-l.lock
+	defer func() { l.lock <- struct{}{} }()
+	return l.close()
 }
