@@ -24,6 +24,7 @@ type Arbiter struct {
 	sigOS        chan os.Signal
 
 	children sync.Map
+	parent   *Arbiter
 
 	preStop   func()
 	afterStop func()
@@ -45,6 +46,7 @@ func NewWithParent(parent *Arbiter, log *logging.Entry) *Arbiter {
 		sigOS:        make(chan os.Signal, 0),
 		log:          log,
 		lock:         make(chan struct{}, 1),
+		parent:       parent,
 	}
 	a.lock <- struct{}{}
 
@@ -118,6 +120,7 @@ func (a *Arbiter) TickGo(proc func(func(), time.Time), period time.Duration, bru
 		defer cancel()
 		<-tickCtx.Done()
 	})
+
 	for idx := uint32(0); idx < brust; idx++ {
 		a.Go(func() {
 			for {
@@ -180,18 +183,18 @@ func (a *Arbiter) StopOSSignals(stopSignals ...os.Signal) *Arbiter {
 }
 
 // Join waits until all goroutines exited (sync mode).
-// NOTE: Not less then one goroutines should Join() arbiter.
 func (a *Arbiter) Join() {
 	<-a.lock
 	defer func() { a.lock <- struct{}{} }()
 
 	if a.ShouldRun() {
-		a.Go(func() { a.sigFibreExit <- <-a.Exit() })
+		a.Go(func() { <-a.Exit() })
 
-		for a.runningCount > 0 {
+		c := a.runningCount
+		for c > 0 {
 			select {
 			case <-a.sigFibreExit:
-				atomic.AddInt32(&a.runningCount, -1)
+				c = atomic.AddInt32(&a.runningCount, -1)
 
 			case <-a.sigOS:
 				if a.ShouldRun() {
