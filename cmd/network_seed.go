@@ -50,8 +50,7 @@ func cmdNetworkSeed(app *App, ctx *cli.Context) error {
 	cctx, canceled := context.WithTimeout(context.TODO(), time.Second*30)
 	defer canceled()
 	if result, err = client.SeedPeer(cctx, &req); err != nil {
-		log.Error("control rpc got error: ", err)
-		return err
+		return cmdError("control rpc got error: ", err)
 	}
 	if result == nil {
 		return cmdError("control rpc got nil result")

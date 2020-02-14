@@ -40,8 +40,8 @@ func (r *EdgeRouter) updateBackends(cfgs []*config.Backend) (err error) {
 	r.visitBackends(func(index backend.PeerBackendIdentity, b backend.Backend) bool {
 		if _, hasBackend := backendCreators[index]; !hasBackend {
 			b.Shutdown()
+			r.deleteBackend(index)
 		}
-		r.deleteBackend(index)
 		return true
 	})
 
@@ -152,7 +152,7 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 			err     error
 		)
 
-		succeed, nextTry := false, time.Now()
+		succeed, rebootRoute, rebootForward, nextTry := false, false, false, time.Now()
 		r.lock.Lock()
 		defer r.lock.Unlock()
 		for r.arbiter.ShouldRun() && !succeed {
@@ -174,12 +174,14 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 				r.routeArbiter.Join()
 				r.forwardArbiter.Join()
 				r.ifaceDevice.Close()
-				r.routeArbiter, r.forwardArbiter, r.route, r.peerSelf, r.ifaceDevice = nil, nil, nil, nil, nil
+				r.routeArbiter, r.forwardArbiter, r.route, r.peerSelf, r.ifaceDevice, r.membership = nil, nil, nil, nil, nil, nil
 			}
 			if r.routeArbiter == nil {
+				rebootRoute = true
 				r.routeArbiter = arbit.NewWithParent(r.arbiter, nil)
 			}
 			if r.forwardArbiter == nil {
+				rebootForward = true
 				r.forwardArbiter = arbit.NewWithParent(r.arbiter, r.log.WithField("type", "forward"))
 			}
 			// only gossip membership supported yet.
@@ -244,10 +246,13 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 		}
 
 		if succeed {
-			r.goMembership()
-
-			// start forward.
-			r.forwardArbiter.Go(func() { r.forwardVTEP() })
+			if rebootRoute {
+				r.goMembership()
+			}
+			if rebootForward {
+				// start forward.
+				r.forwardArbiter.Go(func() { r.forwardVTEP() })
+			}
 
 			r.log.Info("new config applied.")
 			r.cfg = cfg
