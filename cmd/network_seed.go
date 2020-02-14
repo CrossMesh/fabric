@@ -2,17 +2,15 @@ package cmd
 
 import (
 	"context"
-	"net"
 	"strings"
 	"time"
 
 	"git.uestc.cn/sunmxt/utt/control/rpc/pb"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
-	"google.golang.org/grpc"
 )
 
-func cmdNetworkSeed(app *App, ctx *cli.Context) (err error) {
+func cmdNetworkSeed(app *App, ctx *cli.Context) error {
 	if ctx.Args().Len() < 1 {
 		log.Error("network missing.")
 		return nil
@@ -41,16 +39,13 @@ func cmdNetworkSeed(app *App, ctx *cli.Context) (err error) {
 		return nil
 	}
 	// connect to daemon
-	var conn *grpc.ClientConn
-	if conn, err = grpc.Dial(app.cfg.Control.Endpoint, grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
-		return net.DialTimeout(app.cfg.Control.Type, addr, timeout)
-	}), grpc.WithInsecure()); err != nil {
-		log.Error("connect to control RPC failure: ", err)
+	conn, err := createControlClient(app.cfg.Control)
+	if err != nil {
 		return err
 	}
 	client := pb.NewNetworkManagmentClient(conn)
 
-	// call seed peer.
+	// seed peer.
 	var result *pb.Result
 	cctx, canceled := context.WithTimeout(context.TODO(), time.Second*30)
 	defer canceled()
@@ -59,14 +54,12 @@ func cmdNetworkSeed(app *App, ctx *cli.Context) (err error) {
 		return err
 	}
 	if result == nil {
-		log.Error("control rpc got nil result")
-		return nil
+		return cmdError("control rpc got nil result")
 	}
 	if !result.Succeed {
-		log.Error("operation failed: ", result.Message)
-	} else {
-		log.Info("operation succeeded: ", result.Message)
+		return cmdError("operation failed: %v", result.Message)
 	}
-	return
+	log.Info("operation succeeded: ", result.Message)
 
+	return nil
 }

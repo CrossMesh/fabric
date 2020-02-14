@@ -33,6 +33,7 @@ const (
 	defaultConnectTimeout = 15000
 )
 
+// TCPBackendConfig describes TCP backend parameters.
 type TCPBackendConfig struct {
 	Bind      string `json:"bind" yaml:"bind"`
 	Publish   string `json:"publish" yaml:"publish"`
@@ -77,6 +78,7 @@ func (c *tcpCreator) New(arbiter *arbit.Arbiter, log *logging.Entry) (Backend, e
 	return NewTCP(arbiter, log, &c.cfg, &c.raw.PSK)
 }
 
+// TCP implements TCP backend.
 type TCP struct {
 	bind     *net.TCPAddr
 	publish  *net.TCPAddr
@@ -101,6 +103,7 @@ var (
 	ErrTCPAmbigousRole  = errors.New("ambigous tcp role")
 )
 
+// NewTCP creates TCP backend.
 func NewTCP(arbiter *arbit.Arbiter, log *logging.Entry, cfg *TCPBackendConfig, psk *string) (t *TCP, err error) {
 	if log == nil {
 		log = logging.WithField("module", "backend_tcp")
@@ -143,6 +146,7 @@ func NewTCP(arbiter *arbit.Arbiter, log *logging.Entry, cfg *TCPBackendConfig, p
 	return t, nil
 }
 
+// Priority returns priority of backend.
 func (t *TCP) Priority() uint32 {
 	return t.config.Priority
 }
@@ -176,6 +180,8 @@ func (t *TCP) serve(arbiter *arbit.Arbiter) (err error) {
 		t.log.Infof("listening to %v", t.bind.String())
 
 		err = t.acceptConnection(arbiter)
+		t.listener.Close()
+		t.listener = nil
 	}
 	return
 }
@@ -197,11 +203,9 @@ func (t *TCP) acceptConnection(arbiter *arbit.Arbiter) (err error) {
 		}
 
 		if conn, err = t.listener.Accept(); err != nil {
-			if err != nil {
-				if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
-					err = nil
-					continue
-				}
+			if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
+				err = nil
+				continue
 			}
 			t.log.Error("listener.Accept() error: ", err)
 			continue
@@ -489,6 +493,10 @@ func (t *TCP) getLink(key string) (link *TCPLink) {
 }
 
 func (t *TCP) connect(addr *net.TCPAddr, publish string) (link *TCPLink, err error) {
+	if !t.Arbiter.ShouldRun() {
+		return nil, ErrOperationCanceled
+	}
+
 	key := addr.IP.To4().String() + ":" + strconv.FormatInt(int64(addr.Port), 10)
 	link = t.getLink(key)
 	if link.conn != nil {
@@ -682,18 +690,22 @@ func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TC
 	return true, nil
 }
 
+// Port retuens local bind port of tcp backend.
 func (t *TCP) Port() uint16 {
 	return uint16(t.bind.Port)
 }
 
+// Type returns backend type ID.
 func (t *TCP) Type() pb.PeerBackend_BackendType {
 	return pb.PeerBackend_TCP
 }
 
+// Publish returns publish endpoint.
 func (t *TCP) Publish() (id string) {
 	return t.config.Publish
 }
 
+// Shutdown closes backend.
 func (t *TCP) Shutdown() {
 	t.Arbiter.Shutdown()
 	t.Arbiter.Join()
@@ -713,6 +725,7 @@ func (t *TCP) resolve(endpoint string) (addr *net.TCPAddr, err error) {
 	return
 }
 
+// Connect trys to establish data path to peer.
 func (t *TCP) Connect(endpoint string) (l Link, err error) {
 	var (
 		addr *net.TCPAddr
@@ -727,6 +740,7 @@ func (t *TCP) Connect(endpoint string) (l Link, err error) {
 	return link, err
 }
 
+// Watch registers callback to receive packet.
 func (t *TCP) Watch(proc func(Backend, []byte, string)) error {
 	if proc != nil {
 		t.watch.Store(&proc, proc)
@@ -734,6 +748,7 @@ func (t *TCP) Watch(proc func(Backend, []byte, string)) error {
 	return nil
 }
 
+// IP returns bind IP.
 func (t *TCP) IP() net.IP {
-	return make(net.IP, 0)
+	return t.bind.IP
 }

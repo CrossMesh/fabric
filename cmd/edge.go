@@ -12,16 +12,6 @@ func newEdgeCmd(app *App) *cli.Command {
 		Name:  "edge",
 		Usage: "run as network peer.",
 		Action: func(ctx *cli.Context) (err error) {
-			if ctx.Args().Len() < 1 {
-				log.Error("network missing.")
-				return nil
-			}
-			if ctx.Args().Len() > 1 {
-				log.Error("Too many networks specified.")
-				return nil
-			}
-			netName := ctx.Args().Get(0)
-
 			arbiter := arbit.New(nil)
 			arbiter.HookPreStop(func() {
 				arbiter.Log().Info("shutting down...")
@@ -37,14 +27,16 @@ func newEdgeCmd(app *App) *cli.Command {
 				return nil
 			}
 			// legacy.
-			net := mgr.GetNetwork(netName)
-			if net == nil {
-				log.Error("network \"%v\" not found.", netName)
-				return nil
-			}
-			if err = net.Up(); err != nil {
-				log.Error("network setup failure: ", err)
-				return nil
+			for _, netName := range ctx.Args().Slice() {
+				net := mgr.GetNetwork(netName)
+				if net == nil {
+					log.Error("network \"%v\" not found.", netName)
+					continue
+				}
+				if err = net.Up(); err != nil {
+					log.Error("network setup failure: ", err)
+					continue
+				}
 			}
 			return arbiter.Arbit()
 		},

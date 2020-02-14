@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"fmt"
+
 	"git.uestc.cn/sunmxt/utt/config"
 	"github.com/jinzhu/configor"
 	log "github.com/sirupsen/logrus"
@@ -45,4 +47,10 @@ func NewApp() (a *App) {
 		},
 	}
 	return
+}
+
+func cmdError(format string, args ...interface{}) error {
+	err := fmt.Errorf(format, args...)
+	log.Error(err)
+	return err
 }

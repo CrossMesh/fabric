@@ -18,7 +18,9 @@ type Network struct {
 }
 
 func newNetwork(mgr *NetworkManager) *Network {
-	return &Network{}
+	return &Network{
+		mgr: mgr,
+	}
 }
 
 func (n *Network) Active() bool {
@@ -47,7 +49,7 @@ func (n *Network) Up() (err error) {
 			return nil
 
 		}
-		n.arbiter = arbit.NewWithParent(n.arbiter, nil)
+		n.arbiter = arbit.NewWithParent(n.mgr.arbiter, nil)
 		if n.router, err = edgerouter.New(n.arbiter); err != nil {
 			return err
 		}
