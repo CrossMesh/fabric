@@ -24,7 +24,7 @@ func NewApp() (a *App) {
 	}
 	a.App = &cli.App{
 		Name:  "utt",
-		Usage: "Overlay L2/L3 edge router",
+		Usage: "Overlay network router, designed for connecting cloud network infrastructure",
 		Commands: []*cli.Command{
 			newEdgeCmd(a),
 			newNetworkCmd(a),

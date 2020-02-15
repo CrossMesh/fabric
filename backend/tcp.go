@@ -482,7 +482,7 @@ func (t *TCP) getLink(key string) (link *TCPLink) {
 			}
 			// Defensive code
 			init()
-			t.link.Store(key, newTCPLink(t))
+			t.link.Store(key, link)
 		} else {
 			init()
 		}

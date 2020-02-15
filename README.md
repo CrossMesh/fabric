@@ -24,6 +24,13 @@ Overlay L2/L3 network router, designed for connecting cloud network infrastructu
 make
 ```
 
+#### build RPM/SRPM
+
+```bash
+make rpm    # RPM
+make srpm   # Source RPM
+```
+
 #### run test
 
 ```bash

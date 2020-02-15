@@ -1,0 +1,35 @@
+# This is configuration file of UTT overlay network daemon.
+#
+#   Overlay L2/L3 network router, designed for connecting cloud network infrastructure.
+#
+# for more information, see: https://github.com/Sunmxt/utt
+# 
+
+# Daemon control RPC
+control:
+  # RPC network type.
+  type: unix
+  # network endpoint.
+  endpoint: /var/run/utt_control.sock
+
+# Virtual networks
+link:
+
+  vnet1: # network name
+    # network mode. (could be: ethernet, overlay)
+    #   ethernet:
+    #     Layer 2 virtual network. 
+    mode: ethernet
+    encrypt: true
+    iface:
+      name: tap2
+      mac: ea:38:ab:40:00:12
+      address: 10.240.3.1/24
+    backends:
+    - psk: 123456
+      type: tcp
+      params:
+        bind: 0.0.0.0:3880
+        publish: 192.168.0.161:80
+        priority: 1
+        startCode: "123456"

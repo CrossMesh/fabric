@@ -5,7 +5,7 @@ import "reflect"
 // Backend contains general backend configuration.
 type Backend struct {
 	// whether encryption enabled.
-	Encrypt bool `json:"encrypt" yaml:"encrypt" default:"true"`
+	Encrypt bool `json:"encrypt" yaml:"encrypt" default:"false"`
 
 	// pre-shared key.
 	PSK string `json:"psk" yaml:"psk"`
