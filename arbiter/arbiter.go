@@ -6,6 +6,7 @@ import (
 	"os/signal"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	logging "github.com/sirupsen/logrus"
@@ -215,7 +216,7 @@ func (a *Arbiter) Join() {
 
 // Arbit configures SIGKILL and SIGINT as shutting down signal and waits until all goroutines exited.
 func (a *Arbiter) Arbit() error {
-	a.StopOSSignals(os.Kill, os.Interrupt)
+	a.StopOSSignals(syscall.SIGTERM, syscall.SIGINT)
 	a.Join()
 	return nil
 }
