@@ -37,7 +37,7 @@ make srpm   # Source RPM
 
 ```yaml
 link:
-	# Layer 2 network for example.
+  # Layer 2 network for example.
   vnet1:
     mode: ethernet
     iface:
