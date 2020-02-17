@@ -18,18 +18,68 @@ Overlay L2/L3 network router, designed for connecting cloud network infrastructu
 
 ---
 
-#### build binary
+## Get Started
+
+### build binary
 
 ```bash
 make
 ```
 
-#### build RPM/SRPM
+### build RPM/SRPM
 
 ```bash
 make rpm    # RPM
 make srpm   # Source RPM
 ```
+
+### Define your network
+
+```yaml
+link:
+	# Layer 2 network for example.
+  vnet1:
+    mode: ethernet
+    iface:
+      name: vn1
+      mac: ea:38:ab:40:00:12
+      address: 10.240.3.1/24 # peer IP.
+      
+    backends:
+    - psk: 123456
+      encrypt: false
+      type: tcp
+      params:
+        bind: 0.0.0.0:3880
+        publish: 192.168.0.161:80
+        priority: 1
+```
+
+### Start network
+
+```bash
+utt -c utt.yml edge vnet1
+```
+
+or **start with systemd**:
+
+```bash
+systemctl start utt-vnet@vnet1
+```
+
+### Seed to Publish yourself
+
+```bash
+utt -c utt.yml net seed vnet1 tcp:121.78.89.11:3880
+```
+
+### Enjoy
+
+**UTT** maintains membership between peers automatically. You have done settings. So enjoy it.
+
+
+
+## Development Guide
 
 #### run test
 
@@ -42,3 +92,4 @@ make test
 ```bash
 make proto
 ```
+
