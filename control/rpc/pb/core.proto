@@ -16,6 +16,10 @@ message SetNetworkRequest {
     bool start = 2;
 }
 
+message ReloadRequest {
+    string config_file_path = 1;
+}
+
 message Result {
     bool succeed = 1;
     string message = 2;
@@ -24,4 +28,5 @@ message Result {
 service NetworkManagment {
     rpc SeedPeer(SeedPeerRequest) returns(Result) {} 
     rpc SetNetwork(SetNetworkRequest) returns(Result) {}
+    rpc ReloadConfig(ReloadRequest) returns(Result) {}
 }

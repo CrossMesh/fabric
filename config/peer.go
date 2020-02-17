@@ -5,7 +5,7 @@ import "reflect"
 // Backend contains general backend configuration.
 type Backend struct {
 	// whether encryption enabled.
-	Encrypt bool `json:"encrypt" yaml:"encrypt" default:"true"`
+	Encrypt bool `json:"encrypt" yaml:"encrypt" default:"false"`
 
 	// pre-shared key.
 	PSK string `json:"psk" yaml:"psk"`
@@ -62,7 +62,8 @@ func (c *Network) Equal(x *Network) (e bool) {
 	if c.Iface != x.Iface {
 		e = c.Iface.Equal(x.Iface)
 	}
-	return
+
+	return reflect.DeepEqual(c.Backend, x.Backend)
 }
 
 // ControlRPC contains configuration of control port.

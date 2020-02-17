@@ -6,6 +6,7 @@ import (
 	arbit "git.uestc.cn/sunmxt/utt/arbiter"
 	"git.uestc.cn/sunmxt/utt/config"
 	"git.uestc.cn/sunmxt/utt/control/rpc/pb"
+	"github.com/jinzhu/configor"
 	logging "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 )
@@ -84,6 +85,17 @@ func (n *NetworkManager) ApplyControlRPCConfig(cfg *config.ControlRPC) (err erro
 	}
 
 	return
+}
+
+func (n *NetworkManager) UpdateConfigFromFile(path string) (errs []error) {
+	cfg := &config.Daemon{}
+
+	if err := configor.Load(cfg, path); err != nil {
+		n.log.Error("failed to load configuration file: ", err)
+		return []error{err}
+	}
+
+	return n.UpdateConfig(cfg)
 }
 
 func (n *NetworkManager) UpdateConfig(cfg *config.Daemon) (errs []error) {

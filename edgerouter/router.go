@@ -51,7 +51,41 @@ func New(arbiter *arbit.Arbiter) (a *EdgeRouter, err error) {
 	if err = a.initRPCStub(); err != nil {
 		return nil, err
 	}
+	a.goCleanUp()
 	return a, nil
+}
+
+func (r *EdgeRouter) goCleanUp() {
+	r.arbiter.Go(func() {
+		<-r.arbiter.Exit() // watch exit signal.
+
+		r.lock.Lock()
+		defer r.lock.Unlock()
+
+		// terminate forwarding.
+		if r.forwardArbiter != nil {
+			r.forwardArbiter.Shutdown()
+		}
+
+		// close backend.
+		r.visitBackends(func(id backend.PeerBackendIdentity, b backend.Backend) bool {
+			b.Shutdown()
+			r.deleteBackend(id)
+			return true
+		})
+
+		// shutdown route decision.
+		if r.routeArbiter != nil {
+			r.routeArbiter.Shutdown()
+		}
+
+		// close interface.
+		if r.ifaceDevice != nil {
+			r.ifaceDevice.Close()
+		}
+
+		r.log.Info("edgerouter cleaned up.")
+	})
 }
 
 // Membership gives current membership of edge router.

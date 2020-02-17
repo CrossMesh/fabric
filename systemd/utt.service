@@ -1,0 +1,13 @@
+[Unit]
+Description=Overlay edge router daemon, designed for connecting cloud network infrastructure.
+Documentation=https://github.com/Sunmxt/utt
+After=network.target
+
+[Service]
+EnvironmentFile=-/etc/default/utt
+User=root
+ExecStart=/usr/bin/utt -c /etc/utt.yml edge $UTT_EDGE_OPTS
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

@@ -1,24 +1,33 @@
 link:
   net1:
-    mode: overlay
+    mode: ethernet
     encrypt: true
     iface:
-      name: tun2
-      mac: ea:38:ab:40:00:11
+      name: tap2
+      mac: ea:38:ab:40:00:12
       address: 10.240.3.1/24
     backends:
     - psk: 123456
       type: tcp
       params:
         bind: 0.0.0.0:3880
-        publish: 192.168.0.161:3880
+        publish: 192.168.0.161:80
         priority: 1
+        startCode: "123456"
+
+    #- psk: 123456
+    #  type: tcp
+    #  params:
+    #    bind: 0.0.0.0:3881
+    #    publish: 192.168.0.161:81
+    #    priority: 1
+    #    startCode: "123456"
 
   net2:
-    mode: overlay
+    mode: ethernet
     encrypt: true
     iface:
-      name: tun3
+      name: utun2
       mac: ea:38:ab:40:00:11
       address: 10.240.3.2/24
     backends:
@@ -28,4 +37,4 @@ link:
         bind: 0.0.0.0:3880
         publish: 192.168.0.188:3880
         priority: 1
-      
+        startCode: "123456"

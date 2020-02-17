@@ -1,0 +1,76 @@
+# This is configuration file of UTT overlay network daemon.
+#
+#   Overlay L2/L3 network router, designed for connecting cloud network infrastructure.
+#
+# for more information, see: https://github.com/Sunmxt/utt
+# 
+
+# RPC endpoint used by Control Plane.
+control:
+  # RPC network type.
+  type: unix
+  # network endpoint.
+  endpoint: /var/run/utt_control.sock
+
+# Virtual networks
+link:
+
+  vnet1: # network name
+
+    # [required] network mode. (could be: ethernet, overlay)
+    #   ethernet:
+    #     UTT works as a switch, relaying frames according to hardware address (MAC) via tunnels between network router peers.
+    #     It forms a virtual large flat layer 2 ethernet.
+    #
+    #   overlay:
+    #     UTT works as a router, relaying packets according to IP and subnet settings via tunnels between network router peers.
+    #     Multiple routers may exists within a same subnet to balance network traffic.
+    #
+    # for more details, see: https://github.com/Sunmxt/utt
+    mode: ethernet
+
+    iface: # VTEP config.
+      # [required] VTEP interface name.
+      name: tap2
+
+      # (ethernet only) VTEP Hardware address (or MAC Address)
+      mac: ea:38:ab:40:00:12
+
+      # [optional] IP CIDR assigned to VTEP.
+      address: 10.240.3.1/24
+
+      # [optional] CIDR range of whole virtual network.
+      network: 10.240.0.0/20
+
+    # Backends that forming network underlay (or Data Plane).
+    backends:
+    -
+      # pre-shared key for encryption.
+      psk: 123456
+
+      # encryption enable.
+      encrypt: false
+
+      # backend driver. only TCP supported yet.
+      type: tcp
+
+      # backend specific parameters. TCP parameters here.
+      params:
+        # listening endpoint.
+        bind: 0.0.0.0:3880
+        # publish endpoint.
+        publish: 192.168.0.161:80
+        # priority.
+        priority: 1
+
+        # packet sending timeout.
+        sendTimeout: 50
+        # TCP send buffer (in byte).
+        sendBuffer: 0
+        # TCP Keepalive period (in second).
+        keepalivePeriod: 60
+        # Timeout for establishing peer connection.
+        connectTimeout: 15
+
+        # leading bytes of connection. May be used to identify UTT underlay connection. 
+        startCode: "EA30B674"

@@ -45,7 +45,7 @@ arbiter.Shutdown() // shutdown. Arbiter will send exit signal to all goroutines 
 ### Intergrate Shutdown() with OS signals
 
 ```go
-arbiter.StopOSSignals(os.Kill, os.Interrupt) // SIGKILL and SIGINT will tigger Shutdown().
+arbiter.StopOSSignals(syscall.SIGTERM, syscall.SIGINT) // SIGTERM and SIGINT will tigger Shutdown().
 ```
 
 ### Watch a shutdown
@@ -81,7 +81,7 @@ arbiter.Join() // blocked until all goroutines and executions exited.
 #### Arbit
 
 ```go
-arbiter.Arbit() // Let SIGKILL and SIGINT tigger Shutdown() than wait.
+arbiter.Arbit() // Let SIGTERM and SIGINT tigger Shutdown() than wait.
 ```
 
 ---

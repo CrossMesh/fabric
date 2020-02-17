@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"fmt"
 
 	"git.uestc.cn/sunmxt/utt/backend"
 	cpb "git.uestc.cn/sunmxt/utt/control/rpc/pb"
@@ -71,6 +72,20 @@ func (s *controlRPCServer) SeedPeer(ctx context.Context, req *cpb.SeedPeerReques
 	}
 	if err := net.Router().GossipSeedPeer(endpoints...); err != nil {
 		return &cpb.Result{Succeed: false, Message: err.Error()}, err
+	}
+	return resultOK, nil
+}
+
+func (s *controlRPCServer) ReloadConfig(ctx context.Context, req *cpb.ReloadRequest) (*cpb.Result, error) {
+	if req == nil {
+		return resultInvalidRequest, nil
+	}
+	if len(req.ConfigFilePath) < 1 {
+		return &cpb.Result{Succeed: false, Message: "invalid request: missing config file path."}, nil
+	}
+	errs := s.UpdateConfigFromFile(req.ConfigFilePath)
+	if errs != nil {
+		return &cpb.Result{Succeed: false, Message: fmt.Sprintln(errs)}, nil
 	}
 	return resultOK, nil
 }

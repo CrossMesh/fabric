@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,11 +33,12 @@ const (
 	defaultConnectTimeout = 15000
 )
 
+// TCPBackendConfig describes TCP backend parameters.
 type TCPBackendConfig struct {
-	Bind      string      `json:"bind" yaml:"bind"`
-	Publish   string      `json:"publish" yaml:"publish"`
-	Priority  uint32      `json:"priority" yaml:"priority"`
-	StartCode interface{} `json:"startCode" yaml:"startCode"`
+	Bind      string `json:"bind" yaml:"bind"`
+	Publish   string `json:"publish" yaml:"publish"`
+	Priority  uint32 `json:"priority" yaml:"priority"`
+	StartCode string `json:"startCode" yaml:"startCode"`
 
 	SendTimeout     uint32 `json:"sendTimeout" yaml:"sendTimeout" default:"50"`
 	SendBufferSize  int    `json:"sendBuffer" yaml:"sendBuffer" default:"0"`
@@ -76,6 +78,7 @@ func (c *tcpCreator) New(arbiter *arbit.Arbiter, log *logging.Entry) (Backend, e
 	return NewTCP(arbiter, log, &c.cfg, &c.raw.PSK)
 }
 
+// TCP implements TCP backend.
 type TCP struct {
 	bind     *net.TCPAddr
 	publish  *net.TCPAddr
@@ -100,6 +103,7 @@ var (
 	ErrTCPAmbigousRole  = errors.New("ambigous tcp role")
 )
 
+// NewTCP creates TCP backend.
 func NewTCP(arbiter *arbit.Arbiter, log *logging.Entry, cfg *TCPBackendConfig, psk *string) (t *TCP, err error) {
 	if log == nil {
 		log = logging.WithField("module", "backend_tcp")
@@ -123,7 +127,7 @@ func NewTCP(arbiter *arbit.Arbiter, log *logging.Entry, cfg *TCPBackendConfig, p
 	t.Arbiter.Go(func() {
 		var err error
 
-		for arbiter.ShouldRun() {
+		for t.Arbiter.ShouldRun() {
 			if err != nil {
 				log.Info("retry in 3 second.")
 				time.Sleep(time.Second * 3)
@@ -135,13 +139,14 @@ func NewTCP(arbiter *arbit.Arbiter, log *logging.Entry, cfg *TCPBackendConfig, p
 				continue
 			}
 
-			t.serve(arbiter)
+			t.serve()
 		}
 	})
 
 	return t, nil
 }
 
+// Priority returns priority of backend.
 func (t *TCP) Priority() uint32 {
 	return t.config.Priority
 }
@@ -161,8 +166,8 @@ func (t *TCP) getConnectTimeout() time.Duration {
 	return time.Duration(getDefaultUint32(t.config.ConnectTimeout, defaultConnectTimeout)) * time.Millisecond
 }
 
-func (t *TCP) serve(arbiter *arbit.Arbiter) (err error) {
-	for arbiter.ShouldRun() {
+func (t *TCP) serve() (err error) {
+	for t.Arbiter.ShouldRun() {
 		if err != nil {
 			time.Sleep(time.Second * 5)
 		}
@@ -174,17 +179,19 @@ func (t *TCP) serve(arbiter *arbit.Arbiter) (err error) {
 		}
 		t.log.Infof("listening to %v", t.bind.String())
 
-		err = t.acceptConnection(arbiter)
+		err = t.acceptConnection()
+		t.listener.Close()
+		t.listener = nil
 	}
 	return
 }
 
-func (t *TCP) acceptConnection(arbiter *arbit.Arbiter) (err error) {
+func (t *TCP) acceptConnection() (err error) {
 	var conn net.Conn
 
 	t.log.Infof("start accepting connection.")
 
-	for arbiter.ShouldRun() {
+	for t.Arbiter.ShouldRun() {
 		if err != nil {
 			time.Sleep(time.Second * 5)
 		}
@@ -196,30 +203,30 @@ func (t *TCP) acceptConnection(arbiter *arbit.Arbiter) (err error) {
 		}
 
 		if conn, err = t.listener.Accept(); err != nil {
-			if err != nil {
-				if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
-					err = nil
-					continue
-				}
+			if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
+				err = nil
+				continue
 			}
 			t.log.Error("listener.Accept() error: ", err)
 			continue
 		}
 		connID := atomic.AddUint32(&t.connID, 1)
 
-		t.goServeConnection(arbiter, connID, conn)
+		t.goServeConnection(connID, conn)
 		conn = nil
 	}
+
+	t.log.Infof("stop accepting connection.")
 
 	return nil
 }
 
-func (t *TCP) goServeConnection(arbiter *arbit.Arbiter, connID uint32, conn net.Conn) {
+func (t *TCP) goServeConnection(connID uint32, conn net.Conn) {
 	log := t.log.WithField("conn_id", connID)
 	log.Infof("incomming connection %v from %v", connID, conn.RemoteAddr())
 
-	arbiter.Go(func() {
-		accepted, err := t.handshakeConnect(arbiter, log, connID, conn)
+	t.Arbiter.Go(func() {
+		accepted, err := t.handshakeConnect(log, connID, conn)
 		if err != nil {
 			log.Errorf("handshake error for connection %v: %v", connID, err)
 			return
@@ -233,24 +240,19 @@ func (t *TCP) goServeConnection(arbiter *arbit.Arbiter, connID uint32, conn net.
 }
 
 func (t *TCP) getStartCode(log *logging.Entry) (lead []byte) {
-	switch v := t.config.StartCode.(type) {
-	case string:
-		lead = []byte(v)
-	case []int:
-		lead = make([]byte, len(v))
-		for i := range v {
-			if v[i] > 255 || v[i] < 0 {
-				log.Warn("start code should be in range 0x00 - 0xff. skip.")
-				return nil
-			}
-		}
-	default:
-		log.Warn("unknown start code setting. skip.")
+	if t.config.StartCode == "" {
+		return
+	}
+	lead = make([]byte, hex.DecodedLen(len(t.config.StartCode)))
+	_, err := hex.Decode(lead, []byte(t.config.StartCode))
+	if err != nil {
+		log.Warnf("invalid startcode config: %v. (parse get error \"%v\")", t.config.StartCode, err)
+		return nil
 	}
 	return
 }
 
-func (t *TCP) handshakeConnect(arbiter *arbit.Arbiter, log *logging.Entry, connID uint32, adaptedConn net.Conn) (accepted bool, err error) {
+func (t *TCP) handshakeConnect(log *logging.Entry, connID uint32, adaptedConn net.Conn) (accepted bool, err error) {
 	buf := make([]byte, defaultBufferSize)
 
 	conn, isTCPConn := adaptedConn.(*net.TCPConn)
@@ -271,7 +273,7 @@ func (t *TCP) handshakeConnect(arbiter *arbit.Arbiter, log *logging.Entry, connI
 
 	var read int
 	// hello message has fixed length.
-	for arbiter.ShouldRun() && read < hello.Len() {
+	for t.Arbiter.ShouldRun() && read < hello.Len() {
 		newRead, err := conn.Read(buf[read:cap(buf)])
 		if err != nil {
 			if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
@@ -286,7 +288,7 @@ func (t *TCP) handshakeConnect(arbiter *arbit.Arbiter, log *logging.Entry, connI
 		}
 		read += newRead
 	}
-	if !arbiter.ShouldRun() {
+	if !t.Arbiter.ShouldRun() {
 		return false, nil
 	}
 	if err := hello.Decode(buf[:read]); err != nil {
@@ -359,14 +361,14 @@ func (t *TCP) handshakeConnect(arbiter *arbit.Arbiter, log *logging.Entry, connI
 			return false, nil
 		}
 	}
-	if !arbiter.ShouldRun() || err != nil {
+	if !t.Arbiter.ShouldRun() || err != nil {
 		return false, err
 	}
 
-	return t.acceptTCPLink(arbiter, log, link, connectReq)
+	return t.acceptTCPLink(log, link, connectReq)
 }
 
-func (t *TCP) acceptTCPLink(arbiter *arbit.Arbiter, log *logging.Entry, link *TCPLink, connectArg *proto.Connect) (bool, error) {
+func (t *TCP) acceptTCPLink(log *logging.Entry, link *TCPLink, connectArg *proto.Connect) (bool, error) {
 	// protocol version
 	switch connectArg.Version {
 	case proto.ConnectNoCrypt:
@@ -480,7 +482,7 @@ func (t *TCP) getLink(key string) (link *TCPLink) {
 			}
 			// Defensive code
 			init()
-			t.link.Store(key, newTCPLink(t))
+			t.link.Store(key, link)
 		} else {
 			init()
 		}
@@ -493,6 +495,10 @@ func (t *TCP) getLink(key string) (link *TCPLink) {
 }
 
 func (t *TCP) connect(addr *net.TCPAddr, publish string) (link *TCPLink, err error) {
+	if !t.Arbiter.ShouldRun() {
+		return nil, ErrOperationCanceled
+	}
+
 	key := addr.IP.To4().String() + ":" + strconv.FormatInt(int64(addr.Port), 10)
 	link = t.getLink(key)
 	if link.conn != nil {
@@ -534,7 +540,7 @@ func (t *TCP) connect(addr *net.TCPAddr, publish string) (link *TCPLink, err err
 		}
 		defer func() {
 			if err != nil {
-				link.Close()
+				link.close()
 			}
 		}()
 
@@ -686,18 +692,22 @@ func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TC
 	return true, nil
 }
 
+// Port retuens local bind port of tcp backend.
 func (t *TCP) Port() uint16 {
 	return uint16(t.bind.Port)
 }
 
+// Type returns backend type ID.
 func (t *TCP) Type() pb.PeerBackend_BackendType {
 	return pb.PeerBackend_TCP
 }
 
+// Publish returns publish endpoint.
 func (t *TCP) Publish() (id string) {
 	return t.config.Publish
 }
 
+// Shutdown closes backend.
 func (t *TCP) Shutdown() {
 	t.Arbiter.Shutdown()
 	t.Arbiter.Join()
@@ -717,6 +727,7 @@ func (t *TCP) resolve(endpoint string) (addr *net.TCPAddr, err error) {
 	return
 }
 
+// Connect trys to establish data path to peer.
 func (t *TCP) Connect(endpoint string) (l Link, err error) {
 	var (
 		addr *net.TCPAddr
@@ -731,6 +742,7 @@ func (t *TCP) Connect(endpoint string) (l Link, err error) {
 	return link, err
 }
 
+// Watch registers callback to receive packet.
 func (t *TCP) Watch(proc func(Backend, []byte, string)) error {
 	if proc != nil {
 		t.watch.Store(&proc, proc)
@@ -738,6 +750,7 @@ func (t *TCP) Watch(proc func(Backend, []byte, string)) error {
 	return nil
 }
 
+// IP returns bind IP.
 func (t *TCP) IP() net.IP {
-	return make(net.IP, 0)
+	return t.bind.IP
 }

@@ -1,11 +1,14 @@
-.PHONY: test exec bench bin/utt proto cover devtools mock env cloc dist
+.PHONY: test exec bench bin/utt proto cover devtools mock env cloc tarball rpm srpm
 
 GOMOD:=git.uestc.cn/sunmxt/utt
+
 
 PROJECT_ROOT:=$(shell pwd)
 BUILD_DIR:=build
 VERSION:=$(shell cat VERSION)
-REVISION:=$(shell git rev-parse HEAD)
+REVISION:=$(shell git rev-parse HEAD || cat REVISION)
+BUILD_OPTS_EXTRA:=#{{BUILD_EXTRA_OPTS}}#
+
 export GOPATH:=$(PROJECT_ROOT)/$(BUILD_DIR)
 export PATH:=$(PROJECT_ROOT)/bin:$(GOPATH)/bin:$(PATH)
 
@@ -42,6 +45,12 @@ mock: bin/mockery
 
 devtools: $(GOPATH)/bin/protoc-gen-go $(GOPATH)/bin/gopls $(GOPATH)/bin/goimports $(GOPATH)/bin/mockery
 
+rpm:
+	rpm/makerpm.sh rpm
+
+srpm:
+	rpm/makerpm.sh srpm
+
 proto: bin/protoc-gen-go
 	protoc -I=$(PROJECT_ROOT) --go_out=$(PROJECT_ROOT) proto/pb/core.proto
 	protoc -I=$(PROJECT_ROOT) --go_out=plugins=grpc:$(PROJECT_ROOT) control/rpc/pb/core.proto
@@ -50,15 +59,14 @@ proto: bin/protoc-gen-go
 exec:
 	$(CMD)
 
-dist:
-	rm -rf $(GOPATH)/pkg/mod
+tarball:
 	mkdir -p utt-$(VERSION)
 	echo $(REVISION) > utt-$(VERSION)/REVISION
 	go list ./... | grep -E '$(GOMOD)' | sed -E 's|$(GOMOD)||g; /^$$/d; s|/(.*)|\1|; s|/.*||g' | sort | uniq \
 		| sed -E 's|(.*)|\1|' | xargs -n 1 -I {} cp -r {} utt-$(VERSION)/{}
-	mkdir -p utt-$(VERSION)/$(BUILD_DIR)/pkg/mod
-	find $(BUILD_DIR)/pkg/mod -not -path '$(BUILD_DIR)/pkg/mod/cache' -type d -depth 1 | xargs -n 1 -I {} cp -r {} utt-$(VERSION)/{}
-	cp go.mod go.sum main.go Makefile README.md VERSION utt-$(VERSION)/
+	cp go.mod go.sum main.go README.md VERSION utt.yml utt-$(VERSION)/
+	sed -E 's|#\{\{BUILD_EXTRA_OPTS\}\}#|-mod vendor|g' Makefile > utt-$(VERSION)/Makefile
+	cd utt-$(VERSION); go mod vendor
 	tar -zvcf ./utt-$(VERSION).tar.gz utt-$(VERSION)
 	rm -rf utt-$(VERSION)
 
@@ -67,9 +75,9 @@ build/bin: bin build
 
 bin/utt: build/bin
 	@if [ "$${TYPE:=release}" = "debug" ]; then 					\
-		go build -v -gcflags='all=-N -l' -o bin/utt $(GOMOD); \
+		go build -v -gcflags='all=-N -l' $(BUILD_OPTS) $(BUILD_OPTS_EXTRA) -o bin/utt $(GOMOD); \
 	else																\
-	    go build -v -ldflags='all=-s -w' -o bin/utt $(GOMOD); \
+	    go build -v -ldflags='all=-s -w' $(BUILD_OPTS) $(BUILD_OPTS_EXTRA) -o bin/utt $(GOMOD); \
 	fi
 
 $(GOPATH)/bin/protoc-gen-go:

@@ -1,0 +1,16 @@
+[Unit]
+Description=Virtual network %I over overlay edge router UTT.
+Documentation=https://github.com/Sunmxt/utt
+After=network.target utt.service
+Requires=utt.service
+
+[Service]
+EnvironmentFile=-/etc/default/utt
+User=root
+Type=oneshot
+ExecStart=/usr/bin/utt -c /etc/utt.yml net set %i up
+ExecStop=/usr/bin/utt -c /etc/utt.yml net set %i down
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

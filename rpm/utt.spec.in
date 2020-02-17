@@ -1,0 +1,53 @@
+%define debug_package %{nil}
+
+Name:              utt
+Epoch:             1
+Version:           ${utt_version}
+Release:           1%{?dist}
+
+Summary:           Overlay network router, designed for connecting cloud network infrastructure.
+License:           MIT
+URL:               https://github.com/Sunmxt/utt
+
+Source0:           utt-%{version}.tar.gz
+Source10:          utt.service
+Source11:          utt-vnet@.service
+Source12:          utt.default
+Source20:          utt.yml
+
+BuildRequires:     golang >= 1.11.0
+BuildRequires:     make
+Requires:          iproute
+
+
+%description
+Overlay network router, designed for connecting cloud network infrastructure.
+
+%prep
+%setup -q -n utt-%{version}
+%{__cp} %{SOURCE10} %{SOURCE11} %{SOURCE12} %{SOURCE20} .
+
+%build
+%{__make}
+
+%install
+%{__install} -p -m 0755 -d %{buildroot}%{_unitdir}
+%{__install} -p -m 0755 -d %{buildroot}%{_sysconfdir}/default
+%{__install} -p -m 0755 -d %{buildroot}%{_bindir}
+
+%{__install} -p -m 0644 ./utt.service %{buildroot}%{_unitdir}/utt.service
+%{__install} -p -m 0644 ./utt-vnet@.service %{buildroot}%{_unitdir}/utt-vnet@.service
+%{__install} -m 0755 bin/utt %{buildroot}%{_bindir}/utt
+%{__install} -p -m 0644 ./utt.default %{buildroot}%{_sysconfdir}/default/utt
+%{__install} -p -m 0644 ./utt.yml %{buildroot}%{_sysconfdir}/utt.yml
+
+%files
+%{_bindir}/utt
+%{_unitdir}/*
+%{_sysconfdir}/*
+
+%preun
+%systemd_preun utt.service
+
+%postun
+%systemd_postun

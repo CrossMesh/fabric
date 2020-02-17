@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"fmt"
+
 	"git.uestc.cn/sunmxt/utt/config"
 	"github.com/jinzhu/configor"
 	log "github.com/sirupsen/logrus"
@@ -22,7 +24,7 @@ func NewApp() (a *App) {
 	}
 	a.App = &cli.App{
 		Name:  "utt",
-		Usage: "Overlay L2/L3 edge router",
+		Usage: "Overlay network router, designed for connecting cloud network infrastructure",
 		Commands: []*cli.Command{
 			newEdgeCmd(a),
 			newNetworkCmd(a),
@@ -45,4 +47,10 @@ func NewApp() (a *App) {
 		},
 	}
 	return
+}
+
+func cmdError(format string, args ...interface{}) error {
+	err := fmt.Errorf(format, args...)
+	log.Error(err)
+	return err
 }
