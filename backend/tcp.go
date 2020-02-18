@@ -540,7 +540,7 @@ func (t *TCP) connect(addr *net.TCPAddr, publish string) (link *TCPLink, err err
 		}
 		defer func() {
 			if err != nil {
-				link.close()
+				link.Close()
 			}
 		}()
 
