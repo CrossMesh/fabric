@@ -75,7 +75,7 @@ utt -c utt.yml net seed vnet1 tcp:121.78.89.11:3880
 
 ### Enjoy
 
-**UTT** maintains membership between peers automatically. You have done settings. So enjoy it.
+**UTT** maintains membership among peers automatically. You have done settings. So enjoy it.
 
 
 
