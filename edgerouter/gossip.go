@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	"git.uestc.cn/sunmxt/utt/backend"
@@ -56,7 +57,10 @@ func (r *EdgeRouter) goGossip(m *route.GossipMembership) {
 	r.routeArbiter.TickGo(func(cancel func(), deadline time.Time) {
 		term := m.NewTerm(1)
 		log.Infof("start gossip term %v.", term.ID)
-		ctx, _ := context.WithDeadline(r.routeArbiter.Context(), deadline)
+		ctx, cancel := context.WithDeadline(r.routeArbiter.Context(), deadline)
+		defer cancel()
+
+		var wg sync.WaitGroup
 
 		peerDigest := make([]string, 0, term.NumOfPeers())
 		for idx := 0; idx < term.NumOfPeers(); idx++ {
@@ -77,7 +81,11 @@ func (r *EdgeRouter) goGossip(m *route.GossipMembership) {
 			pbMsg := &pb.PeerExchange{Peer: snapshot}
 
 			// trigger backend healthy check.
-			r.goBackendHealthCheckOnce(peer)
+			wg.Add(1)
+			r.routeArbiter.Go(func() {
+				defer wg.Done()
+				r.backendHealthCheckOnce(peer)
+			})
 
 			// Exchage memberlist
 			if ab := peer.ActiveBackend(); ab == nil || ab.Type == pb.PeerBackend_UNKNOWN {
@@ -88,7 +96,10 @@ func (r *EdgeRouter) goGossip(m *route.GossipMembership) {
 				})
 			} else {
 				// Peer exchange RPC.
+				wg.Add(1)
 				r.routeArbiter.Go(func() {
+					defer wg.Done()
+
 					log, client := log.WithField("remote", peer.String()), r.RPCClient(peer)
 					remote, err := client.GossipExchange(ctx, pbMsg)
 					// A RPC failure doesn't mean death of peer.
@@ -119,6 +130,7 @@ func (r *EdgeRouter) goGossip(m *route.GossipMembership) {
 			log.Infof("gossip members: %v.", strings.Join(peerDigest, ","))
 		}
 		m.Clean(time.Now())
+		wg.Wait()
 
 	}, gossip.DefaultGossipPeriod, 1)
 }
