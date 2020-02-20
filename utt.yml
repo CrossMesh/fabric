@@ -16,6 +16,12 @@ control:
 link:
 
   vnet1: # network name
+    # region tag of peer.
+    region: cn1
+
+    # The minimum number of peer to maintain for a region.
+    # Used for automatically recovering from network partition.
+    # minRegionPeer: 2 # (default: 2)
 
     # [required] network mode. (could be: ethernet, overlay)
     #   ethernet:

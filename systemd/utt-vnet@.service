@@ -8,8 +8,8 @@ Requires=utt.service
 EnvironmentFile=-/etc/default/utt
 User=root
 Type=oneshot
-ExecStart=/usr/bin/utt -c /etc/utt.yml net set %i up
-ExecStop=/usr/bin/utt -c /etc/utt.yml net set %i down
+ExecStart=/usr/bin/utt -c /etc/utt.yml net set --retry -1 %i up
+ExecStop=/usr/bin/utt -c /etc/utt.yml net set --retry 10 %i down
 RemainAfterExit=yes
 
 [Install]

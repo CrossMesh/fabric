@@ -34,6 +34,16 @@ func newNetworkCmd(app *App) *cli.Command {
 				Action: func(ctx *cli.Context) (err error) {
 					return cmdNetworkSet(app, ctx)
 				},
+				Flags: []cli.Flag{
+					&cli.IntFlag{
+						Name:        "retry",
+						Aliases:     []string{"r"},
+						Usage:       "retry times. (-1 for unlimited)",
+						Required:    false,
+						Destination: &app.Retry,
+						DefaultText: "0",
+					},
+				},
 			},
 			{
 				Name:  "seed",

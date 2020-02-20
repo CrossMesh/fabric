@@ -8,6 +8,7 @@ import (
 	"git.uestc.cn/sunmxt/utt/control/rpc/pb"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
+	"google.golang.org/grpc"
 )
 
 func cmdNetworkSet(app *App, ctx *cli.Context) (err error) {
@@ -30,27 +31,76 @@ func cmdNetworkSet(app *App, ctx *cli.Context) (err error) {
 	default:
 		return cmdError("unknown operation \"%v\"", op)
 	}
-	conn, err := createControlClient(app.cfg.Control)
-	if err != nil {
-		return err
+
+	var (
+		conn   *grpc.ClientConn
+		result *pb.Result
+		cctx   context.Context
+		cancel context.CancelFunc
+	)
+	retry := app.Retry
+	shouldRetry := func() bool {
+		if retry == -1 {
+			return true
+		}
+		if retry > 0 {
+			retry--
+			return true
+		}
+		return false
+	}
+
+	for {
+		conn, err = createControlClient(app.cfg.Control)
+		if err != nil {
+			err = cmdError("rpc connect failure: %v", err)
+			if shouldRetry() {
+				continue
+			}
+			return err
+		}
+		break
 	}
 	client := pb.NewNetworkManagmentClient(conn)
 
 	// op
-	var result *pb.Result
-	cctx, canceled := context.WithTimeout(context.TODO(), time.Second*30)
-	defer canceled()
-	if result, err = client.SetNetwork(cctx, &req); err != nil {
-		log.Error("control RPC got error: ", err)
-		return err
-	}
-	if result == nil {
-		return cmdError("control rpc got nil result")
-	}
-	if !result.Succeed {
-		return cmdError("operation failed: %v", result.Message)
-	}
-	log.Info("operation succeeded: ", result.Message)
+	for {
+		if cancel != nil {
+			cancel()
+		}
+		if err != nil {
+			time.Sleep(time.Second * 3)
+			err = nil
+		}
+		cctx, cancel = context.WithTimeout(context.TODO(), time.Second*30)
 
-	return nil
+		if result, err = client.SetNetwork(cctx, &req); err != nil {
+			err = cmdError("control RPC got error: %v", err)
+			if shouldRetry() {
+				continue
+			}
+			break
+		}
+		if result == nil {
+			err = cmdError("control rpc got nil result")
+			if shouldRetry() {
+				continue
+			}
+			break
+		}
+		if !result.Succeed {
+			err = cmdError("operation failed: %v", result.Message)
+			if shouldRetry() {
+				continue
+			}
+			break
+		}
+		log.Info("operation succeeded: ", result.Message)
+		break
+	}
+
+	if cancel != nil {
+		cancel()
+	}
+	return err
 }
