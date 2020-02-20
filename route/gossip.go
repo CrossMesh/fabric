@@ -143,12 +143,10 @@ func (p *PeerMeta) applyPBSnapshot(tx *PeerReleaseTx, msg *pbp.Peer) {
 	newMeta := tx.IsNewVersion()
 
 	// for failure detection.
-	tx.State(int(msg.State), msg.StateVersion)
-	tx.Region(msg.Region)
-
 	if !newMeta {
 		return
 	}
+	tx.Region(msg.Region)
 
 	// apply backend.
 	backends := make([]*PeerBackend, 0, len(msg.Backend))

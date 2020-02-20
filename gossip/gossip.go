@@ -266,9 +266,10 @@ func (g *Gossiper) refreshRegion(old, new string, peer MembershipPeer) {
 	defer g.lock.Unlock()
 
 	regionPeers := g.getRegionSet(old)
+	oldRef := regionPeers[peer.GossiperStub()]
 	delete(regionPeers, peer.GossiperStub())
 	regionPeers = g.getRegionSet(new)
-	regionPeers[peer.GossiperStub()] = peer
+	regionPeers[peer.GossiperStub()] = oldRef
 }
 
 // Clean updates states of peers and clean dead ones.

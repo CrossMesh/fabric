@@ -191,8 +191,10 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 				g.New = r.newGossipPeer
 				r.membership = g
 			}
-			if g, isGossip := r.membership.(*route.GossipMembership); isGossip && g != nil {
-				g.SetMinRegionPeers(cfg.MinRegionPeer)
+			if cfg.MinRegionPeer > 0 {
+				if g, isGossip := r.membership.(*route.GossipMembership); isGossip && g != nil {
+					g.SetMinRegionPeers(cfg.MinRegionPeer)
+				}
 			}
 
 			// create route.
