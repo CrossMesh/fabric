@@ -44,7 +44,9 @@ type Network struct {
 	Iface   *Interface `json:"iface" yaml:"iface"`
 	Backend []*Backend `json:"backends" yaml:"backends"`
 	Mode    string     `json:"mode" yaml:"mode"`
-	Region  string     `json:"region" yaml:"region"`
+
+	Region        string `json:"region" yaml:"region"`
+	MinRegionPeer int    `json:"minRegionPeer" yaml:"minRegionPeer"`
 }
 
 func (c *Network) Equal(x *Network) (e bool) {
@@ -56,7 +58,7 @@ func (c *Network) Equal(x *Network) (e bool) {
 	} else if x == nil {
 		return false
 	}
-	if e = c.PSK == x.PSK && c.Mode == x.Mode && c.Region == x.Region; !e {
+	if e = c.PSK == x.PSK && c.Mode == x.Mode && c.Region == x.Region && c.MinRegionPeer == x.MinRegionPeer; !e {
 		return
 	}
 	if c.Iface != x.Iface {

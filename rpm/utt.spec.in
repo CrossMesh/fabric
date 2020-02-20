@@ -44,7 +44,8 @@ Overlay network router, designed for connecting cloud network infrastructure.
 %files
 %{_bindir}/utt
 %{_unitdir}/*
-%{_sysconfdir}/*
+%config(noreplace) %{_sysconfdir}/utt.yml
+%config(noreplace) %{_sysconfdir}/default/utt
 
 %preun
 %systemd_preun utt.service

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
 	"git.uestc.cn/sunmxt/utt/config"
 	"github.com/jinzhu/configor"
@@ -41,7 +42,16 @@ func NewApp() (a *App) {
 			},
 		},
 		Before: func(ctx *cli.Context) (err error) {
-			if err = configor.Load(a.cfg, a.ConfigFile); err != nil {
+			if a.ConfigFile == "" {
+				a.ConfigFile = "/etc/utt.yml"
+			}
+			// config file is a must.
+			if fileInfo, err := os.Stat(a.ConfigFile); err != nil || !fileInfo.Mode().IsRegular() {
+				return cmdError("invalid configuration file: %v", err)
+			}
+			if err = configor.New(&configor.Config{
+				Debug: false,
+			}).Load(a.cfg, a.ConfigFile); err != nil {
 				return cmdError("failed to load configuration: %v", err)
 			}
 			return nil

@@ -187,7 +187,7 @@ type Gossiper struct {
 	onRemove func(MembershipPeer)
 	onAppend func(MembershipPeer)
 
-	MinRegionPeers int
+	minRegionPeers int
 	SuspectTimeout time.Duration
 
 	lock     sync.RWMutex
@@ -198,10 +198,23 @@ type Gossiper struct {
 func NewGossiper() (g *Gossiper) {
 	g = &Gossiper{
 		byRegion:       make(map[string]map[*Peer]MembershipPeer),
-		MinRegionPeers: 1,
+		minRegionPeers: 2,
 		SuspectTimeout: DefaultSuspectTimeout,
 	}
 	return
+}
+
+// MinRegionPeers returns the minimum number of peers to maintain for a region.
+func (g *Gossiper) MinRegionPeers() int {
+	return g.minRegionPeers
+}
+
+// SetMinRegionPeers sets the minimum number of peers to maintain for a region.
+func (g *Gossiper) SetMinRegionPeers(n int) {
+	if n < 1 {
+		n = 1
+	}
+	g.minRegionPeers = n
 }
 
 // NewTerm creates new gossip term.
@@ -270,7 +283,7 @@ func (g *Gossiper) Clean(now time.Time) {
 			switch state {
 			case DEAD:
 				// clean dead peers.
-				if len(peers) <= g.MinRegionPeers {
+				if len(peers) <= g.minRegionPeers {
 					continue
 				}
 				// do not remove myself.
