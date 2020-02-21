@@ -9,6 +9,7 @@ import (
 	"git.uestc.cn/sunmxt/utt/mux"
 )
 
+// TCPLink maintains data path between two peer.
 type TCPLink struct {
 	muxer   mux.Muxer
 	demuxer mux.Demuxer
@@ -101,6 +102,7 @@ func (l *TCPLink) read(emit func(frame []byte) bool) (err error) {
 	return
 }
 
+// Send sends data frame.
 func (l *TCPLink) Send(frame []byte) (err error) {
 	t := l.backend
 	if t == nil {
@@ -109,13 +111,20 @@ func (l *TCPLink) Send(frame []byte) (err error) {
 
 	select {
 	case <-time.After(t.getSendTimeout()):
-		return ErrOperationCanceled
+		err = ErrOperationCanceled
+		return
 	case <-l.lock:
 		defer func() { l.lock <- struct{}{} }()
 	}
 
 	t.Arbiter.Do(func() {
-		_, err = l.muxer.Mux(frame)
+		muxer := l.muxer
+		if muxer == nil {
+			// got closed link.
+			err = ErrOperationCanceled
+			return
+		}
+		_, err = muxer.Mux(frame)
 	})
 
 	if err != nil {
@@ -130,6 +139,7 @@ func (l *TCPLink) Send(frame []byte) (err error) {
 	return
 }
 
+// InitializeAESGCM initializes AES-256-GCM muxer and demuxer.
 func (l *TCPLink) InitializeAESGCM(key []byte, nonce []byte) (err error) {
 	if l.crypt, err = aes.NewCipher(key[:]); err != nil {
 		return err
@@ -143,6 +153,7 @@ func (l *TCPLink) InitializeAESGCM(key []byte, nonce []byte) (err error) {
 	return nil
 }
 
+// InitializeNoCryption initializes normal muxer and demuxer without encryption.
 func (l *TCPLink) InitializeNoCryption() {
 	l.muxer, l.demuxer = mux.NewStreamMuxer(l.conn), mux.NewStreamDemuxer()
 }
@@ -156,6 +167,7 @@ func (l *TCPLink) close() (err error) {
 	return
 }
 
+// Close terminates link.
 func (l *TCPLink) Close() (err error) {
 	<-l.lock
 	defer func() { l.lock <- struct{}{} }()

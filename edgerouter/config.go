@@ -80,18 +80,20 @@ func (r *EdgeRouter) updateBackends(cfgs []*config.Backend) (err error) {
 	return
 }
 
-func (r *EdgeRouter) initializeVTEP(mode string, cfg *config.Interface) (succeed bool, err error) {
+func (r *EdgeRouter) initializeVTEP(mode string) (err error) {
+	cfg := r.cfg.Iface
 	if cfg == nil {
-		return false, nil
+		err = errors.New("empty interface configration")
+		r.log.Warn(err)
+		return err
 	}
+
+	r.lock.Lock()
+	defer r.lock.Unlock()
+
 	if r.ifaceDevice != nil {
-		return true, nil
+		return nil
 	}
-	defer func() {
-		if err != nil && r.ifaceDevice != nil {
-			r.ifaceDevice.Close()
-		}
-	}()
 
 	var (
 		ip           net.IP
@@ -102,18 +104,18 @@ func (r *EdgeRouter) initializeVTEP(mode string, cfg *config.Interface) (succeed
 
 	if cfg.Subnet != "" {
 		if ip, subnet, err = net.ParseCIDR(cfg.Subnet); err != nil {
-			return false, err
+			return err
 		}
 		subnet.IP = ip
 		if cfg.Network != "" && mode == "overlay" {
 			if _, vnet, err = net.ParseCIDR(cfg.Network); err != nil {
-				return false, err
+				return err
 			}
 		}
 	}
 	if cfg.MAC != "" {
 		if hwAddr, err = net.ParseMAC(cfg.MAC); err != nil {
-			return false, err
+			return err
 		}
 	}
 
@@ -125,7 +127,7 @@ func (r *EdgeRouter) initializeVTEP(mode string, cfg *config.Interface) (succeed
 		deviceConfig.DeviceType = water.TUN
 
 	default:
-		return false, ErrUnknownMode
+		return ErrUnknownMode
 	}
 
 	setupTuntapPlatformParameters(cfg, &deviceConfig)
@@ -133,12 +135,12 @@ func (r *EdgeRouter) initializeVTEP(mode string, cfg *config.Interface) (succeed
 	// create tuntap.
 	if r.ifaceDevice, err = water.New(deviceConfig); err != nil {
 		r.log.Error("interface create failure: ", err)
-		return false, err
+		return err
 	}
 
 	err = upConfigVTEP(mode, r.ifaceDevice.Name(), hwAddr, subnet, vnet)
 
-	return err == nil, err
+	return err
 }
 
 func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
@@ -173,7 +175,6 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 				r.forwardArbiter.Shutdown()
 				r.routeArbiter.Join()
 				r.forwardArbiter.Join()
-				r.ifaceDevice.Close()
 				r.routeArbiter, r.forwardArbiter, r.route, r.peerSelf, r.ifaceDevice, r.membership = nil, nil, nil, nil, nil, nil
 			}
 			if r.routeArbiter == nil {
@@ -190,6 +191,12 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 				g.New = r.newGossipPeer
 				r.membership = g
 			}
+			if cfg.MinRegionPeer > 0 {
+				if g, isGossip := r.membership.(*route.GossipMembership); isGossip && g != nil {
+					g.SetMinRegionPeers(cfg.MinRegionPeer)
+				}
+			}
+
 			// create route.
 			if r.route == nil {
 				log.Info("starting new forwarding...")
@@ -227,12 +234,6 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 				})
 
 			}
-			// create tuntap.
-			if succeed, err = r.initializeVTEP(cfg.Mode, cfg.Iface); err != nil {
-				log.Error("interface create failure: ", err)
-				succeed = false
-			}
-
 			// update backends.
 			if err = r.updateBackends(cfg.Backend); err != nil {
 				log.Error("update backend failure: ", err)
@@ -246,16 +247,17 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 		}
 
 		if succeed {
+			r.cfg = cfg
+
 			if rebootRoute {
 				r.goMembership()
 			}
 			if rebootForward {
 				// start forward.
-				r.forwardArbiter.Go(func() { r.forwardVTEP() })
+				r.goForwardVTEP()
 			}
 
 			r.log.Info("new config applied.")
-			r.cfg = cfg
 		}
 	})
 }

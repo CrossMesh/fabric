@@ -4,6 +4,10 @@
 
 Overlay L2/L3 network router, designed for connecting cloud network infrastructure.
 
+**UTT** focuses on flexibility, simplicity, security and performance, and could be used to connect existing resources such as bare-metals, VMs, containers, virtual switches, VPC, etc.
+
+
+
 ### Features
 
 - Gossip-based membership and failure detection. Completely decentralized.
@@ -12,8 +16,8 @@ Overlay L2/L3 network router, designed for connecting cloud network infrastructu
 #### Planning
 
 - UDP Backend.
+- Kubernetes CNI.
 - Dynamic NAT Traversal.
-
 - Multiples virtual networks over one set of peers (like VxLAN).
 
 ---
@@ -75,7 +79,7 @@ utt -c utt.yml net seed vnet1 tcp:121.78.89.11:3880
 
 ### Enjoy
 
-**UTT** maintains membership between peers automatically. You have done settings. So enjoy it.
+**UTT** maintains membership among peers automatically. You have done settings. So enjoy it.
 
 
 

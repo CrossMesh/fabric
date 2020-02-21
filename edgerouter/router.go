@@ -62,9 +62,14 @@ func (r *EdgeRouter) goCleanUp() {
 		r.lock.Lock()
 		defer r.lock.Unlock()
 
+		fa, ra := r.forwardArbiter, r.routeArbiter
+
 		// terminate forwarding.
-		if r.forwardArbiter != nil {
-			r.forwardArbiter.Shutdown()
+		if fa != nil {
+			fa.Shutdown()
+		}
+		if ra != nil {
+			ra.Shutdown()
 		}
 
 		// close backend.
@@ -73,15 +78,11 @@ func (r *EdgeRouter) goCleanUp() {
 			r.deleteBackend(id)
 			return true
 		})
-
-		// shutdown route decision.
-		if r.routeArbiter != nil {
-			r.routeArbiter.Shutdown()
+		if ra != nil {
+			ra.Join()
 		}
-
-		// close interface.
-		if r.ifaceDevice != nil {
-			r.ifaceDevice.Close()
+		if fa != nil {
+			fa.Join()
 		}
 
 		r.log.Info("edgerouter cleaned up.")

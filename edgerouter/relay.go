@@ -3,7 +3,9 @@ package edgerouter
 import (
 	"errors"
 	"io"
+	"os"
 	"sync"
+	"time"
 
 	"git.uestc.cn/sunmxt/utt/backend"
 	"git.uestc.cn/sunmxt/utt/proto"
@@ -73,45 +75,71 @@ func (r *EdgeRouter) forwardVTEPPeer(frame []byte, peer route.MembershipPeer) er
 	return r.forwardVTEPBackend(frame, desp)
 }
 
-func (r *EdgeRouter) forwardVTEP() {
+func (r *EdgeRouter) goForwardVTEP() {
 	buf := make([]byte, 2048)
-	for r.arbiter.ShouldRun() {
-		// encode frame.
-		readBuf := buf[proto.ProtocolMessageHeaderSize:]
-		read, err := r.ifaceDevice.Read(readBuf)
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			r.log.Error("read link failure: ", err)
-			continue
-		}
-		if read < 1 {
-			continue
-		}
-		peers := r.route.Forward(readBuf)
-		if len(peers) < 1 {
-			continue
-		}
-		proto.PackProtocolMessageHeader(buf[:proto.ProtocolMessageHeaderSize], proto.MsgTypeRawFrame)
-		packed := buf[:proto.ProtocolMessageHeaderSize+read]
-		if len(peers) > 1 {
-			// burst.
-			var wg sync.WaitGroup
 
-			for idx := range peers {
-				wg.Add(1)
-				go func() {
-					r.forwardVTEPPeer(packed, peers[idx])
-					wg.Done()
-				}()
-			}
-			wg.Wait()
-			continue
-		}
+	var err error
 
-		if err = r.forwardVTEPPeer(packed, peers[0]); err != nil && err != backend.ErrConnectionClosed {
-			// disable unhealty backend.
+	r.forwardArbiter.Go(func() {
+		<-r.forwardArbiter.Exit()
+		if f := r.ifaceDevice; f != nil {
+			f.Close()
 		}
-	}
+	})
+
+	r.forwardArbiter.Go(func() {
+		for r.forwardArbiter.ShouldRun() {
+			if err != nil {
+				time.Sleep(time.Second * 5)
+			}
+			err = nil
+
+			if err := r.initializeVTEP(r.Mode()); err != nil {
+				continue
+			}
+
+			for r.forwardArbiter.ShouldRun() {
+				// encode frame.
+				readBuf := buf[proto.ProtocolMessageHeaderSize:]
+				read, err := r.ifaceDevice.Read(readBuf)
+				if err != nil {
+					if err == io.EOF || err == os.ErrClosed {
+						break
+					}
+					r.log.Error("read link failure: ", err)
+					r.ifaceDevice.Close()
+					r.ifaceDevice = nil
+					break
+				}
+				if read < 1 {
+					continue
+				}
+				peers := r.route.Forward(readBuf)
+				if len(peers) < 1 {
+					continue
+				}
+				proto.PackProtocolMessageHeader(buf[:proto.ProtocolMessageHeaderSize], proto.MsgTypeRawFrame)
+				packed := buf[:proto.ProtocolMessageHeaderSize+read]
+				if len(peers) > 1 {
+					// burst.
+					var wg sync.WaitGroup
+
+					for idx := range peers {
+						wg.Add(1)
+						go func(idx int) {
+							r.forwardVTEPPeer(packed, peers[idx])
+							wg.Done()
+						}(idx)
+					}
+					wg.Wait()
+					continue
+				}
+
+				if err = r.forwardVTEPPeer(packed, peers[0]); err != nil && err != backend.ErrConnectionClosed {
+					// disable unhealty backend.
+				}
+			}
+		}
+	})
+
 }

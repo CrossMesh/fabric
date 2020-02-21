@@ -9,7 +9,7 @@ import (
 
 func TestGossip(t *testing.T) {
 	g := NewGossiper()
-	g.MinRegionPeers = 1
+	g.SetMinRegionPeers(1)
 	peers := []*Peer{
 		{state: ALIVE, stateVersion: 1, region: "dc1", lastStateUpdate: time.Now()},
 		{state: ALIVE, stateVersion: 2, region: "dc1", lastStateUpdate: time.Now()},

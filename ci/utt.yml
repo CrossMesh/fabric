@@ -11,7 +11,7 @@ link:
       type: tcp
       params:
         bind: 0.0.0.0:3880
-        publish: 192.168.0.161:80
+        publish: 192.168.0.161:3880
         priority: 1
         startCode: "123456"
 

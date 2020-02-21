@@ -35,7 +35,7 @@ prepare_manifests() {
     mkdir -p "$rpm_build_root/SOURCES"
 
     rm -f "$rpm_build_root/SOURCES/utt-${VERSION}.tar.gz"
-    make tarball
+    make tarball || return 1
     cp utt-${VERSION}.tar.gz "$rpm_build_root/SOURCES/utt-${VERSION}.tar.gz"
     generate_rpm_spec > "$rpm_build_root/SPECS/utt.spec"
     cp -f "$project_source_dir/systemd/utt.default" "$rpm_build_root/SOURCES/utt.default"

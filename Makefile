@@ -2,12 +2,15 @@
 
 GOMOD:=git.uestc.cn/sunmxt/utt
 
-
 PROJECT_ROOT:=$(shell pwd)
 BUILD_DIR:=build
 VERSION:=$(shell cat VERSION)
 REVISION:=$(shell git rev-parse HEAD || cat REVISION)
-BUILD_OPTS_EXTRA:=#{{BUILD_EXTRA_OPTS}}#
+
+LDFLAGS:=
+GCFLAGS:= -trimpath $(PROJECT_ROOT)
+BUILD_OPTS+= -asmflags="all=-trimpath '$(PROJECT_ROOT)'"
+BUILD_OPTS+= #{{BUILD_EXTRA_OPTS}}#
 
 export GOPATH:=$(PROJECT_ROOT)/$(BUILD_DIR)
 export PATH:=$(PROJECT_ROOT)/bin:$(GOPATH)/bin:$(PATH)
@@ -41,7 +44,6 @@ cloc:
 	cloc . --exclude-dir=build,bin,ci,mocks
 
 mock: bin/mockery
-	bin/mockery -name=Backend -dir=./backend -output=./backend/mocks -outpkg=mocks
 
 devtools: $(GOPATH)/bin/protoc-gen-go $(GOPATH)/bin/gopls $(GOPATH)/bin/goimports $(GOPATH)/bin/mockery
 
@@ -75,9 +77,9 @@ build/bin: bin build
 
 bin/utt: build/bin
 	@if [ "$${TYPE:=release}" = "debug" ]; then 					\
-		go build -v -gcflags='all=-N -l' $(BUILD_OPTS) $(BUILD_OPTS_EXTRA) -o bin/utt $(GOMOD); \
+		go build -o bin/utt -v -gcflags='all=-N -l $(GCFLAGS)' -ldflags='all=$(LDFLAGS)' $(BUILD_OPTS)  $(GOMOD); \
 	else																\
-	    go build -v -ldflags='all=-s -w' $(BUILD_OPTS) $(BUILD_OPTS_EXTRA) -o bin/utt $(GOMOD); \
+	    go build  -o bin/utt -v -gcflags='all=$(GCFLAGS)' -ldflags='all=-s -w $(LDFLAGS)' $(BUILD_OPTS) $(GOMOD); \
 	fi
 
 $(GOPATH)/bin/protoc-gen-go:

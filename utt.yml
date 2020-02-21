@@ -16,6 +16,12 @@ control:
 link:
 
   vnet1: # network name
+    # region tag of peer.
+    region: cn1
+
+    # The minimum number of peer to maintain for a region.
+    # Used for automatically recovering from network partition.
+    # minRegionPeer: 2 # (default: 2)
 
     # [required] network mode. (could be: ethernet, overlay)
     #   ethernet:
@@ -34,7 +40,7 @@ link:
       name: tap2
 
       # (ethernet only) VTEP Hardware address (or MAC Address)
-      mac: ea:38:ab:40:00:12
+      mac: 12:38:ab:40:00:12
 
       # [optional] IP CIDR assigned to VTEP.
       address: 10.240.3.1/24

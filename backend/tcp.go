@@ -319,7 +319,6 @@ func (t *TCP) handshakeConnect(log *logging.Entry, connID uint32, adaptedConn ne
 	}
 	buf = append(buf, hello.HMAC[:]...)
 	key := sha256.Sum256(buf)
-	link.conn = conn
 	if err = link.InitializeAESGCM(key[:], hello.IV[:]); err != nil {
 		log.Error("cipher initializion failure: ", err)
 		return false, err
@@ -396,7 +395,7 @@ func (t *TCP) acceptTCPLink(log *logging.Entry, link *TCPLink, connectArg *proto
 	leftLink := t.getLink(key)
 	link.publish = key
 	link.remote = addr
-	if leftLink.Active() || !leftLink.assign(link) {
+	if !leftLink.assign(link) {
 		log.Warnf("link to foreign peer \"%v\" exists. closing...", key)
 		return false, nil
 	}
@@ -409,9 +408,8 @@ func (t *TCP) acceptTCPLink(log *logging.Entry, link *TCPLink, connectArg *proto
 
 func (t *TCP) goTCPLinkDaemon(log *logging.Entry, key string, link *TCPLink) {
 	t.Arbiter.Go(func() {
-		defer func() {
-			link.Close()
-		}()
+		defer link.Close()
+
 		var err error
 
 		log.Infof("link to foreign peer \"%v\" established.", key)
@@ -494,83 +492,71 @@ func (t *TCP) getLink(key string) (link *TCPLink) {
 	return
 }
 
-func (t *TCP) connect(addr *net.TCPAddr, publish string) (link *TCPLink, err error) {
+func (t *TCP) connect(addr *net.TCPAddr, publish string) (l *TCPLink, err error) {
 	if !t.Arbiter.ShouldRun() {
 		return nil, ErrOperationCanceled
 	}
 
+	// get link.
 	key := addr.IP.To4().String() + ":" + strconv.FormatInt(int64(addr.Port), 10)
-	link = t.getLink(key)
+	link := t.getLink(key)
 	if link.conn != nil {
+		// fast path: link is valid.
 		return link, nil
 	}
 
-	// dial
-	done := make(chan struct{}, 1)
-	t.Arbiter.Go(func() {
-		defer func() { done <- struct{}{} }()
-
-		<-link.lock
-		defer func() { link.lock <- struct{}{} }()
-		if link.conn != nil {
-			return
-		}
-
-		t.log.Info("connecting to ", addr.String())
-
-		dialer, connectTimeout := net.Dialer{}, time.Duration(0)
-		if connectTimeoutSeconds := t.config.ConnectTimeout; connectTimeoutSeconds > 0 {
-			connectTimeout = time.Second * time.Duration(connectTimeoutSeconds)
-		} else {
-			connectTimeout = time.Duration(defaultConnectTimeout) * time.Second
-		}
-		deadline := time.Now().Add(connectTimeout)
-		dialer.Deadline = deadline
-
-		if conn, ierr := dialer.Dial("tcp", addr.String()); ierr != nil {
-			t.log.Error(ierr)
-			err = ierr
-			return
-		} else if tcpConn, isTCP := conn.(*net.TCPConn); !isTCP {
-			t.log.Error("got non-tcp connection")
-			err = ErrNonTCPConnection
-			return
-		} else {
-			link.conn = tcpConn
-		}
-		defer func() {
-			if err != nil {
-				link.close()
-			}
-		}()
-
-		connID := atomic.AddUint32(&t.connID, 1)
-		log := t.log.WithField("conn_id", connID)
-
-		// handshake
-		ctx, canceled := context.WithDeadline(context.TODO(), deadline)
-		defer canceled()
-		var accepted bool
-		if accepted, err = t.connectHandshake(ctx, log, link); err != nil {
-			log.Error("handshake failure: ", err)
-			return
-		}
-		if !accepted {
-			log.Error("denied by remote peer.")
-			link.Close()
-			return
-		}
-
-		t.goTCPLinkDaemon(log, key, link)
-	})
-
+	ctx, cancel := context.WithTimeout(t.Arbiter.Context(), t.getConnectTimeout())
+	defer cancel()
 	select {
-	case <-done:
-	case <-time.After(t.getConnectTimeout()):
+	case <-link.lock:
+		// acquire lock for connecting operation.
+		defer func() { link.lock <- struct{}{} }()
+
+	case <-ctx.Done():
 		return nil, ErrOperationCanceled
 	}
 
-	return
+	if link.conn != nil {
+		// fast path: link is valid.
+		return link, nil
+	}
+
+	t.log.Info("connecting to ", addr.String())
+
+	// dial
+	dialer := net.Dialer{}
+	if conn, ierr := dialer.DialContext(ctx, "tcp", addr.String()); ierr != nil {
+		if t.Arbiter.ShouldRun() {
+			t.log.Error(ierr)
+		}
+		return nil, ierr
+
+	} else if tcpConn, isTCP := conn.(*net.TCPConn); !isTCP {
+		t.log.Error("got non-tcp connection")
+		return nil, ErrNonTCPConnection
+
+	} else {
+		link.conn = tcpConn
+	}
+
+	connID := atomic.AddUint32(&t.connID, 1)
+	log := t.log.WithField("conn_id", connID)
+	// handshake
+	var accepted bool
+	if accepted, err = t.connectHandshake(ctx, log, link); err != nil {
+		log.Error("handshake failure: ", err)
+		link.close()
+		return nil, err
+	}
+	if !accepted {
+		log.Error("denied by remote peer.")
+		link.close()
+		return nil, err
+	}
+
+	t.goTCPLinkDaemon(log, key, link)
+
+	return link, nil
 }
 
 func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TCPLink) (accepted bool, err error) {
