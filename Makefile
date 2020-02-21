@@ -44,7 +44,6 @@ cloc:
 	cloc . --exclude-dir=build,bin,ci,mocks
 
 mock: bin/mockery
-	bin/mockery -name=Backend -dir=./backend -output=./backend/mocks -outpkg=mocks
 
 devtools: $(GOPATH)/bin/protoc-gen-go $(GOPATH)/bin/gopls $(GOPATH)/bin/goimports $(GOPATH)/bin/mockery
 

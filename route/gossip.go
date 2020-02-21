@@ -2,6 +2,7 @@ package route
 
 import (
 	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 	"time"
@@ -60,6 +61,14 @@ type PeerBackend struct {
 	Priority uint32
 }
 
+func (b *PeerBackend) String() string {
+	s := "enabled"
+	if b.Disabled {
+		s = "disabled"
+	}
+	return s + ":" + b.PeerBackendIdentity.String()
+}
+
 type PeerMeta struct {
 	gossip.Peer
 
@@ -113,7 +122,7 @@ func (p *PeerMeta) updateActiveBackend() {
 }
 
 func (p *PeerMeta) String() string {
-	return p.Peer.String() + "," + strconv.FormatUint(p.version, 10)
+	return p.Peer.String() + "," + strconv.FormatUint(p.version, 10) + "," + fmt.Sprint(p.Backends())
 }
 
 func (p *PeerMeta) PBSnapshot() (msgPeer *pbp.Peer, err error) {
@@ -139,13 +148,7 @@ func (p *PeerMeta) PBSnapshot() (msgPeer *pbp.Peer, err error) {
 }
 
 func (p *PeerMeta) applyPBSnapshot(tx *PeerReleaseTx, msg *pbp.Peer) {
-	tx.Version(msg.Version)
-	newMeta := tx.IsNewVersion()
-
-	// for failure detection.
-	if !newMeta {
-		return
-	}
+	tx.State(int(msg.State), msg.StateVersion)
 	tx.Region(msg.Region)
 
 	// apply backend.
@@ -172,6 +175,19 @@ func (p *PeerMeta) ApplyPBSnapshot(msg *pbp.Peer) (err error) {
 		return nil
 	}
 	p.Tx(func(bp MembershipPeer, tx *PeerReleaseTx) bool {
+		if msg.Version == 0 {
+			if len(p.Backends()) > 0 {
+				// won't accept new initial message.
+				return false
+			}
+		} else {
+			tx.Version(msg.Version)
+			if !tx.IsNewVersion() {
+				// new version prefered.
+				return false
+			}
+		}
+
 		p.applyPBSnapshot(tx, msg)
 		return true
 	})

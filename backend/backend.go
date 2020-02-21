@@ -45,6 +45,10 @@ type PeerBackendIdentity struct {
 	Endpoint string
 }
 
+func (p *PeerBackendIdentity) String() string {
+	return p.Type.String() + ":" + p.Endpoint
+}
+
 type BackendCreator interface {
 	Type() pb.PeerBackend_BackendType
 	Priority() uint32

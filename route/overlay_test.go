@@ -65,7 +65,7 @@ func TestL3Router(t *testing.T) {
 		tx.Backend(&PeerBackend{
 			PeerBackendIdentity: backend.PeerBackendIdentity{
 				Type:     pb.PeerBackend_TCP,
-				Endpoint: "172.17.0.1",
+				Endpoint: "172.17.0.1:3080",
 			},
 			Disabled: false,
 			Priority: 0,
@@ -76,7 +76,7 @@ func TestL3Router(t *testing.T) {
 		tx.Backend(&PeerBackend{
 			PeerBackendIdentity: backend.PeerBackendIdentity{
 				Type:     pb.PeerBackend_TCP,
-				Endpoint: "172.17.0.2",
+				Endpoint: "172.17.0.2:3080",
 			},
 			Disabled: false,
 			Priority: 0,
@@ -87,7 +87,7 @@ func TestL3Router(t *testing.T) {
 		tx.Backend(&PeerBackend{
 			PeerBackendIdentity: backend.PeerBackendIdentity{
 				Type:     pb.PeerBackend_TCP,
-				Endpoint: "172.17.0.3",
+				Endpoint: "172.17.0.3:3080",
 			},
 			Disabled: false,
 			Priority: 0,
@@ -98,7 +98,7 @@ func TestL3Router(t *testing.T) {
 		tx.Backend(&PeerBackend{
 			PeerBackendIdentity: backend.PeerBackendIdentity{
 				Type:     pb.PeerBackend_TCP,
-				Endpoint: "172.17.0.4",
+				Endpoint: "172.17.0.4:3080",
 			},
 			Disabled: false,
 			Priority: 0,

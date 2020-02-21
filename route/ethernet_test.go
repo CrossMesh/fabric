@@ -96,7 +96,7 @@ func TestL2Router(t *testing.T) {
 		tx.Backend(&PeerBackend{
 			PeerBackendIdentity: backend.PeerBackendIdentity{
 				Type:     pb.PeerBackend_TCP,
-				Endpoint: "172.17.0.1",
+				Endpoint: "172.17.0.1:3080",
 			},
 			Disabled: false,
 			Priority: 0,
@@ -107,7 +107,7 @@ func TestL2Router(t *testing.T) {
 		tx.Backend(&PeerBackend{
 			PeerBackendIdentity: backend.PeerBackendIdentity{
 				Type:     pb.PeerBackend_TCP,
-				Endpoint: "172.17.0.2",
+				Endpoint: "172.17.0.2:3080",
 			},
 			Disabled: false,
 			Priority: 0,
@@ -118,7 +118,7 @@ func TestL2Router(t *testing.T) {
 		tx.Backend(&PeerBackend{
 			PeerBackendIdentity: backend.PeerBackendIdentity{
 				Type:     pb.PeerBackend_TCP,
-				Endpoint: "172.17.0.3",
+				Endpoint: "172.17.0.3:3080",
 			},
 			Disabled: false,
 			Priority: 0,
@@ -200,6 +200,210 @@ func TestL2Router(t *testing.T) {
 			ps = r.Forward(frames[3])
 			assert.NotNil(t, ps)
 			assert.Equal(t, 1, len(ps), "should boardcast, not ", ps)
+		})
+	})
+
+	go arbiter.Shutdown()
+	arbiter.Join()
+}
+
+type MockGossipMembership struct {
+	*GossipMembership
+
+	appendCount int
+	removeCount int
+}
+
+func (m *MockGossipMembership) OnAppend(callback func(MembershipPeer)) {
+	m.GossipMembership.OnAppend(func(v MembershipPeer) {
+		m.appendCount++
+		callback(v)
+	})
+}
+
+func (m *MockGossipMembership) OnRemove(callback func(MembershipPeer)) {
+	m.GossipMembership.OnRemove(func(v MembershipPeer) {
+		m.removeCount++
+		callback(v)
+	})
+}
+
+func TestL2MessageGossip(t *testing.T) {
+	arbiter := arbit.New(nil)
+
+	seed := func(g *MockGossipMembership, ep backend.PeerBackendIdentity) {
+		p := &L2Peer{}
+		assert.True(t, p.Tx(func(p MembershipPeer, tx *PeerReleaseTx) bool {
+			tx.Backend(&PeerBackend{
+				PeerBackendIdentity: ep,
+				Disabled:            false,
+				Priority:            0,
+			})
+			return true
+		}))
+		p.Reset()
+		g.Discover(p)
+	}
+	new := func(msg *pb.Peer) gossip.MembershipPeer {
+		p := &L2Peer{}
+		p.ApplyPBSnapshot(msg)
+		return p
+	}
+
+	// three peer.
+	g := []*MockGossipMembership{
+		{GossipMembership: NewGossipMembership()},
+		{GossipMembership: NewGossipMembership()},
+		{GossipMembership: NewGossipMembership()},
+	}
+	g[0].New, g[1].New, g[2].New = new, new, new
+	r1 := NewL2Router(arbiter, g[0], nil, time.Second*10)
+	r2 := NewL2Router(arbiter, g[1], nil, time.Second*10)
+	r3 := NewL2Router(arbiter, g[2], nil, time.Second*10)
+	r3.HotPeers(time.Second * 30)
+	self := []*L2Peer{
+		{PeerMeta: PeerMeta{Self: true}},
+		{PeerMeta: PeerMeta{Self: true}},
+		{PeerMeta: PeerMeta{Self: true}},
+	}
+	assert.True(t, true, self[0].Tx(func(p MembershipPeer, tx *PeerReleaseTx) bool {
+		tx.Backend(&PeerBackend{
+			PeerBackendIdentity: backend.PeerBackendIdentity{
+				Type:     pb.PeerBackend_TCP,
+				Endpoint: "172.17.0.1:3080",
+			},
+			Disabled: false,
+			Priority: 0,
+		})
+		tx.Region("dc1")
+		return true
+	}))
+	assert.True(t, true, self[1].Tx(func(p MembershipPeer, tx *PeerReleaseTx) bool {
+		tx.Backend(&PeerBackend{
+			PeerBackendIdentity: backend.PeerBackendIdentity{
+				Type:     pb.PeerBackend_TCP,
+				Endpoint: "172.17.0.2:3080",
+			},
+			Disabled: false,
+			Priority: 0,
+		})
+		tx.Region("dc2")
+		return true
+	}))
+	assert.True(t, true, self[2].Tx(func(p MembershipPeer, tx *PeerReleaseTx) bool {
+		tx.Backend(&PeerBackend{
+			PeerBackendIdentity: backend.PeerBackendIdentity{
+				Type:     pb.PeerBackend_TCP,
+				Endpoint: "172.17.0.3:3080",
+			},
+			Disabled: false,
+			Priority: 0,
+		})
+		tx.Region("dc3")
+		return true
+	}))
+	g[0].Discover(self[0])
+	g[1].Discover(self[1])
+	g[2].Discover(self[2])
+	g[0].appendCount, g[1].appendCount, g[2].appendCount = 0, 0, 0
+
+	// seed node 1 with node 2
+
+	t.Run("case1", func(t *testing.T) {
+		seed(g[0], backend.PeerBackendIdentity{Type: pb.PeerBackend_TCP, Endpoint: "172.17.0.2:3080"})
+		// [case 1] two peer. {{
+		assert.Equal(t, 1, g[0].appendCount)
+		// node 1 send msg to node 2
+		msg, err := g[0].PBSnapshot()
+		assert.NoError(t, err)
+		assert.Equal(t, 2, len(msg))         // message should contain two peer.
+		g[1].ApplyPBSnapshot(r2, msg)        // node 2 apply node 1 message.
+		assert.Equal(t, 1, g[1].appendCount) // 1 new peer.
+		g[1].appendCount = 0
+		g[1].ApplyPBSnapshot(r2, msg)        // duplicated message should be ignored.
+		assert.Equal(t, 0, g[1].appendCount) // 0 new peer.
+		// node 2 send msg to node 1
+		msg, err = g[1].PBSnapshot()
+		assert.NoError(t, err)
+		assert.Equal(t, 2, len(msg)) // message should contain two peer.
+		g[0].appendCount = 0
+		g[0].ApplyPBSnapshot(r1, msg)        // node 1 apply node 2 message.
+		assert.Equal(t, 0, g[0].appendCount) // 0 new peer.
+		g[0].appendCount = 0
+		g[0].ApplyPBSnapshot(r1, msg)        // duplicated message should be ignored.
+		assert.Equal(t, 0, g[1].appendCount) // 0 new peer.
+		//}}
+		// log
+		t.Log("node 1 has:")
+		g[0].VisitPeer(func(region string, p gossip.MembershipPeer) bool {
+			t.Log(p)
+			return true
+		})
+		t.Log("node 2 has:")
+		g[1].VisitPeer(func(region string, p gossip.MembershipPeer) bool {
+			t.Log(p)
+			return true
+		})
+	})
+
+	t.Run("case2", func(t *testing.T) {
+		// [case 2]: the third peer join. {{
+		seed(g[0], backend.PeerBackendIdentity{Type: pb.PeerBackend_TCP, Endpoint: "172.17.0.3:3080"})
+		msg, err := g[0].PBSnapshot()
+		assert.NoError(t, err)
+		assert.Equal(t, 3, len(msg)) // message should contain two peer.
+		g[2].appendCount = 0
+		g[2].ApplyPBSnapshot(r3, msg)        // node 1 sends message to node 3.
+		assert.Equal(t, 2, g[2].appendCount) // 2 new peer.
+		g[2].appendCount = 0
+		g[2].ApplyPBSnapshot(r3, msg)        // duplicated message should be ignored.
+		assert.Equal(t, 0, g[2].appendCount) // 0 new peer.
+
+		msg, err = g[2].PBSnapshot()
+		assert.NoError(t, err)
+		assert.Equal(t, 3, len(msg)) // message should contain 3 peer.
+		g[0].appendCount = 0
+		g[0].ApplyPBSnapshot(r1, msg)        // node 3 sends message to node 1.
+		assert.Equal(t, 0, g[0].appendCount) // 0 new peer.
+		g[0].appendCount = 0
+		g[0].ApplyPBSnapshot(r1, msg)        // duplicated message should be ignored.
+		assert.Equal(t, 0, g[0].appendCount) // 0 new peer.
+
+		msg, err = g[0].PBSnapshot()
+		assert.NoError(t, err)
+		assert.Equal(t, 3, len(msg)) // message should contain 3 peer.
+		g[1].appendCount = 0
+		g[1].ApplyPBSnapshot(r2, msg)        // node 1 sends message to node 2.
+		assert.Equal(t, 1, g[1].appendCount) // 1 new peer.
+		g[1].appendCount = 0
+		g[1].ApplyPBSnapshot(r2, msg)        // duplicated message should be ignored.
+		assert.Equal(t, 0, g[1].appendCount) // 0 new peer.
+
+		msg, err = g[1].PBSnapshot()
+		assert.NoError(t, err)
+		assert.Equal(t, 3, len(msg)) // message should contain 3 peer.
+		g[2].appendCount = 0
+		g[2].ApplyPBSnapshot(r3, msg)        // node 2 sends message to node 3.
+		assert.Equal(t, 0, g[2].appendCount) // 0 new peer.
+		g[2].appendCount = 0
+		g[2].ApplyPBSnapshot(r2, msg)        // duplicated message should be ignored.
+		assert.Equal(t, 0, g[2].appendCount) // 0 new peer.
+		//}}
+		// log
+		t.Log("node 1 has:")
+		g[0].VisitPeer(func(region string, p gossip.MembershipPeer) bool {
+			t.Log(p)
+			return true
+		})
+		t.Log("node 2 has:")
+		g[1].VisitPeer(func(region string, p gossip.MembershipPeer) bool {
+			t.Log(p)
+			return true
+		})
+		t.Log("node 3 has:")
+		g[2].VisitPeer(func(region string, p gossip.MembershipPeer) bool {
+			t.Log(p)
+			return true
 		})
 	})
 
