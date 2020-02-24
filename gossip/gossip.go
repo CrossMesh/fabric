@@ -235,7 +235,7 @@ func (g *Gossiper) NewTerm(brust int32) (t *GossipTerm) {
 			}
 			if idx < brust {
 				t.peers = append(t.peers, peer)
-			} else if n := rand.Int31n(idx); n < brust {
+			} else if n := rand.Int31n(idx + 1); n < brust {
 				t.peers[n] = peer
 			}
 			idx++
