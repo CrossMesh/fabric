@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -81,7 +80,6 @@ func (c *tcpCreator) New(arbiter *arbit.Arbiter, log *logging.Entry) (Backend, e
 // TCP implements TCP backend.
 type TCP struct {
 	bind     *net.TCPAddr
-	publish  *net.TCPAddr
 	listener *net.TCPListener
 
 	config *TCPBackendConfig
@@ -116,14 +114,7 @@ func NewTCP(arbiter *arbit.Arbiter, log *logging.Entry, cfg *TCPBackendConfig, p
 	if cfg.Publish == "" {
 		cfg.Publish = cfg.Bind
 	}
-	if t.publish, err = net.ResolveTCPAddr("tcp", cfg.Publish); err != nil {
-		return nil, err
-	}
-	if !validTCPPublishEndpoint(t.publish) {
-		return nil, fmt.Errorf("cannot publish \"%v\"", cfg.Publish)
-	}
 	t.Arbiter = arbit.NewWithParent(arbiter, nil)
-
 	t.Arbiter.Go(func() {
 		var err error
 
@@ -381,17 +372,11 @@ func (t *TCP) acceptTCPLink(log *logging.Entry, link *TCPLink, connectArg *proto
 	}
 	log.Infof("protocol version: %v", connectArg.Version)
 
-	// resolve identity.
-	addr, err := net.ResolveTCPAddr("tcp", connectArg.Identity)
-	if err != nil {
-		log.Errorf("cannot resolve \"%v\": %v", connectArg.Identity, err)
-		return false, err
+	addr, isTCPAddr := link.conn.RemoteAddr().(*net.TCPAddr)
+	if !isTCPAddr {
+		log.Warnf("got non-tcp address. closing...")
 	}
-	if !validTCPPublishEndpoint(addr) {
-		log.Info("invalid publish endpoint. deined.")
-		return false, nil
-	}
-	key := fmt.Sprintf("%v:%v", addr.IP.To4().String(), addr.Port)
+	key := connectArg.Identity
 	leftLink := t.getLink(key)
 	link.publish = key
 	link.remote = addr
@@ -498,7 +483,7 @@ func (t *TCP) connect(addr *net.TCPAddr, publish string) (l *TCPLink, err error)
 	}
 
 	// get link.
-	key := addr.IP.To4().String() + ":" + strconv.FormatInt(int64(addr.Port), 10)
+	key := publish
 	link := t.getLink(key)
 	if link.conn != nil {
 		// fast path: link is valid.
@@ -521,7 +506,7 @@ func (t *TCP) connect(addr *net.TCPAddr, publish string) (l *TCPLink, err error)
 		return link, nil
 	}
 
-	t.log.Info("connecting to ", addr.String())
+	t.log.Infof("connecting to %v(%v)", publish, addr.String())
 
 	// dial
 	dialer := net.Dialer{}
