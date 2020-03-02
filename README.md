@@ -37,7 +37,17 @@ make rpm    # RPM
 make srpm   # Source RPM
 ```
 
+### build docker image
+
+```bash
+GOOS=linux make docker
+```
+
+
+
 ### Define your network
+
+Edit **utt.yml** (**/etc/utt.yml** if OS software package is used)
 
 ```yaml
 link:
@@ -71,10 +81,18 @@ or **start with systemd**:
 systemctl start utt-vnet@vnet1
 ```
 
-### Seed to Publish yourself
+or **start with docker**:
 
 ```bash
-utt -c utt.yml net seed vnet1 tcp:121.78.89.11:3880
+docker run -it --cap-add NET_ADMIN --device=/dev/net/tun utt:latest edge vnet1
+```
+
+### Seed to Publish yourself
+
+run inside the container or on host machine.
+
+```bash
+utt net seed vnet1 tcp:121.78.89.11:3880
 ```
 
 ### Enjoy

@@ -1,4 +1,4 @@
-.PHONY: test exec bench bin/utt proto cover devtools mock env cloc tarball rpm srpm
+.PHONY: test exec bench bin/utt proto cover devtools mock env cloc tarball rpm srpm docker
 
 GOMOD:=git.uestc.cn/sunmxt/utt
 
@@ -57,6 +57,10 @@ proto: bin/protoc-gen-go
 	protoc -I=$(PROJECT_ROOT) --go_out=$(PROJECT_ROOT) proto/pb/core.proto
 	protoc -I=$(PROJECT_ROOT) --go_out=plugins=grpc:$(PROJECT_ROOT) control/rpc/pb/core.proto
 	find -E . -name '*.pb.go' -type f -not -path './build/*' | xargs sed -i '' "s|\"proto/pb\"|\"$(GOMOD)/proto/pb\"|g; s|\"control/rpc/pb\"|\"$(GOMOD)/control/rpc/pb\"|g"
+
+docker: bin/utt
+	docker build -t utt:$(VERSION) -f ./Dockerfile .
+	docker tag utt:$(VERSION) utt:latest
 
 exec:
 	$(CMD)
