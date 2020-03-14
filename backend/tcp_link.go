@@ -1,12 +1,16 @@
 package backend
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"io"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"git.uestc.cn/sunmxt/utt/mux"
+	logging "github.com/sirupsen/logrus"
 )
 
 // TCPLink maintains data path between two peer.
@@ -172,4 +176,146 @@ func (l *TCPLink) Close() (err error) {
 	<-l.lock
 	defer func() { l.lock <- struct{}{} }()
 	return l.close()
+}
+
+func (t *TCP) connect(addr *net.TCPAddr, publish string) (l *TCPLink, err error) {
+	if !t.Arbiter.ShouldRun() {
+		return nil, ErrOperationCanceled
+	}
+
+	// get link.
+	key := publish
+	link := t.getLink(key)
+	if link.conn != nil {
+		// fast path: link is valid.
+		return link, nil
+	}
+
+	ctx, cancel := context.WithTimeout(t.Arbiter.Context(), t.getConnectTimeout())
+	defer cancel()
+	select {
+	case <-link.lock:
+		// acquire lock for connecting operation.
+		defer func() { link.lock <- struct{}{} }()
+
+	case <-ctx.Done():
+		return nil, ErrOperationCanceled
+	}
+
+	if link.conn != nil {
+		// fast path: link is valid.
+		return link, nil
+	}
+
+	t.log.Infof("connecting to %v(%v)", publish, addr.String())
+
+	// dial
+	dialer := net.Dialer{}
+	if conn, ierr := dialer.DialContext(ctx, "tcp", addr.String()); ierr != nil {
+		if t.Arbiter.ShouldRun() {
+			t.log.Error(ierr)
+		}
+		return nil, ierr
+
+	} else if tcpConn, isTCP := conn.(*net.TCPConn); !isTCP {
+		t.log.Error("got non-tcp connection")
+		return nil, ErrNonTCPConnection
+
+	} else {
+		link.conn = tcpConn
+	}
+
+	connID := atomic.AddUint32(&t.connID, 1)
+	log := t.log.WithField("conn_id", connID)
+	// handshake
+	var accepted bool
+	if accepted, err = t.connectHandshake(ctx, log, link); err != nil {
+		log.Error("handshake failure: ", err)
+		link.close()
+		return nil, err
+	}
+	if !accepted {
+		log.Error("denied by remote peer.")
+		link.close()
+		return nil, err
+	}
+
+	t.goTCPLinkDaemon(log, key, link)
+
+	return link, nil
+}
+
+// Connect trys to establish data path to peer.
+func (t *TCP) Connect(endpoint string) (l Link, err error) {
+	var (
+		addr *net.TCPAddr
+		link *TCPLink
+	)
+	if addr, err = t.resolve(endpoint); err != nil {
+		return nil, err
+	}
+	if link, err = t.connect(addr, endpoint); err != nil {
+		return nil, err
+	}
+	return link, err
+}
+
+func (t *TCP) goTCPLinkDaemon(log *logging.Entry, key string, link *TCPLink) {
+	t.Arbiter.Go(func() {
+		defer link.Close()
+
+		var err error
+
+		log.Infof("link to foreign peer \"%v\" established.", key)
+		log.Info("receiver start.")
+		// TCP options.
+		if bufSize := t.config.SendBufferSize; bufSize > 0 {
+			if err = link.conn.SetWriteBuffer(bufSize); err != nil {
+				log.Error("conn.SetWriteBuffer error: ", err)
+				return
+			}
+		}
+		if err = link.conn.SetNoDelay(true); err != nil {
+			log.Error("conn.SetNoDelay error: ", err)
+			return
+		}
+		if err = link.conn.SetKeepAlive(true); err != nil {
+			log.Error("conn.SetKeepalive error: ", err)
+			return
+		}
+		if keepalivePeriod := t.config.KeepalivePeriod; keepalivePeriod > 0 {
+			if err = link.conn.SetKeepAlivePeriod(time.Second * time.Duration(keepalivePeriod)); err != nil {
+				log.Error("conn.SetKeepalivePeriod error: ", err)
+				return
+			}
+		}
+
+		// pump.
+		for t.Arbiter.ShouldRun() {
+			if err = link.conn.SetDeadline(time.Now().Add(time.Second * 2)); err != nil {
+				log.Info("conn.SetDeadline() error: ", err)
+				break
+			}
+			if err = link.read(func(frame []byte) bool {
+				// deliver frame to all watchers.
+				t.watch.Range(func(k, v interface{}) bool {
+					if emit, ok := v.(func(Backend, []byte, string)); ok {
+						emit(t, frame, link.publish)
+					}
+					return true
+				})
+				return true
+			}); err != nil {
+				// handle errors.
+				if err == io.EOF {
+					log.Info("connection closed by peer.")
+					break
+				}
+				if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
+					err = nil
+				}
+			}
+		}
+		log.Info("receiver existing...")
+	})
 }
