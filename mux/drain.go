@@ -31,7 +31,7 @@ type Drainer struct {
 }
 
 // NewDrainer creates new Drainer.
-func NewDrainer(arbiter *arbit.Arbiter, log *logging.Entry, w io.Writer, maxBuffer uint, window time.Duration) (d *Drainer) {
+func NewDrainer(arbiter *arbit.Arbiter, log *logging.Entry, w io.Writer, maxBuffer uint32, window time.Duration) (d *Drainer) {
 	if log == nil {
 		log = logging.WithField("module", "drainer")
 	}

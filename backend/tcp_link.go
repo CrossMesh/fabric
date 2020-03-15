@@ -13,10 +13,19 @@ import (
 	logging "github.com/sirupsen/logrus"
 )
 
+const (
+	DefaultDrainBufferSize      = 8 * 1024 * 1024
+	DefaultDrainStatisticWindow = 1000
+	DefaultDrainLatency         = 500
+	DefaultBulkThreshold        = 2 * 1024 * 1024
+)
+
 // TCPLink maintains data path between two peer.
 type TCPLink struct {
 	muxer   mux.Muxer
 	demuxer mux.Demuxer
+	w       io.Writer
+
 	conn    *net.TCPConn
 	crypt   cipher.Block
 	remote  *net.TCPAddr
@@ -148,7 +157,8 @@ func (l *TCPLink) InitializeAESGCM(key []byte, nonce []byte) (err error) {
 	if l.crypt, err = aes.NewCipher(key[:]); err != nil {
 		return err
 	}
-	if l.muxer, err = mux.NewGCMStreamMuxer(l.conn, l.crypt, nonce); err != nil {
+	l.initializeWriter()
+	if l.muxer, err = mux.NewGCMStreamMuxer(l.w, l.crypt, nonce); err != nil {
 		return err
 	}
 	if l.demuxer, err = mux.NewGCMStreamDemuxer(l.crypt, nonce); err != nil {
@@ -157,9 +167,34 @@ func (l *TCPLink) InitializeAESGCM(key []byte, nonce []byte) (err error) {
 	return nil
 }
 
+func (l *TCPLink) initializeWriter() {
+	if l.backend.config.EnableDrainer {
+		bufferSize, latency, statisticWindow, threshold := l.backend.config.MaxDrainBuffer, l.backend.config.MaxDrainLatancy, l.backend.config.DrainStatisticWindow, l.backend.config.BulkThreshold
+		if bufferSize < 1 {
+			bufferSize = DefaultDrainBufferSize
+		}
+		if statisticWindow < 1 {
+			statisticWindow = DefaultDrainStatisticWindow
+		}
+		if latency < 1 {
+			statisticWindow = DefaultDrainLatency
+		}
+		if threshold < 1 {
+			threshold = DefaultBulkThreshold
+		}
+		drainer := mux.NewDrainer(l.backend.Arbiter, nil, l.conn, bufferSize, time.Millisecond*time.Duration(statisticWindow))
+		drainer.MaxLatency = time.Duration(statisticWindow) * time.Microsecond
+		drainer.FastPathThreshold = threshold
+		l.w = drainer
+	} else {
+		l.w = l.conn
+	}
+}
+
 // InitializeNoCryption initializes normal muxer and demuxer without encryption.
 func (l *TCPLink) InitializeNoCryption() {
-	l.muxer, l.demuxer = mux.NewStreamMuxer(l.conn), mux.NewStreamDemuxer()
+	l.initializeWriter()
+	l.muxer, l.demuxer = mux.NewStreamMuxer(l.w), mux.NewStreamDemuxer()
 }
 
 func (l *TCPLink) close() (err error) {

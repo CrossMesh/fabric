@@ -41,6 +41,13 @@ type TCPBackendConfig struct {
 	KeepalivePeriod int    `json:"keepalivePeriod" yaml:"keepalivePeriod" default:"60"`
 	ConnectTimeout  uint32 `json:"connectTimeout" yaml:"connectTimeout" default:"15"`
 
+	// drain options
+	EnableDrainer        bool   `json:"enableDrainer" yaml:"enableDrainer" default:"true"`
+	MaxDrainBuffer       uint32 `json:"maxDrainBuffer" yaml:"maxDrainBuffer" default:"8388608"`          // maximum drain buffer in byte.
+	MaxDrainLatancy      uint32 `json:"maxDrainLatency" yaml:"maxDrainLatency" default:"500"`            // maximum latency tolerance in microsecond.
+	DrainStatisticWindow uint32 `json:"drainStatisticWindow" yaml:"drainStatisticWindow" default:"1000"` // statistic window in millisecond
+	BulkThreshold        uint32 `json:"bulkThreshold" yaml:"bulkTHreshold" default:"2097152"`            // rate threshold (Bps) to trigger bulk mode.
+
 	Encrypt bool `json:"-" yaml:"-"`
 }
 
