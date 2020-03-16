@@ -15,10 +15,12 @@ Overlay L2/L3 network router, designed for connecting cloud network infrastructu
 
 #### Planning
 
+- Metrics.
+- Multiples virtual networks over one set of peers (like VxLAN).
+
 - UDP Backend.
 - Kubernetes CNI.
 - Dynamic NAT Traversal.
-- Multiples virtual networks over one set of peers (like VxLAN).
 
 ---
 

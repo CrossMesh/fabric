@@ -11,6 +11,7 @@ import (
 	"git.uestc.cn/sunmxt/utt/proto"
 	"git.uestc.cn/sunmxt/utt/proto/pb"
 	"git.uestc.cn/sunmxt/utt/route"
+	"github.com/songgao/water"
 )
 
 type forwardStatistics struct {
@@ -39,7 +40,21 @@ func (r *EdgeRouter) receiveRemote(b backend.Backend, frame []byte, src string) 
 }
 
 func (r *EdgeRouter) backwardVTEP(frame []byte, peer route.MembershipPeer) {
-	r.ifaceDevice.Write(frame)
+	lease, err := r.vtep.QueueLease()
+	if err != nil {
+		r.log.Error("cannot acquire queue lease: ", err)
+		return
+	}
+	if lease == nil {
+		return
+	}
+	err = lease.Tx(func(rw *water.Interface) error {
+		_, err := rw.Write(frame)
+		return err
+	})
+	if err != nil && err != ErrVTEPQueueRevoke {
+		r.log.Error("write VTEP failure: ", err)
+	}
 }
 
 func (r *EdgeRouter) forwardVTEPBackend(frame []byte, desp *route.PeerBackend) error {
@@ -78,42 +93,68 @@ func (r *EdgeRouter) forwardVTEPPeer(frame []byte, peer route.MembershipPeer) er
 func (r *EdgeRouter) goForwardVTEP() {
 	buf := make([]byte, 2048)
 
-	var err error
-
 	r.forwardArbiter.Go(func() {
-		<-r.forwardArbiter.Exit()
-		if f := r.ifaceDevice; f != nil {
-			f.Close()
-		}
-	})
+		var (
+			lease        *vtepQueueLease
+			err, readErr error
+			read         int
+		)
 
-	r.forwardArbiter.Go(func() {
 		for r.forwardArbiter.ShouldRun() {
-			if err != nil {
-				time.Sleep(time.Second * 5)
+			// acquire queue lease.
+			for r.forwardArbiter.ShouldRun() {
+				newLease, err := r.vtep.QueueLease()
+				if err != nil {
+					r.log.Error("cannot acquire queue lease: ", err)
+					time.Sleep(time.Second * 5)
+					continue
+				}
+				if newLease == nil {
+					r.log.Error("cannot acquire queue lease: got nil lease.")
+					time.Sleep(time.Second * 5)
+					continue
+				}
+				lease = newLease
+				break
 			}
-			err = nil
 
-			if err := r.initializeVTEP(r.Mode()); err != nil {
-				continue
+			if readErr != nil {
+				// force synchronize system NIC configuration.
+				if err = r.vtep.SynchronizeSystemConfig(); err != nil {
+					r.log.Warn("SynchronizeSystemConfig() failure: ", err)
+				}
+				readErr = nil
 			}
 
+			// forward frames.
 			for r.forwardArbiter.ShouldRun() {
 				// encode frame.
 				readBuf := buf[proto.ProtocolMessageHeaderSize:]
-				read, err := r.ifaceDevice.Read(readBuf)
-				if err != nil {
-					if err == io.EOF || err == os.ErrClosed {
-						break
+				err = lease.Tx(func(rw *water.Interface) error {
+					read, readErr = rw.Read(readBuf)
+					if readErr != nil {
+						if readErr != io.EOF && readErr != os.ErrClosed && r.forwardArbiter.ShouldRun() {
+							r.log.Error("read link failure: ", readErr)
+						}
+						return readErr
 					}
-					r.log.Error("read link failure: ", err)
-					r.ifaceDevice.Close()
-					r.ifaceDevice = nil
+					return nil
+				})
+				if readErr != nil && r.forwardArbiter.ShouldRun() {
+					// bad lease. force to revoke.
+					if err = lease.Revoke(); err != nil {
+						r.log.Warn("force revoke failure: ", err)
+					}
+					break
+				}
+				if err != nil {
 					break
 				}
 				if read < 1 {
 					continue
 				}
+
+				// forward.
 				peers := r.route.Forward(readBuf)
 				if len(peers) < 1 {
 					continue
@@ -123,7 +164,6 @@ func (r *EdgeRouter) goForwardVTEP() {
 				if len(peers) > 1 {
 					// burst.
 					var wg sync.WaitGroup
-
 					for idx := range peers {
 						wg.Add(1)
 						go func(idx int) {
@@ -134,12 +174,10 @@ func (r *EdgeRouter) goForwardVTEP() {
 					wg.Wait()
 					continue
 				}
-
-				if err = r.forwardVTEPPeer(packed, peers[0]); err != nil && err != backend.ErrConnectionClosed {
-					// disable unhealty backend.
+				if err = r.forwardVTEPPeer(packed, peers[0]); err != nil {
+					r.log.Error("forwardVTEPPeer error:", err)
 				}
 			}
 		}
 	})
-
 }

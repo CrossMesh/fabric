@@ -11,7 +11,6 @@ import (
 	"git.uestc.cn/sunmxt/utt/backend"
 	"git.uestc.cn/sunmxt/utt/config"
 	"git.uestc.cn/sunmxt/utt/route"
-	"github.com/songgao/water"
 )
 
 func (r *EdgeRouter) updateBackends(cfgs []*config.Backend) (err error) {
@@ -80,69 +79,6 @@ func (r *EdgeRouter) updateBackends(cfgs []*config.Backend) (err error) {
 	return
 }
 
-func (r *EdgeRouter) initializeVTEP(mode string) (err error) {
-	cfg := r.cfg.Iface
-	if cfg == nil {
-		err = errors.New("empty interface configration")
-		r.log.Warn(err)
-		return err
-	}
-
-	r.lock.Lock()
-	defer r.lock.Unlock()
-
-	if r.ifaceDevice != nil {
-		return nil
-	}
-
-	var (
-		ip           net.IP
-		subnet, vnet *net.IPNet
-		deviceConfig water.Config
-		hwAddr       net.HardwareAddr
-	)
-
-	if cfg.Subnet != "" {
-		if ip, subnet, err = net.ParseCIDR(cfg.Subnet); err != nil {
-			return err
-		}
-		subnet.IP = ip
-		if cfg.Network != "" && mode == "overlay" {
-			if _, vnet, err = net.ParseCIDR(cfg.Network); err != nil {
-				return err
-			}
-		}
-	}
-	if cfg.MAC != "" {
-		if hwAddr, err = net.ParseMAC(cfg.MAC); err != nil {
-			return err
-		}
-	}
-
-	switch mode {
-	case "ethernet":
-		deviceConfig.DeviceType = water.TAP
-
-	case "overlay":
-		deviceConfig.DeviceType = water.TUN
-
-	default:
-		return ErrUnknownMode
-	}
-
-	setupTuntapPlatformParameters(cfg, &deviceConfig)
-
-	// create tuntap.
-	if r.ifaceDevice, err = water.New(deviceConfig); err != nil {
-		r.log.Error("interface create failure: ", err)
-		return err
-	}
-
-	err = upConfigVTEP(mode, r.ifaceDevice.Name(), hwAddr, subnet, vnet)
-
-	return err
-}
-
 func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 	id, log := atomic.AddUint32(&r.configID, 1), r.log.WithField("type", "config")
 
@@ -167,15 +103,15 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 			if thisID := r.configID; thisID != id {
 				break
 			}
+			updateVTEP := false
 
 			// update peer and route.
 			if current := r.Mode(); current != "unknown" && cfg.Mode != current {
 				r.log.Info("shutting down forwarding...")
 				r.routeArbiter.Shutdown()
-				r.forwardArbiter.Shutdown()
 				r.routeArbiter.Join()
-				r.forwardArbiter.Join()
-				r.routeArbiter, r.forwardArbiter, r.route, r.peerSelf, r.ifaceDevice, r.membership = nil, nil, nil, nil, nil, nil
+				r.routeArbiter, r.forwardArbiter, r.route, r.peerSelf, r.membership = nil, nil, nil, nil, nil
+				updateVTEP = true
 			}
 			if r.routeArbiter == nil {
 				rebootRoute = true
@@ -232,8 +168,15 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 					tx.ClaimAlive()
 					return true
 				})
-
 			}
+			// update vetp.
+			if updateVTEP || r.cfg == nil || !cfg.Iface.Equal(r.cfg.Iface) {
+				if err = r.vtep.ApplyConfig(r.Mode(), cfg.Iface); err != nil {
+					log.Error("update VTEP failure: ", err)
+					succeed = false
+				}
+			}
+
 			// update backends.
 			if err = r.updateBackends(cfg.Backend); err != nil {
 				log.Error("update backend failure: ", err)
