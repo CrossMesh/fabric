@@ -80,14 +80,6 @@ link:
         # keepalivePeriod: 60
         # Timeout for establishing peer connection.
         # connectTimeout: 15
-        # enable drainer, the more efficient way to send stream data. (default: true)
-        # enableDrainer: true
-        # maximum drainer buffer size in byte. (default: 8388608)
-        # maxDrainBuffer: 8388608
-        # maximum drain latency tolerance in microsecond. (default: 5000)
-        # maxDrainLatency: 500
-        # statistic window of drainer. (default: 1000)
-        # drainStatisticWindow: 1000
 
         # leading bytes of connection. May be used to identify UTT underlay connection. 
         startCode: "EA30B674"

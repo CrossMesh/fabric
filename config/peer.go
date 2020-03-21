@@ -64,10 +64,9 @@ type Network struct {
 	Backend []*Backend `json:"backends" yaml:"backends"`
 	Mode    string     `json:"mode" yaml:"mode"`
 
-	Region        string `json:"region" yaml:"region"`
-	MinRegionPeer int    `json:"minRegionPeer" yaml:"minRegionPeer"`
-
-	MaxConcurrency uint `json:"maxConcurrency" yaml:"maxConcurrency" default:"8"`
+	MaxConcurrency uint   `json:"maxConcurrency" yaml:"maxConcurrency" default:"8"`
+	Region         string `json:"region" yaml:"region"`
+	MinRegionPeer  int    `json:"minRegionPeer" yaml:"minRegionPeer"`
 }
 
 func (c *Network) Equal(x *Network) (e bool) {
@@ -127,7 +126,7 @@ func (c *Daemon) Equal(x *Daemon) (e bool) {
 
 func GetMaxForwardRoutines(suggested uint) uint {
 	if suggested < 1 {
-		suggested = 1
+		suggested = 8
 	}
 	ncpu := runtime.NumCPU()
 	if ncpu < 1 {

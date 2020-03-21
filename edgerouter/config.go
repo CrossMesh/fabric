@@ -90,7 +90,7 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 			err     error
 		)
 
-		succeed, rebootRoute, rebootForward, nextTry := false, false, false, time.Now()
+		succeed, rebootRoute, rebootForward, nextTry, forwardRoutines := false, false, false, time.Now(), config.GetMaxForwardRoutines(cfg.MaxConcurrency)
 		r.lock.Lock()
 		defer r.lock.Unlock()
 		for r.arbiter.ShouldRun() && !succeed {
@@ -175,6 +175,7 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 					log.Error("update VTEP failure: ", err)
 					succeed = false
 				}
+				r.vtep.SetMaxQueue(uint32(forwardRoutines))
 			}
 
 			// update backends.
@@ -197,7 +198,10 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 			}
 			if rebootForward {
 				// start forward.
-				r.goForwardVTEP()
+				for n := uint(0); n < forwardRoutines; n++ {
+					r.goForwardVTEP()
+
+				}
 			}
 
 			r.log.Info("new config applied.")

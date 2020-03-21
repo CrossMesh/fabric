@@ -23,22 +23,23 @@ const (
 
 // TCPLink maintains data path between two peer.
 type TCPLink struct {
-	muxer   mux.Muxer
-	demuxer mux.Demuxer
-	w       io.Writer
-
+	lock    sync.RWMutex
 	conn    *net.TCPConn
 	crypt   cipher.Block
 	remote  *net.TCPAddr
 	publish string
 
-	// read buffer.
+	// write context.
+	writeLock sync.Mutex
+	muxer     mux.Muxer
+	w         io.Writer
+
+	// read context.
+	demuxer   mux.Demuxer
 	readLock  sync.Mutex
 	buf       []byte
 	cursor    int
 	maxCursor int
-
-	lock sync.RWMutex
 
 	backend *TCP
 }
@@ -125,8 +126,10 @@ func (l *TCPLink) Send(frame []byte) (err error) {
 		return ErrOperationCanceled
 	}
 
-	l.lock.Lock()
-	defer l.lock.Unlock()
+	if l.muxer.Parallel() {
+		l.writeLock.Lock()
+		defer l.writeLock.Unlock()
+	}
 
 	muxer := l.muxer
 	if muxer == nil {
@@ -228,6 +231,7 @@ func (t *TCP) connect(addr *net.TCPAddr, publish string) (l *TCPLink, err error)
 		return link, nil
 	}
 
+	defer link.lock.Unlock()
 	ctx, cancel := context.WithTimeout(t.Arbiter.Context(), t.getConnectTimeout())
 	defer cancel()
 
@@ -287,8 +291,8 @@ func (t *TCP) forwardProc(log *logging.Entry, key string, link *TCPLink) {
 	var err error
 
 	for t.Arbiter.ShouldRun() {
-		if err = link.conn.SetDeadline(time.Now().Add(time.Second * 3)); err != nil {
-			log.Info("conn.SetDeadline() error: ", err)
+		if err = link.conn.SetReadDeadline(time.Now().Add(time.Second * 3)); err != nil {
+			log.Info("conn.SetReadDeadline() error: ", err)
 			break
 		}
 		if err = link.read(func(frame []byte) bool {
@@ -303,7 +307,6 @@ func (t *TCP) forwardProc(log *logging.Entry, key string, link *TCPLink) {
 		}); err != nil {
 			// handle errors.
 			if err == io.EOF {
-				log.Info("connection closed by peer.")
 				break
 			}
 			if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
@@ -320,6 +323,19 @@ func (t *TCP) goTCPLinkDaemon(log *logging.Entry, key string, link *TCPLink) {
 	)
 
 	log.Infof("link to foreign peer \"%v\" established.", key)
+	// clear any deadline.
+	if err = link.conn.SetDeadline(time.Time{}); err != nil {
+		log.Error("conn.SetDeadline error: ", err)
+		return
+	}
+	if err = link.conn.SetWriteDeadline(time.Time{}); err != nil {
+		log.Error("conn.SetWriteDeadline error: ", err)
+		return
+	}
+	if err = link.conn.SetReadDeadline(time.Time{}); err != nil {
+		log.Error("conn.SetReadDeadline error: ", err)
+		return
+	}
 	// TCP options.
 	if bufSize := t.config.SendBufferSize; bufSize > 0 {
 		if err = link.conn.SetWriteBuffer(bufSize); err != nil {

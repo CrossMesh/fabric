@@ -36,6 +36,9 @@ func (l *vtepQueueLease) Tx(proc func(*water.Interface) error) error {
 func (l *vtepQueueLease) Revoke() (err error) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
+	if l.rw == nil {
+		return nil
+	}
 	if err = l.rw.Close(); err != nil {
 		return err
 	}

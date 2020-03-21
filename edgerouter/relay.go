@@ -175,7 +175,9 @@ func (r *EdgeRouter) goForwardVTEP() {
 					continue
 				}
 				if err = r.forwardVTEPPeer(packed, peers[0]); err != nil {
-					r.log.Error("forwardVTEPPeer error:", err)
+					if err != backend.ErrOperationCanceled {
+						r.log.Error("forwardVTEPPeer error:", err)
+					}
 				}
 			}
 		}
