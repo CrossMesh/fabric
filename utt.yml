@@ -48,6 +48,9 @@ link:
       # [optional] CIDR range of whole virtual network.
       network: 10.240.0.0/20
 
+    # max forward threads. (default: 8)
+    # maxConcurrency: 8
+
     # Backends that forming network underlay (or Data Plane).
     backends:
     -

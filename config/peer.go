@@ -1,6 +1,9 @@
 package config
 
-import "reflect"
+import (
+	"reflect"
+	"runtime"
+)
 
 // Backend contains general backend configuration.
 type Backend struct {
@@ -10,14 +13,30 @@ type Backend struct {
 	// pre-shared key.
 	PSK string `json:"psk" yaml:"psk"`
 
-	// network type. can be "overlay" or "ethernet"
+	// backend engine.
 	Type string `json:"type" yaml:"type"`
 
+	// max forward routines.
+	MaxConcurrency *uint `json:"-" yaml:"-"`
+
 	// backend specific configurations.
-	Parameters map[string]interface{} `json:"params" yaml:"params"`
+	Parameters map[string]interface{} `json:"params,omitempty" yaml:"params,omitempty"`
 }
 
 func (c *Backend) Equal(x *Backend) bool {
+	if c == x {
+		return true
+	}
+	var maxConcurrencyX, maxConcurrencyY uint
+	if c != nil && c.MaxConcurrency != nil {
+		maxConcurrencyX = *c.MaxConcurrency
+	}
+	if x != nil && x.MaxConcurrency != nil {
+		maxConcurrencyY = *x.MaxConcurrency
+	}
+	if maxConcurrencyX != maxConcurrencyY {
+		return false
+	}
 	return reflect.DeepEqual(c, x)
 }
 
@@ -47,6 +66,8 @@ type Network struct {
 
 	Region        string `json:"region" yaml:"region"`
 	MinRegionPeer int    `json:"minRegionPeer" yaml:"minRegionPeer"`
+
+	MaxConcurrency uint `json:"maxConcurrency" yaml:"maxConcurrency" default:"8"`
 }
 
 func (c *Network) Equal(x *Network) (e bool) {
@@ -58,7 +79,10 @@ func (c *Network) Equal(x *Network) (e bool) {
 	} else if x == nil {
 		return false
 	}
-	if e = c.PSK == x.PSK && c.Mode == x.Mode && c.Region == x.Region && c.MinRegionPeer == x.MinRegionPeer; !e {
+	if e = c.PSK == x.PSK && c.Mode == x.Mode &&
+		c.Region == x.Region &&
+		c.MinRegionPeer == x.MinRegionPeer &&
+		c.MaxConcurrency == x.MaxConcurrency; !e {
 		return
 	}
 	if c.Iface != x.Iface {
@@ -99,4 +123,18 @@ func (c *Daemon) Equal(x *Daemon) (e bool) {
 		}
 	}
 	return true
+}
+
+func GetMaxForwardRoutines(suggested uint) uint {
+	if suggested < 1 {
+		suggested = 1
+	}
+	ncpu := runtime.NumCPU()
+	if ncpu < 1 {
+		ncpu = 1
+	}
+	if uint(ncpu) < suggested {
+		suggested = uint(ncpu)
+	}
+	return suggested
 }

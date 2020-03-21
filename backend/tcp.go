@@ -42,7 +42,7 @@ type TCPBackendConfig struct {
 	ConnectTimeout  uint32 `json:"connectTimeout" yaml:"connectTimeout" default:"15"`
 
 	// drain options
-	EnableDrainer        bool   `json:"enableDrainer" yaml:"enableDrainer" default:"true"`
+	EnableDrainer        bool   `json:"enableDrainer" yaml:"enableDrainer" default:"false"`
 	MaxDrainBuffer       uint32 `json:"maxDrainBuffer" yaml:"maxDrainBuffer" default:"8388608"`          // maximum drain buffer in byte.
 	MaxDrainLatancy      uint32 `json:"maxDrainLatency" yaml:"maxDrainLatency" default:"500"`            // maximum latency tolerance in microsecond.
 	DrainStatisticWindow uint32 `json:"drainStatisticWindow" yaml:"drainStatisticWindow" default:"1000"` // statistic window in millisecond
@@ -78,7 +78,7 @@ func (c *tcpCreator) Type() pb.PeerBackend_BackendType { return pb.PeerBackend_T
 func (c *tcpCreator) Priority() uint32                 { return c.cfg.Priority }
 func (c *tcpCreator) Publish() string                  { return c.cfg.Publish }
 func (c *tcpCreator) New(arbiter *arbit.Arbiter, log *logging.Entry) (Backend, error) {
-	return NewTCP(arbiter, log, &c.cfg, &c.raw.PSK)
+	return NewTCP(arbiter, log, &c.cfg, c.raw, &c.raw.PSK)
 }
 
 // TCP implements TCP backend.
@@ -86,8 +86,9 @@ type TCP struct {
 	bind     *net.TCPAddr
 	listener *net.TCPListener
 
-	config *TCPBackendConfig
-	psk    *string
+	config    *TCPBackendConfig
+	rawConfig *config.Backend
+	psk       *string
 
 	log *logging.Entry
 
@@ -106,14 +107,15 @@ var (
 )
 
 // NewTCP creates TCP backend.
-func NewTCP(arbiter *arbit.Arbiter, log *logging.Entry, cfg *TCPBackendConfig, psk *string) (t *TCP, err error) {
+func NewTCP(arbiter *arbit.Arbiter, log *logging.Entry, cfg *TCPBackendConfig, rawCfg *config.Backend, psk *string) (t *TCP, err error) {
 	if log == nil {
 		log = logging.WithField("module", "backend_tcp")
 	}
 	t = &TCP{
-		psk:    psk,
-		config: cfg,
-		log:    log,
+		psk:       psk,
+		config:    cfg,
+		rawConfig: rawCfg,
+		log:       log,
 	}
 	if cfg.Publish == "" {
 		cfg.Publish = cfg.Bind
@@ -159,6 +161,16 @@ func (t *TCP) getSendTimeout() time.Duration {
 
 func (t *TCP) getConnectTimeout() time.Duration {
 	return time.Duration(getDefaultUint32(t.config.ConnectTimeout, defaultConnectTimeout)) * time.Millisecond
+}
+
+func (t *TCP) getRoutinesCount() (n uint) {
+	ref := t.rawConfig.MaxConcurrency
+	if ref == nil {
+		n = 8
+	} else {
+		n = *ref
+	}
+	return config.GetMaxForwardRoutines(n)
 }
 
 func (t *TCP) serve() (err error) {
