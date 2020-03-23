@@ -5,10 +5,29 @@ import (
 	"runtime"
 )
 
+func GetMaxConcurrency(m *uint) (suggested uint) {
+	if m == nil {
+		suggested = 8
+	} else {
+		suggested = *m
+	}
+	if suggested < 1 {
+		suggested = 8
+	}
+	ncpu := runtime.NumCPU()
+	if ncpu < 1 {
+		ncpu = 1
+	}
+	if uint(ncpu) < suggested {
+		suggested = uint(ncpu)
+	}
+	return
+}
+
 // Backend contains general backend configuration.
 type Backend struct {
 	// whether encryption enabled.
-	Encrypt bool `json:"encrypt" yaml:"encrypt" default:"false"`
+	Encrypt *bool `json:"encrypt" yaml:"encrypt"`
 
 	// pre-shared key.
 	PSK string `json:"psk" yaml:"psk"`
@@ -21,6 +40,13 @@ type Backend struct {
 
 	// backend specific configurations.
 	Parameters map[string]interface{} `json:"params,omitempty" yaml:"params,omitempty"`
+}
+
+func (c *Backend) GetEncrypt() bool {
+	if c.Encrypt == nil {
+		return false
+	}
+	return *c.Encrypt
 }
 
 func (c *Backend) Equal(x *Backend) bool {
@@ -40,6 +66,10 @@ func (c *Backend) Equal(x *Backend) bool {
 	return reflect.DeepEqual(c, x)
 }
 
+func (c *Backend) GetMaxConcurrency() uint {
+	return GetMaxConcurrency(c.MaxConcurrency)
+}
+
 // Interface contains netlink configuraion for network.
 type Interface struct {
 	// interface name.
@@ -55,7 +85,14 @@ type Interface struct {
 	Network string `json:"network" yaml:"network"`
 
 	// enable multiqueue.
-	Multiqueue bool `json:"multiqueue" yaml:"multiqueue" default:"true"`
+	Multiqueue *bool `json:"multiqueue" yaml:"multiqueue"`
+}
+
+func (c *Interface) GetMultiqueue() bool {
+	if c.Multiqueue == nil {
+		return true
+	}
+	return *c.Multiqueue
 }
 
 func (c *Interface) Equal(x *Interface) bool { return reflect.DeepEqual(c, x) }
@@ -67,9 +104,13 @@ type Network struct {
 	Backend []*Backend `json:"backends" yaml:"backends"`
 	Mode    string     `json:"mode" yaml:"mode"`
 
-	MaxConcurrency uint   `json:"maxConcurrency" yaml:"maxConcurrency" default:"8"`
+	MaxConcurrency *uint  `json:"maxConcurrency" yaml:"maxConcurrency"`
 	Region         string `json:"region" yaml:"region"`
 	MinRegionPeer  int    `json:"minRegionPeer" yaml:"minRegionPeer"`
+}
+
+func (c *Network) GetMaxConcurrency() uint {
+	return GetMaxConcurrency(c.MaxConcurrency)
 }
 
 func (c *Network) Equal(x *Network) (e bool) {
@@ -125,18 +166,4 @@ func (c *Daemon) Equal(x *Daemon) (e bool) {
 		}
 	}
 	return true
-}
-
-func GetMaxForwardRoutines(suggested uint) uint {
-	if suggested < 1 {
-		suggested = 8
-	}
-	ncpu := runtime.NumCPU()
-	if ncpu < 1 {
-		ncpu = 1
-	}
-	if uint(ncpu) < suggested {
-		suggested = uint(ncpu)
-	}
-	return suggested
 }

@@ -90,7 +90,7 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 			err     error
 		)
 
-		succeed, rebootRoute, rebootForward, nextTry, forwardRoutines := false, false, false, time.Now(), config.GetMaxForwardRoutines(cfg.MaxConcurrency)
+		succeed, rebootRoute, rebootForward, nextTry, forwardRoutines := false, false, false, time.Now(), cfg.GetMaxConcurrency()
 		r.lock.Lock()
 		defer r.lock.Unlock()
 		for r.arbiter.ShouldRun() && !succeed {

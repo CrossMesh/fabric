@@ -83,7 +83,7 @@ func (v *virtualTunnelEndpoint) synchronizeSystemPlatformConfig(rw *water.Interf
 func (v *virtualTunnelEndpoint) setupTuntapPlatformParameters(cfg *config.Interface, deviceConfig *water.Config) {
 	deviceConfig.Name = cfg.Name
 	deviceConfig.PlatformSpecificParams.MultiQueue = TuntapMultiqueuePossiable
-	if deviceConfig.PlatformSpecificParams.MultiQueue && cfg.Multiqueue {
+	if deviceConfig.PlatformSpecificParams.MultiQueue && cfg.GetMultiqueue() {
 		v.log.Info("enable multiqueue tuntap.")
 		v.multiqueue = true
 	}

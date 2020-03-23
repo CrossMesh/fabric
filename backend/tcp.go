@@ -48,12 +48,11 @@ type TCPBackendConfig struct {
 	DrainStatisticWindow uint32 `json:"drainStatisticWindow" yaml:"drainStatisticWindow" default:"1000"` // statistic window in millisecond
 	BulkThreshold        uint32 `json:"bulkThreshold" yaml:"bulkTHreshold" default:"2097152"`            // rate threshold (Bps) to trigger bulk mode.
 
-	Encrypt bool `json:"-" yaml:"-"`
+	raw *config.Backend
 }
 
 type tcpCreator struct {
 	cfg TCPBackendConfig
-	raw *config.Backend
 }
 
 func newTCPCreator(cfg *config.Backend) (BackendCreator, error) {
@@ -69,8 +68,7 @@ func newTCPCreator(cfg *config.Backend) (BackendCreator, error) {
 	if err = json.Unmarshal(bin, &c.cfg); err != nil {
 		return nil, fmt.Errorf("parse backend config failure (%v)", err)
 	}
-	c.cfg.Encrypt = cfg.Encrypt
-	c.raw = cfg
+	c.cfg.raw = cfg
 	return c, nil
 }
 
@@ -78,7 +76,7 @@ func (c *tcpCreator) Type() pb.PeerBackend_BackendType { return pb.PeerBackend_T
 func (c *tcpCreator) Priority() uint32                 { return c.cfg.Priority }
 func (c *tcpCreator) Publish() string                  { return c.cfg.Publish }
 func (c *tcpCreator) New(arbiter *arbit.Arbiter, log *logging.Entry) (Backend, error) {
-	return NewTCP(arbiter, log, &c.cfg, c.raw, &c.raw.PSK)
+	return NewTCP(arbiter, log, &c.cfg, &c.cfg.raw.PSK)
 }
 
 // TCP implements TCP backend.
@@ -86,9 +84,8 @@ type TCP struct {
 	bind     *net.TCPAddr
 	listener *net.TCPListener
 
-	config    *TCPBackendConfig
-	rawConfig *config.Backend
-	psk       *string
+	config *TCPBackendConfig
+	psk    *string
 
 	log *logging.Entry
 
@@ -107,15 +104,14 @@ var (
 )
 
 // NewTCP creates TCP backend.
-func NewTCP(arbiter *arbit.Arbiter, log *logging.Entry, cfg *TCPBackendConfig, rawCfg *config.Backend, psk *string) (t *TCP, err error) {
+func NewTCP(arbiter *arbit.Arbiter, log *logging.Entry, cfg *TCPBackendConfig, psk *string) (t *TCP, err error) {
 	if log == nil {
 		log = logging.WithField("module", "backend_tcp")
 	}
 	t = &TCP{
-		psk:       psk,
-		config:    cfg,
-		rawConfig: rawCfg,
-		log:       log,
+		psk:    psk,
+		config: cfg,
+		log:    log,
 	}
 	if cfg.Publish == "" {
 		cfg.Publish = cfg.Bind
@@ -164,13 +160,7 @@ func (t *TCP) getConnectTimeout() time.Duration {
 }
 
 func (t *TCP) getRoutinesCount() (n uint) {
-	ref := t.rawConfig.MaxConcurrency
-	if ref == nil {
-		n = 8
-	} else {
-		n = *ref
-	}
-	return config.GetMaxForwardRoutines(n)
+	return t.config.raw.GetMaxConcurrency()
 }
 
 func (t *TCP) serve() (err error) {

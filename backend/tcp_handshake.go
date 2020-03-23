@@ -219,7 +219,7 @@ func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TC
 		log.Error(err)
 		return false, err
 	}
-	if t.config.Encrypt {
+	if t.config.raw.GetEncrypt() {
 		connectReq.Version = proto.ConnectAES256GCM
 	} else {
 		connectReq.Version = proto.ConnectNoCrypt
