@@ -1,24 +1,73 @@
 package config
 
-import "reflect"
+import (
+	"reflect"
+	"runtime"
+)
+
+func GetMaxConcurrency(m *uint) (suggested uint) {
+	if m == nil {
+		suggested = 8
+	} else {
+		suggested = *m
+	}
+	if suggested < 1 {
+		suggested = 8
+	}
+	ncpu := runtime.NumCPU()
+	if ncpu < 1 {
+		ncpu = 1
+	}
+	if uint(ncpu) < suggested {
+		suggested = uint(ncpu)
+	}
+	return
+}
 
 // Backend contains general backend configuration.
 type Backend struct {
 	// whether encryption enabled.
-	Encrypt bool `json:"encrypt" yaml:"encrypt" default:"false"`
+	Encrypt *bool `json:"encrypt" yaml:"encrypt"`
 
 	// pre-shared key.
 	PSK string `json:"psk" yaml:"psk"`
 
-	// network type. can be "overlay" or "ethernet"
+	// backend engine.
 	Type string `json:"type" yaml:"type"`
 
+	// max forward routines.
+	MaxConcurrency *uint `json:"-" yaml:"-"`
+
 	// backend specific configurations.
-	Parameters map[string]interface{} `json:"params" yaml:"params"`
+	Parameters map[string]interface{} `json:"params,omitempty" yaml:"params,omitempty"`
+}
+
+func (c *Backend) GetEncrypt() bool {
+	if c.Encrypt == nil {
+		return false
+	}
+	return *c.Encrypt
 }
 
 func (c *Backend) Equal(x *Backend) bool {
+	if c == x {
+		return true
+	}
+	var maxConcurrencyX, maxConcurrencyY uint
+	if c != nil && c.MaxConcurrency != nil {
+		maxConcurrencyX = *c.MaxConcurrency
+	}
+	if x != nil && x.MaxConcurrency != nil {
+		maxConcurrencyY = *x.MaxConcurrency
+	}
+	if maxConcurrencyX != maxConcurrencyY {
+		return false
+	}
 	return reflect.DeepEqual(c, x)
+}
+
+func (c *Backend) GetMaxConcurrency() uint {
+	return GetMaxConcurrency(c.MaxConcurrency)
 }
 
 // Interface contains netlink configuraion for network.
@@ -34,6 +83,16 @@ type Interface struct {
 
 	// network CIDR representing whole virtual network.
 	Network string `json:"network" yaml:"network"`
+
+	// enable multiqueue.
+	Multiqueue *bool `json:"multiqueue" yaml:"multiqueue"`
+}
+
+func (c *Interface) GetMultiqueue() bool {
+	if c.Multiqueue == nil {
+		return true
+	}
+	return *c.Multiqueue
 }
 
 func (c *Interface) Equal(x *Interface) bool { return reflect.DeepEqual(c, x) }
@@ -45,8 +104,13 @@ type Network struct {
 	Backend []*Backend `json:"backends" yaml:"backends"`
 	Mode    string     `json:"mode" yaml:"mode"`
 
-	Region        string `json:"region" yaml:"region"`
-	MinRegionPeer int    `json:"minRegionPeer" yaml:"minRegionPeer"`
+	MaxConcurrency *uint  `json:"maxConcurrency" yaml:"maxConcurrency"`
+	Region         string `json:"region" yaml:"region"`
+	MinRegionPeer  int    `json:"minRegionPeer" yaml:"minRegionPeer"`
+}
+
+func (c *Network) GetMaxConcurrency() uint {
+	return GetMaxConcurrency(c.MaxConcurrency)
 }
 
 func (c *Network) Equal(x *Network) (e bool) {
@@ -58,7 +122,10 @@ func (c *Network) Equal(x *Network) (e bool) {
 	} else if x == nil {
 		return false
 	}
-	if e = c.PSK == x.PSK && c.Mode == x.Mode && c.Region == x.Region && c.MinRegionPeer == x.MinRegionPeer; !e {
+	if e = c.PSK == x.PSK && c.Mode == x.Mode &&
+		c.Region == x.Region &&
+		c.MinRegionPeer == x.MinRegionPeer &&
+		c.MaxConcurrency == x.MaxConcurrency; !e {
 		return
 	}
 	if c.Iface != x.Iface {

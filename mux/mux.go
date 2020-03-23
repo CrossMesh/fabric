@@ -25,6 +25,7 @@ const (
 type Muxer interface {
 	Mux([]byte) (int, error)
 	Reset() error
+	Parallel() bool
 }
 
 type Demuxer interface {
@@ -64,6 +65,8 @@ func (m *StreamMuxer) Reset() error {
 	m.leadWritten = false
 	return nil
 }
+
+func (m *StreamMuxer) Parallel() bool { return true }
 
 func (m *StreamMuxer) Mux(frame []byte) (written int, err error) {
 	buf := m.allocBuffer()

@@ -12,7 +12,6 @@ import (
 	"git.uestc.cn/sunmxt/utt/route"
 	"git.uestc.cn/sunmxt/utt/rpc"
 	logging "github.com/sirupsen/logrus"
-	"github.com/songgao/water"
 )
 
 // EdgeRouter builds overlay network.
@@ -29,7 +28,7 @@ type EdgeRouter struct {
 
 	forwardArbiter *arbit.Arbiter
 	backends       sync.Map // map[pb.PeerBackend_BackendType]map[string]backend.Backend
-	ifaceDevice    *water.Interface
+	vtep           *virtualTunnelEndpoint
 
 	endpointFailures sync.Map // map[backend.PeerBackendIdentity]time.Time
 
@@ -47,6 +46,7 @@ func New(arbiter *arbit.Arbiter) (a *EdgeRouter, err error) {
 	a = &EdgeRouter{
 		log:     logging.WithField("module", "edge_router"),
 		arbiter: arbiter,
+		vtep:    newVirtualTunnelEndpoint(nil),
 	}
 	if err = a.initRPCStub(); err != nil {
 		return nil, err
@@ -70,6 +70,11 @@ func (r *EdgeRouter) goCleanUp() {
 		}
 		if ra != nil {
 			ra.Shutdown()
+		}
+
+		// close vtep.
+		if err := r.vtep.Close(); err != nil {
+			r.log.Warn("cannot close vtep: ", err)
 		}
 
 		// close backend.

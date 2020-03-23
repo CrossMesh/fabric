@@ -49,6 +49,8 @@ func NewGCMStreamMuxer(w io.Writer, block cipher.Block, nonce []byte) (*GCMStrea
 	return m, nil
 }
 
+func (m *GCMStreamMuxer) Parallel() bool { return false }
+
 func (m *GCMStreamMuxer) Mux(frame []byte) (written int, err error) {
 	if uint32(len(frame)) > maxGCMStreamFrameLength {
 		return 0, FrameTooLarge

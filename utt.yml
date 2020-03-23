@@ -48,6 +48,12 @@ link:
       # [optional] CIDR range of whole virtual network.
       network: 10.240.0.0/20
 
+      # multiqueue tuntap. (default: true)
+      multiqueue: true
+
+    # max forward threads. (default: 8)
+    # maxConcurrency: 8
+
     # Backends that forming network underlay (or Data Plane).
     backends:
     -
@@ -70,13 +76,13 @@ link:
         priority: 1
 
         # packet sending timeout.
-        sendTimeout: 50
+        # sendTimeout: 50
         # TCP send buffer (in byte).
-        sendBuffer: 0
+        # sendBuffer: 0
         # TCP Keepalive period (in second).
-        keepalivePeriod: 60
+        # keepalivePeriod: 60
         # Timeout for establishing peer connection.
-        connectTimeout: 15
+        # connectTimeout: 15
 
         # leading bytes of connection. May be used to identify UTT underlay connection. 
         startCode: "EA30B674"
