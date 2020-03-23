@@ -20,6 +20,9 @@ func (v *virtualTunnelEndpoint) setupTuntapPlatformParameters(cfg *config.Interf
 	if deviceConfig.DeviceType == water.TUN {
 		deviceConfig.Driver = water.MacOSDriverSystem
 	}
+	if cfg.Multiqueue {
+		v.log.Warn("multiqueue not supported for macos yet")
+	}
 }
 
 func (v *virtualTunnelEndpoint) synchronizeSystemPlatformConfig(rw *water.Interface) (err error) {

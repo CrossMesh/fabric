@@ -26,7 +26,7 @@ cover: coverage test
 	go tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html
 
 test: coverage
-	go test -v -coverprofile=$(COVERAGE_DIR)/coverage.out -cover ./mux/... ./rpc/... ./gossip/... ./proto ./route ./arbiter
+	go test -v -bench=. -benchtime=2x -coverprofile=$(COVERAGE_DIR)/coverage.out -cover ./mux/... ./rpc/... ./gossip/... ./proto ./route ./arbiter
 	go tool cover -func=$(COVERAGE_DIR)/coverage.out
 
 build:
@@ -70,7 +70,7 @@ tarball:
 	echo $(REVISION) > utt-$(VERSION)/REVISION
 	go list ./... | grep -E '$(GOMOD)' | sed -E 's|$(GOMOD)||g; /^$$/d; s|/(.*)|\1|; s|/.*||g' | sort | uniq \
 		| sed -E 's|(.*)|\1|' | xargs -n 1 -I {} cp -r {} utt-$(VERSION)/{}
-	cp go.mod go.sum main.go README.md VERSION utt.yml utt-$(VERSION)/
+	cp go.mod go.sum main.go README.md VERSION utt.yml Dockerfile utt-$(VERSION)/
 	sed -E 's|#\{\{BUILD_EXTRA_OPTS\}\}#|-mod vendor|g' Makefile > utt-$(VERSION)/Makefile
 	cd utt-$(VERSION); go mod vendor
 	tar -zvcf ./utt-$(VERSION).tar.gz utt-$(VERSION)

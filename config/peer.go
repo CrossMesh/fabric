@@ -53,6 +53,9 @@ type Interface struct {
 
 	// network CIDR representing whole virtual network.
 	Network string `json:"network" yaml:"network"`
+
+	// enable multiqueue.
+	Multiqueue bool `json:"multiqueue" yaml:"multiqueue" default:"true"`
 }
 
 func (c *Interface) Equal(x *Interface) bool { return reflect.DeepEqual(c, x) }
