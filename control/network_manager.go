@@ -107,6 +107,12 @@ func (n *NetworkManager) UpdateConfig(cfg *config.Daemon) (errs []error) {
 		errs = append(errs, err)
 	}
 
+	if cfg.DebugEnabled() {
+		logging.SetLevel(logging.TraceLevel)
+	} else {
+		logging.SetLevel(logging.InfoLevel)
+	}
+
 	// update networks.
 	networks := cfg.Net
 	if networks == nil {

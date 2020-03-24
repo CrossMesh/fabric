@@ -12,6 +12,9 @@ control:
   # network endpoint.
   endpoint: /var/run/utt_control.sock
 
+# enable debug
+debug: false
+
 # Virtual networks
 link:
 

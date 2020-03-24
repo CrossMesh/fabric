@@ -86,11 +86,13 @@ func (r *EdgeRouter) goCleanUp() {
 		if ra != nil {
 			ra.Join()
 		}
+		r.log.Debug("all routes stopped.")
 		if fa != nil {
 			fa.Join()
 		}
+		r.log.Debug("forwarding stopped.")
 
-		r.log.Info("edgerouter cleaned up.")
+		r.log.Debug("edgerouter cleaned up.")
 	})
 }
 

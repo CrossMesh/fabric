@@ -82,7 +82,7 @@ func (r *EdgeRouter) updateBackends(cfgs []*config.Backend) (err error) {
 func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 	id, log := atomic.AddUint32(&r.configID, 1), r.log.WithField("type", "config")
 
-	log.Infof("start apply configuration %v", id)
+	log.Debugf("start apply configuration %v", id)
 
 	r.arbiter.Go(func() {
 		var (
@@ -107,7 +107,7 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 
 			// update peer and route.
 			if current := r.Mode(); current != "unknown" && cfg.Mode != current {
-				r.log.Info("shutting down forwarding...")
+				r.log.Debug("shutting down forwarding...")
 				r.routeArbiter.Shutdown()
 				r.routeArbiter.Join()
 				r.routeArbiter, r.forwardArbiter, r.route, r.peerSelf, r.membership = nil, nil, nil, nil, nil
@@ -135,7 +135,7 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 
 			// create route.
 			if r.route == nil {
-				log.Info("starting new forwarding...")
+				log.Debug("starting new forwarding...")
 
 				switch cfg.Mode {
 				case "ethernet":
@@ -204,7 +204,7 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 				}
 			}
 
-			r.log.Info("new config applied.")
+			r.log.Debug("new config applied.")
 		}
 	})
 }

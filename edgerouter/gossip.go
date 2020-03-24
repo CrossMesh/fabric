@@ -56,7 +56,7 @@ func (r *EdgeRouter) goGossip(m *route.GossipMembership) {
 
 	r.routeArbiter.TickGo(func(cancel func(), deadline time.Time) {
 		term := m.NewTerm(1)
-		log.Infof("start gossip term %v.", term.ID)
+		log.Debugf("start gossip term %v.", term.ID)
 		ctx, cancel := context.WithDeadline(r.routeArbiter.Context(), deadline)
 		defer cancel()
 
@@ -125,9 +125,9 @@ func (r *EdgeRouter) goGossip(m *route.GossipMembership) {
 			}
 		}
 		if len(peerDigest) < 1 {
-			log.Info("no member to gossip.")
+			log.Debug("no member to gossip.")
 		} else {
-			log.Infof("gossip members: %v.", strings.Join(peerDigest, ","))
+			log.Debugf("gossip members: %v.", strings.Join(peerDigest, ","))
 		}
 		m.Clean(time.Now())
 		wg.Wait()
