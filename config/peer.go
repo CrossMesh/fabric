@@ -147,6 +147,7 @@ func (c *ControlRPC) Equal(x *ControlRPC) bool { return reflect.DeepEqual(c, x) 
 type Daemon struct {
 	Control *ControlRPC         `json:"control" yaml:"control" default:"{}"`
 	Net     map[string]*Network `json:"link" yaml:"link"`
+	Debug   *bool               `json:"debug" yaml:"debug"`
 }
 
 func (c *Daemon) Equal(x *Daemon) (e bool) {
@@ -166,4 +167,11 @@ func (c *Daemon) Equal(x *Daemon) (e bool) {
 		}
 	}
 	return true
+}
+
+func (c *Daemon) DebugEnabled() bool {
+	if c.Debug == nil {
+		return false
+	}
+	return *c.Debug
 }

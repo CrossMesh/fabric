@@ -67,7 +67,7 @@ func (t *TCP) handshakeConnect(log *logging.Entry, connID uint32, adaptedConn ne
 		log.Info("deined for authentication failure.")
 		return accepted, nil
 	}
-	log.Info("authentication success.")
+	log.Debug("authentication success.")
 
 	// init cipher.
 	link := newTCPLink(t)
@@ -97,17 +97,17 @@ func (t *TCP) handshakeConnect(log *logging.Entry, connID uint32, adaptedConn ne
 	welcome.EncodeMessage("ok")
 	buf = welcome.Encode(buf[:0])
 	if _, err = link.muxer.Mux(buf); err != nil {
-		log.Info("send welcome failure: ", err)
+		log.Error("send welcome failure: ", err)
 		return false, err
 	}
 
 	// wait for connect
-	log.Info("negotiate peering information.")
+	log.Debug("negotiate peering information.")
 	var connectReq *proto.Connect
 	if rerr := link.read(func(frame []byte) bool {
 		connectReq = &proto.Connect{}
 		if err = connectReq.Decode(frame); err != nil {
-			log.Info("corrupted connect handshake packet.")
+			log.Error("corrupted connect handshake packet.")
 		}
 		return false
 	}); rerr != nil {
@@ -139,7 +139,7 @@ func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TC
 		}
 	}
 
-	log.Info("handshaking...")
+	log.Debug("handshaking...")
 	// hello
 	hello := proto.Hello{
 		Lead: t.getStartCode(log),
@@ -153,15 +153,15 @@ func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TC
 	buf = hello.Encode(buf[:0])
 	if _, err = link.conn.Write(buf); err != nil {
 		if err == io.EOF {
-			log.Info("connection closed by peer.")
+			log.Error("connection closed by peer.")
 		} else {
-			log.Info("send error: ", err)
+			log.Error("send error: ", err)
 		}
 		return false, err
 	}
 
 	// can init cipher now.
-	log.Info("initialize cipher.")
+	log.Debug("initialize cipher.")
 	buf = buf[:0]
 	buf = append(buf, hello.Lead...)
 	if t.psk != nil {
@@ -175,24 +175,24 @@ func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TC
 	}
 
 	// wait for welcome.
-	log.Info("wait for authentication.")
+	log.Debug("wait for authentication.")
 	var welcome *proto.Welcome
 	if rerr := link.read(func(frame []byte) bool {
 		welcome = &proto.Welcome{}
 		if err = welcome.Decode(frame); err != nil {
-			log.Info("corrupted welcome handshake packet.")
+			log.Error("corrupted welcome handshake packet.")
 		}
 		return false
 	}); rerr != nil {
 		if nerr, ok := rerr.(net.Error); ok && nerr.Timeout() {
-			log.Info("canceled for deadline exceeded.")
+			log.Error("canceled for deadline exceeded.")
 			return false, ErrOperationCanceled
 		}
 		if rerr == io.EOF {
-			log.Info("connection closed by foreign peer.")
+			log.Error("connection closed by foreign peer.")
 			return false, ErrConnectionClosed
 		}
-		log.Info("link read failure: ", rerr)
+		log.Error("link read failure: ", rerr)
 		return false, rerr
 	}
 	if err != nil {
@@ -209,7 +209,7 @@ func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TC
 		return false, nil
 	}
 
-	log.Info("good authentication. connecting...")
+	log.Debug("good authentication. connecting...")
 	// send connect request.
 	connectReq := proto.Connect{
 		Identity: t.config.Publish,
@@ -226,7 +226,7 @@ func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TC
 	}
 	buf = connectReq.Encode(buf[:0])
 	if _, err = link.muxer.Mux(buf); err != nil {
-		log.Info("mux error: ", err)
+		log.Error("mux error: ", err)
 		return false, err
 	}
 	// switch protocol

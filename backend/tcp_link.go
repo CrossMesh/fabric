@@ -292,7 +292,7 @@ func (t *TCP) forwardProc(log *logging.Entry, key string, link *TCPLink) {
 
 	for t.Arbiter.ShouldRun() {
 		if err = link.conn.SetReadDeadline(time.Now().Add(time.Second * 3)); err != nil {
-			log.Info("conn.SetReadDeadline() error: ", err)
+			log.Error("conn.SetReadDeadline() error: ", err)
 			break
 		}
 		if err = link.read(func(frame []byte) bool {

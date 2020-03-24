@@ -186,7 +186,7 @@ func (t *TCP) serve() (err error) {
 func (t *TCP) acceptConnection() (err error) {
 	var conn net.Conn
 
-	t.log.Infof("start accepting connection.")
+	t.log.Debugf("start accepting connection.")
 
 	for t.Arbiter.ShouldRun() {
 		if err != nil {
@@ -213,7 +213,7 @@ func (t *TCP) acceptConnection() (err error) {
 		conn = nil
 	}
 
-	t.log.Infof("stop accepting connection.")
+	t.log.Debugf("stop accepting connection.")
 
 	return nil
 }
@@ -261,7 +261,7 @@ func (t *TCP) acceptTCPLink(log *logging.Entry, link *TCPLink, connectArg *proto
 		log.Errorf("invalid connecting protocol version %v.", connectArg.Version)
 		return false, nil
 	}
-	log.Infof("protocol version: %v", connectArg.Version)
+	log.Debugf("protocol version: %v", connectArg.Version)
 
 	addr, isTCPAddr := link.conn.RemoteAddr().(*net.TCPAddr)
 	if !isTCPAddr {
