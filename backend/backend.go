@@ -4,10 +4,10 @@ import (
 	"errors"
 	"net"
 
-	arbit "git.uestc.cn/sunmxt/utt/arbiter"
 	"git.uestc.cn/sunmxt/utt/config"
 	"git.uestc.cn/sunmxt/utt/proto/pb"
 	logging "github.com/sirupsen/logrus"
+	arbit "github.com/sunmxt/arbiter"
 )
 
 const (

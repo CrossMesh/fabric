@@ -3,11 +3,11 @@ package control
 import (
 	"net"
 
-	arbit "git.uestc.cn/sunmxt/utt/arbiter"
 	"git.uestc.cn/sunmxt/utt/config"
 	"git.uestc.cn/sunmxt/utt/control/rpc/pb"
 	"github.com/jinzhu/configor"
 	logging "github.com/sirupsen/logrus"
+	arbit "github.com/sunmxt/arbiter"
 	"google.golang.org/grpc"
 )
 

@@ -3,9 +3,9 @@ package control
 import (
 	"sync"
 
-	arbit "git.uestc.cn/sunmxt/utt/arbiter"
 	"git.uestc.cn/sunmxt/utt/config"
 	"git.uestc.cn/sunmxt/utt/edgerouter"
+	arbit "github.com/sunmxt/arbiter"
 )
 
 type Network struct {
@@ -49,7 +49,7 @@ func (n *Network) Up() (err error) {
 			return nil
 
 		}
-		n.arbiter = arbit.NewWithParent(n.mgr.arbiter, nil)
+		n.arbiter = arbit.NewWithParent(n.mgr.arbiter)
 		if n.router, err = edgerouter.New(n.arbiter); err != nil {
 			return err
 		}

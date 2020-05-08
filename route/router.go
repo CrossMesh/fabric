@@ -4,9 +4,9 @@ import (
 	"sync"
 	"time"
 
-	arbit "git.uestc.cn/sunmxt/utt/arbiter"
 	"git.uestc.cn/sunmxt/utt/backend"
 	logging "github.com/sirupsen/logrus"
+	arbit "github.com/sunmxt/arbiter"
 )
 
 type Router interface {

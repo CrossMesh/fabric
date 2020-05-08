@@ -10,11 +10,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	arbit "git.uestc.cn/sunmxt/utt/arbiter"
 	"git.uestc.cn/sunmxt/utt/config"
 	"git.uestc.cn/sunmxt/utt/proto"
 	"git.uestc.cn/sunmxt/utt/proto/pb"
 	logging "github.com/sirupsen/logrus"
+	arbit "github.com/sunmxt/arbiter"
 )
 
 func validTCPPublishEndpoint(arr *net.TCPAddr) bool {
@@ -116,7 +116,7 @@ func NewTCP(arbiter *arbit.Arbiter, log *logging.Entry, cfg *TCPBackendConfig, p
 	if cfg.Publish == "" {
 		cfg.Publish = cfg.Bind
 	}
-	t.Arbiter = arbit.NewWithParent(arbiter, nil)
+	t.Arbiter = arbit.NewWithParent(arbiter)
 	t.Arbiter.Go(func() {
 		var err error
 

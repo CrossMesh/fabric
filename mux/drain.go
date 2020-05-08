@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	arbit "git.uestc.cn/sunmxt/utt/arbiter"
 	logging "github.com/sirupsen/logrus"
+	arbit "github.com/sunmxt/arbiter"
 )
 
 // Drainer provides a more efficient stream sending algorithm
@@ -39,7 +39,7 @@ func NewDrainer(arbiter *arbit.Arbiter, log *logging.Entry, w io.Writer, maxBuff
 		buf:      make([]byte, maxBuffer),
 		w:        w,
 		winStart: time.Now(),
-		arbiter:  arbit.NewWithParent(arbiter, nil),
+		arbiter:  arbit.NewWithParent(arbiter),
 		Window:   window,
 		drainSig: make(chan uint32),
 		log:      log,
