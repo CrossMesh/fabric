@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
-	arbit "git.uestc.cn/sunmxt/utt/arbiter"
 	"git.uestc.cn/sunmxt/utt/control"
 	"git.uestc.cn/sunmxt/utt/control/rpc/pb"
 	log "github.com/sirupsen/logrus"
+	arbit "github.com/sunmxt/arbiter"
 	"github.com/urfave/cli/v2"
 )
 
@@ -50,12 +50,12 @@ func newEdgeCmd(app *App) *cli.Command {
 		Name:  "edge",
 		Usage: "run as network peer.",
 		Action: func(ctx *cli.Context) (err error) {
-			arbiter := arbit.New(nil)
+			arbiter := arbit.New()
 			arbiter.HookPreStop(func() {
-				arbiter.Log().Info("shutting down...")
+				log.Info("shutting down...")
 			})
 			arbiter.HookStopped(func() {
-				arbiter.Log().Info("exiting...")
+				log.Info("exiting...")
 			})
 			defer arbiter.Shutdown()
 

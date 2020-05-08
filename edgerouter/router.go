@@ -4,7 +4,6 @@ import (
 	"errors"
 	"sync"
 
-	arbit "git.uestc.cn/sunmxt/utt/arbiter"
 	"git.uestc.cn/sunmxt/utt/backend"
 	"git.uestc.cn/sunmxt/utt/config"
 	"git.uestc.cn/sunmxt/utt/gossip"
@@ -12,6 +11,7 @@ import (
 	"git.uestc.cn/sunmxt/utt/route"
 	"git.uestc.cn/sunmxt/utt/rpc"
 	logging "github.com/sirupsen/logrus"
+	arbit "github.com/sunmxt/arbiter"
 )
 
 // EdgeRouter builds overlay network.

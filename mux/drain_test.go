@@ -6,14 +6,14 @@ import (
 	"testing"
 	"time"
 
-	arbit "git.uestc.cn/sunmxt/utt/arbiter"
 	"github.com/stretchr/testify/assert"
+	arbit "github.com/sunmxt/arbiter"
 )
 
 func TestDrainer(t *testing.T) {
 	maxLatency := time.Second * 2
 
-	arbiter, buffer := arbit.New(nil), bytes.NewBuffer(make([]byte, 0, 32*1024*1024))
+	arbiter, buffer := arbit.New(), bytes.NewBuffer(make([]byte, 0, 32*1024*1024))
 	drainer := NewDrainer(arbiter, nil, buffer, 65536*2, maxLatency)
 	drainer.FastPathThreshold = 65536 * 2
 	drainer.MaxLatency = time.Second

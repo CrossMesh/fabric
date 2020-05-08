@@ -4,15 +4,15 @@ import (
 	"testing"
 	"time"
 
-	arbit "git.uestc.cn/sunmxt/utt/arbiter"
 	"git.uestc.cn/sunmxt/utt/backend"
 	"git.uestc.cn/sunmxt/utt/gossip"
 	"git.uestc.cn/sunmxt/utt/proto/pb"
 	"github.com/stretchr/testify/assert"
+	arbit "github.com/sunmxt/arbiter"
 )
 
 func TestL2Router(t *testing.T) {
-	arbiter := arbit.New(nil)
+	arbiter := arbit.New()
 	frames := [][]byte{
 		[]byte{
 			0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // dst
@@ -229,7 +229,7 @@ func (m *MockGossipMembership) OnRemove(callback func(MembershipPeer)) {
 }
 
 func TestL2MessageGossip(t *testing.T) {
-	arbiter := arbit.New(nil)
+	arbiter := arbit.New()
 
 	seed := func(g *MockGossipMembership, ep backend.PeerBackendIdentity) {
 		p := &L2Peer{}

@@ -4,14 +4,14 @@ import (
 	"testing"
 	"time"
 
-	arbit "git.uestc.cn/sunmxt/utt/arbiter"
 	"git.uestc.cn/sunmxt/utt/backend"
 	"git.uestc.cn/sunmxt/utt/proto/pb"
 	"github.com/stretchr/testify/assert"
+	arbit "github.com/sunmxt/arbiter"
 )
 
 func TestL3Router(t *testing.T) {
-	arbiter := arbit.New(nil)
+	arbiter := arbit.New()
 	packet := [][]byte{
 		[]byte{
 			0x45, 0x00,

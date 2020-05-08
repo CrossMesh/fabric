@@ -7,10 +7,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	arbit "git.uestc.cn/sunmxt/utt/arbiter"
 	"git.uestc.cn/sunmxt/utt/backend"
 	"git.uestc.cn/sunmxt/utt/config"
 	"git.uestc.cn/sunmxt/utt/route"
+	arbit "github.com/sunmxt/arbiter"
 )
 
 func (r *EdgeRouter) updateBackends(cfgs []*config.Backend) (err error) {
@@ -115,11 +115,11 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 			}
 			if r.routeArbiter == nil {
 				rebootRoute = true
-				r.routeArbiter = arbit.NewWithParent(r.arbiter, nil)
+				r.routeArbiter = arbit.NewWithParent(r.arbiter)
 			}
 			if r.forwardArbiter == nil {
 				rebootForward = true
-				r.forwardArbiter = arbit.NewWithParent(r.arbiter, r.log.WithField("type", "forward"))
+				r.forwardArbiter = arbit.NewWithParent(r.arbiter)
 			}
 			// only gossip membership supported yet.
 			if r.membership == nil {

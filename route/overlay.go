@@ -8,11 +8,11 @@ import (
 	"sync"
 	"time"
 
-	arbit "git.uestc.cn/sunmxt/utt/arbiter"
 	"git.uestc.cn/sunmxt/utt/backend"
 	pbp "git.uestc.cn/sunmxt/utt/proto/pb"
 	"github.com/golang/protobuf/ptypes"
 	logging "github.com/sirupsen/logrus"
+	arbit "github.com/sunmxt/arbiter"
 )
 
 // L3PeerReleaseTx is implement of transaction.
