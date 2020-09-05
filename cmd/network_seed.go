@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"git.uestc.cn/sunmxt/utt/control/rpc/pb"
+	"github.com/crossmesh/fabric/control/rpc/pb"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 )

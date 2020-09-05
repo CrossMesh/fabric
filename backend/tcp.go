@@ -10,9 +10,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"git.uestc.cn/sunmxt/utt/config"
-	"git.uestc.cn/sunmxt/utt/proto"
-	"git.uestc.cn/sunmxt/utt/proto/pb"
+	"github.com/crossmesh/fabric/config"
+	"github.com/crossmesh/fabric/proto"
+	"github.com/crossmesh/fabric/proto/pb"
 	logging "github.com/sirupsen/logrus"
 	arbit "github.com/sunmxt/arbiter"
 )

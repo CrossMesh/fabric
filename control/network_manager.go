@@ -3,8 +3,8 @@ package control
 import (
 	"net"
 
-	"git.uestc.cn/sunmxt/utt/config"
-	"git.uestc.cn/sunmxt/utt/control/rpc/pb"
+	"github.com/crossmesh/fabric/config"
+	"github.com/crossmesh/fabric/control/rpc/pb"
 	"github.com/jinzhu/configor"
 	logging "github.com/sirupsen/logrus"
 	arbit "github.com/sunmxt/arbiter"

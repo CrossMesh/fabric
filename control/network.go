@@ -3,8 +3,8 @@ package control
 import (
 	"sync"
 
-	"git.uestc.cn/sunmxt/utt/config"
-	"git.uestc.cn/sunmxt/utt/edgerouter"
+	"github.com/crossmesh/fabric/config"
+	"github.com/crossmesh/fabric/edgerouter"
 	arbit "github.com/sunmxt/arbiter"
 )
 

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"git.uestc.cn/sunmxt/utt/config"
+	"github.com/crossmesh/fabric/config"
 	"github.com/jinzhu/configor"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"

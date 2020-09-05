@@ -7,9 +7,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"git.uestc.cn/sunmxt/utt/backend"
-	"git.uestc.cn/sunmxt/utt/config"
-	"git.uestc.cn/sunmxt/utt/route"
+	"github.com/crossmesh/fabric/backend"
+	"github.com/crossmesh/fabric/config"
+	"github.com/crossmesh/fabric/route"
 	arbit "github.com/sunmxt/arbiter"
 )
 

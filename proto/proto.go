@@ -5,7 +5,7 @@ import (
 	"errors"
 	"reflect"
 
-	"git.uestc.cn/sunmxt/utt/proto/pb"
+	"github.com/crossmesh/fabric/proto/pb"
 	"github.com/golang/protobuf/proto"
 )
 

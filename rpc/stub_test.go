@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
-	"git.uestc.cn/sunmxt/utt/proto"
-	"git.uestc.cn/sunmxt/utt/proto/pb"
+	"github.com/crossmesh/fabric/proto"
+	"github.com/crossmesh/fabric/proto/pb"
 	"github.com/stretchr/testify/assert"
 )
 

@@ -3,7 +3,7 @@ package edgerouter
 import (
 	"os/exec"
 
-	"git.uestc.cn/sunmxt/utt/config"
+	"github.com/crossmesh/fabric/config"
 	"github.com/songgao/water"
 )
 

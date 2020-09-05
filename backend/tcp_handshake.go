@@ -8,7 +8,7 @@ import (
 	"net"
 	"time"
 
-	"git.uestc.cn/sunmxt/utt/proto"
+	"github.com/crossmesh/fabric/proto"
 	logging "github.com/sirupsen/logrus"
 )
 

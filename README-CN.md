@@ -1,6 +1,6 @@
 # CrossMesh
 
-[![Codacy Badge](https://api.codacy.com/project/badge/Grade/e559940e5ce54011ad035c9f5f007c3d)](https://www.codacy.com/manual/Sunmxt/utt?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=Sunmxt/utt&amp;utm_campaign=Badge_Grade) [![pipeline status](https://git.uestc.cn/Sunmxt/utt/badges/master/pipeline.svg)](https://git.uestc.cn/Sunmxt/utt/commits/master) [![coverage report](https://git.uestc.cn/Sunmxt/utt/badges/master/coverage.svg)](https://git.uestc.cn/Sunmxt/utt/commits/master)
+[![Codacy Badge](https://app.codacy.com/project/badge/Grade/a4f9ba98642d4f9798d02642471731ce)](https://www.codacy.com/gh/CrossMesh/fabric?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=CrossMesh/fabric&amp;utm_campaign=Badge_Grade) [![Build Status](https://travis-ci.com/crossmesh/fabric.svg?branch=master)](https://travis-ci.com/crossmesh/fabric) [![codecov](https://codecov.io/gh/crossmesh/fabric/branch/master/graph/badge.svg)](https://codecov.io/gh/crossmesh/fabric)
 
 **CrossMesh** 是一个覆盖网络（Overlay network）方案，用于连接云网络基础设施，构建多机房、混合云基础网络。
 

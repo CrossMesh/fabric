@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"git.uestc.cn/sunmxt/utt/backend"
-	"git.uestc.cn/sunmxt/utt/proto/pb"
+	"github.com/crossmesh/fabric/backend"
+	"github.com/crossmesh/fabric/proto/pb"
 	"github.com/stretchr/testify/assert"
 )
 

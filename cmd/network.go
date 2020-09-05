@@ -4,7 +4,7 @@ import (
 	"net"
 	"time"
 
-	"git.uestc.cn/sunmxt/utt/config"
+	"github.com/crossmesh/fabric/config"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 	"google.golang.org/grpc"

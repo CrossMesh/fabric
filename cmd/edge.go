@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"git.uestc.cn/sunmxt/utt/control"
-	"git.uestc.cn/sunmxt/utt/control/rpc/pb"
+	"github.com/crossmesh/fabric/control"
+	"github.com/crossmesh/fabric/control/rpc/pb"
 	log "github.com/sirupsen/logrus"
 	arbit "github.com/sunmxt/arbiter"
 	"github.com/urfave/cli/v2"

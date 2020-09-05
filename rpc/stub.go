@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"git.uestc.cn/sunmxt/utt/proto"
+	"github.com/crossmesh/fabric/proto"
 	logging "github.com/sirupsen/logrus"
 )
 

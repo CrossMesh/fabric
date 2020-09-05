@@ -1,8 +1,8 @@
 package route
 
 import (
-	"git.uestc.cn/sunmxt/utt/backend"
-	pbp "git.uestc.cn/sunmxt/utt/proto/pb"
+	"github.com/crossmesh/fabric/backend"
+	pbp "github.com/crossmesh/fabric/proto/pb"
 )
 
 const (

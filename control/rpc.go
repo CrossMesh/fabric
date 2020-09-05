@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"git.uestc.cn/sunmxt/utt/backend"
-	cpb "git.uestc.cn/sunmxt/utt/control/rpc/pb"
-	pb "git.uestc.cn/sunmxt/utt/proto/pb"
+	"github.com/crossmesh/fabric/backend"
+	cpb "github.com/crossmesh/fabric/control/rpc/pb"
+	pb "github.com/crossmesh/fabric/proto/pb"
 	logging "github.com/sirupsen/logrus"
 )
 

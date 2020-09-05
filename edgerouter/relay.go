@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
-	"git.uestc.cn/sunmxt/utt/backend"
-	"git.uestc.cn/sunmxt/utt/proto"
-	"git.uestc.cn/sunmxt/utt/proto/pb"
-	"git.uestc.cn/sunmxt/utt/route"
+	"github.com/crossmesh/fabric/backend"
+	"github.com/crossmesh/fabric/proto"
+	"github.com/crossmesh/fabric/proto/pb"
+	"github.com/crossmesh/fabric/route"
 	"github.com/songgao/water"
 )
 

@@ -1,6 +1,6 @@
 .PHONY: test exec bench bin/utt proto cover devtools mock env cloc tarball rpm srpm docker
 
-GOMOD:=git.uestc.cn/sunmxt/utt
+GOMOD:=github.com/crossmesh/fabric
 
 PROJECT_ROOT:=$(shell pwd)
 BUILD_DIR:=build
@@ -26,7 +26,7 @@ cover: coverage test
 	go tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html
 
 test: coverage
-	go test -v -bench=. -benchtime=2x -coverprofile=$(COVERAGE_DIR)/coverage.out -cover ./mux/... ./rpc/... ./gossip/... ./proto ./route ./arbiter
+	go test -v -bench=. -benchtime=2x -coverprofile=$(COVERAGE_DIR)/coverage.out -cover ./mux/... ./rpc/... ./gossip/... ./proto ./route
 	go tool cover -func=$(COVERAGE_DIR)/coverage.out
 
 build:

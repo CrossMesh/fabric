@@ -3,11 +3,11 @@ package edgerouter
 import (
 	"errors"
 
-	"git.uestc.cn/sunmxt/utt/proto"
-	"git.uestc.cn/sunmxt/utt/proto/pb"
+	"github.com/crossmesh/fabric/proto"
+	"github.com/crossmesh/fabric/proto/pb"
 
-	"git.uestc.cn/sunmxt/utt/route"
-	"git.uestc.cn/sunmxt/utt/rpc"
+	"github.com/crossmesh/fabric/route"
+	"github.com/crossmesh/fabric/rpc"
 	pbp "github.com/golang/protobuf/proto"
 	logging "github.com/sirupsen/logrus"
 )

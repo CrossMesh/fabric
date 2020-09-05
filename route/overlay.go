@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"git.uestc.cn/sunmxt/utt/backend"
-	pbp "git.uestc.cn/sunmxt/utt/proto/pb"
+	"github.com/crossmesh/fabric/backend"
+	pbp "github.com/crossmesh/fabric/proto/pb"
 	"github.com/golang/protobuf/ptypes"
 	logging "github.com/sirupsen/logrus"
 	arbit "github.com/sunmxt/arbiter"

@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"git.uestc.cn/sunmxt/utt/config"
+	"github.com/crossmesh/fabric/config"
 	logging "github.com/sirupsen/logrus"
 	"github.com/songgao/water"
 )

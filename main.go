@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"git.uestc.cn/sunmxt/utt/cmd"
+	"github.com/crossmesh/fabric/cmd"
 )
 
 func main() {

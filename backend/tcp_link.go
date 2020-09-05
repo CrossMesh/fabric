@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"git.uestc.cn/sunmxt/utt/mux"
+	"github.com/crossmesh/fabric/mux"
 	logging "github.com/sirupsen/logrus"
 )
 
