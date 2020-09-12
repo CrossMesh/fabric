@@ -9,7 +9,7 @@ require (
 	cloud.google.com/go/logging v1.0.0 // indirect
 	cloud.google.com/go/spanner v1.2.1 // indirect
 	github.com/creack/pty v1.1.9 // indirect
-	github.com/crossmesh/sladder v0.0.0-20200901100157-f948602ca4c3
+	github.com/crossmesh/sladder v0.0.0-20200908070640-c8167afe569d
 	github.com/denisbrodbeck/machineid v1.0.1 // indirect
 	github.com/gogo/protobuf v1.3.1 // indirect
 	github.com/golang/protobuf v1.4.1
