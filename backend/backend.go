@@ -5,7 +5,6 @@ import (
 	"net"
 
 	"github.com/crossmesh/fabric/config"
-	"github.com/crossmesh/fabric/proto/pb"
 	logging "github.com/sirupsen/logrus"
 	arbit "github.com/sunmxt/arbiter"
 )
@@ -29,7 +28,7 @@ type Link interface {
 }
 
 type Backend interface {
-	Type() pb.PeerBackend_BackendType
+	Type() Type
 	Priority() uint32
 
 	Connect(string) (Link, error)
@@ -40,17 +39,38 @@ type Backend interface {
 	IP() net.IP
 }
 
-type PeerBackendIdentity struct {
-	Type     pb.PeerBackend_BackendType
+// Type is identifer of backend.
+type Type uint8
+
+const (
+	// UnknownBackend identifies unknown endpoint.
+	UnknownBackend = Type(0)
+	// TCPBackend identifies TCP Backend.
+	TCPBackend = Type(1)
+)
+
+func (b Type) String() string {
+	switch b {
+	case TCPBackend:
+		return "tcp"
+	default:
+		return "unknown"
+	}
+}
+
+type Endpoint struct {
+	Type     Type
 	Endpoint string
 }
 
-func (p *PeerBackendIdentity) String() string {
+var NullEndpoint = Endpoint{Type: UnknownBackend}
+
+func (p *Endpoint) String() string {
 	return p.Type.String() + ":" + p.Endpoint
 }
 
 type BackendCreator interface {
-	Type() pb.PeerBackend_BackendType
+	Type() Type
 	Priority() uint32
 	Publish() string
 
@@ -61,12 +81,8 @@ var creators = map[string]func(*config.Backend) (BackendCreator, error){
 	"tcp": newTCPCreator,
 }
 
-var NameByType = map[pb.PeerBackend_BackendType]string{
-	pb.PeerBackend_TCP: "tcp",
-}
-
-var TypeByName = map[string]pb.PeerBackend_BackendType{
-	"tcp": pb.PeerBackend_TCP,
+var TypeByName = map[string]Type{
+	TCPBackend.String(): TCPBackend,
 }
 
 func GetCreator(ty string, cfg *config.Backend) (BackendCreator, error) {
@@ -75,12 +91,4 @@ func GetCreator(ty string, cfg *config.Backend) (BackendCreator, error) {
 		return nil, ErrBackendTypeUnknown
 	}
 	return factory(cfg)
-}
-
-func GetBackendIdentityName(ty pb.PeerBackend_BackendType) string {
-	name, ok := NameByType[ty]
-	if !ok {
-		return "unknown"
-	}
-	return name
 }
