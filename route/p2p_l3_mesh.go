@@ -101,7 +101,7 @@ func (r *P2PL3IPv4MeshNetworkRouter) Route(packet []byte, from MeshNetPeer) (pee
 	if hasRoute && origin == from { // exists.
 		return
 	}
-	peerRef, _ := peerSet[from.ID()]
+	peerRef, _ := peerSet[from.HashID()]
 	if peerRef == nil {
 		// do not learn route for an unknown peer.
 		return
@@ -115,7 +115,7 @@ func (r *P2PL3IPv4MeshNetworkRouter) Route(packet []byte, from MeshNetPeer) (pee
 		r.lock.Unlock()
 		return
 	}
-	if ref, _ := peerSet[origin.ID()]; ref != nil { // should has peer.
+	if ref, _ := peerSet[origin.HashID()]; ref != nil { // should has peer.
 		ref.lock.Lock()
 		delete(ref.ipSet, src)
 		ref.lock.Unlock()
@@ -142,7 +142,7 @@ func (r *P2PL3IPv4MeshNetworkRouter) PeerJoin(peer MeshNetPeer) {
 	if peer == nil {
 		return
 	}
-	id := peer.ID()
+	id := peer.HashID()
 	if id == "" {
 		return
 	}
@@ -175,7 +175,7 @@ func (r *P2PL3IPv4MeshNetworkRouter) PeerLeave(peer MeshNetPeer) {
 	if peer == nil {
 		return
 	}
-	id := peer.ID()
+	id := peer.HashID()
 	if id == "" {
 		return
 	}
@@ -248,7 +248,7 @@ func (r *P2PL3IPv4MeshNetworkRouter) AddStaticCIDRRoutes(peer MeshNetPeer, route
 	if peer == nil {
 		return nil
 	}
-	id := peer.ID()
+	id := peer.HashID()
 	if id == "" {
 		return ErrInvalidPeerID
 	}
@@ -257,7 +257,7 @@ func (r *P2PL3IPv4MeshNetworkRouter) AddStaticCIDRRoutes(peer MeshNetPeer, route
 	defer r.lock.Unlock()
 
 	peers, cidrRoutes := r.peers, r.cidrRoutes
-	ref := peers[peer.ID()]
+	ref := peers[peer.HashID()]
 	if ref.peer != peer {
 		return ErrInvalidPeer
 	}

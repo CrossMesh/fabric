@@ -77,7 +77,7 @@ func (r *P2PL2MeshNetworkRouter) Route(frame []byte, from MeshNetPeer) (peers []
 		return
 	}
 
-	peerRef, _ := peerSet[from.ID()]
+	peerRef, _ := peerSet[from.HashID()]
 	if peerRef == nil {
 		// do not learn route for an unknown peer.
 		return
@@ -91,7 +91,7 @@ func (r *P2PL2MeshNetworkRouter) Route(frame []byte, from MeshNetPeer) (peers []
 		r.lock.Unlock()
 		return
 	}
-	if ref, _ := peerSet[origin.ID()]; ref != nil { // should has peer.
+	if ref, _ := peerSet[origin.HashID()]; ref != nil { // should has peer.
 		ref.lock.Lock()
 		delete(ref.macSet, src)
 		ref.lock.Unlock()
@@ -118,7 +118,7 @@ func (r *P2PL2MeshNetworkRouter) PeerJoin(peer MeshNetPeer) {
 	if peer == nil {
 		return
 	}
-	id := peer.ID()
+	id := peer.HashID()
 	if id == "" {
 		return
 	}
@@ -151,7 +151,7 @@ func (r *P2PL2MeshNetworkRouter) PeerLeave(peer MeshNetPeer) {
 	if peer == nil {
 		return
 	}
-	id := peer.ID()
+	id := peer.HashID()
 	if id == "" {
 		return
 	}

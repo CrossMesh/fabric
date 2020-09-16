@@ -2,6 +2,6 @@ package route
 
 // MeshNetPeer is abstraction of mesh network peer.
 type MeshNetPeer interface {
-	ID() string
+	HashID() string
 	IsSelf() bool
 }

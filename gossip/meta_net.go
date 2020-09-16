@@ -24,6 +24,19 @@ type NetworkEndpointSetV1 []*NetworkEndpointV1
 // Len is the number of elements in the collection.
 func (l NetworkEndpointSetV1) Len() int { return len(l) }
 
+// Clone makes a deep copy.
+func (l NetworkEndpointSetV1) Clone() (new NetworkEndpointSetV1) {
+	if l == nil {
+		return nil
+	}
+	for _, el := range l {
+		nel := &NetworkEndpointV1{}
+		*nel = *el
+		new = append(new, nel)
+	}
+	return
+}
+
 func networkEndpointV1Less(a, b *NetworkEndpointV1) bool {
 	if a == nil {
 		return false
@@ -376,3 +389,6 @@ func (t *NetworkEndpointsV1Txn) UpdateEndpoints(endpoints ...NetworkEndpointV1) 
 	}
 	t.new.Endpoints.Build()
 }
+
+// GetEndpoints reports current network endpoints.
+func (t *NetworkEndpointsV1Txn) GetEndpoints() NetworkEndpointSetV1 { return t.new.Endpoints.Clone() }
