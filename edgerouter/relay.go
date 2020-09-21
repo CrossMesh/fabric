@@ -4,13 +4,10 @@ import (
 	"errors"
 	"io"
 	"os"
-	"sync"
 	"time"
 
-	"github.com/crossmesh/fabric/backend"
+	"github.com/crossmesh/fabric/metanet"
 	"github.com/crossmesh/fabric/proto"
-	"github.com/crossmesh/fabric/proto/pb"
-	"github.com/crossmesh/fabric/route"
 	"github.com/songgao/water"
 )
 
@@ -23,71 +20,46 @@ var (
 	ErrRelayNoBackend = errors.New("backend unavaliable")
 )
 
-func (r *EdgeRouter) receiveRemote(b backend.Backend, frame []byte, src string) {
-	msgType, data := proto.UnpackProtocolMessageHeader(frame)
-	peer, _ := r.route.Backward(data, backend.PeerBackendIdentity{
-		Type:     b.Type(),
-		Endpoint: src,
-	})
-	switch msgType {
-	case proto.MsgTypeRPC:
-		r.receiveRPCMessage(data, peer)
-	case proto.MsgTypeRawFrame:
-		r.backwardVTEP(data, peer)
-	default:
-		return
-	}
-}
+func (r *EdgeRouter) receiveRemote(msg *metanet.Message) {
+	peers := r.route.Route(msg.Payload, msg.Peer())
 
-func (r *EdgeRouter) backwardVTEP(frame []byte, peer route.MembershipPeer) {
-	lease, err := r.vtep.QueueLease()
-	if err != nil {
-		r.log.Error("cannot acquire queue lease: ", err)
-		return
-	}
-	if lease == nil {
-		return
-	}
-	err = lease.Tx(func(rw *water.Interface) error {
-		_, err := rw.Write(frame)
-		return err
-	})
-	if err != nil && err != ErrVTEPQueueRevoke {
-		r.log.Error("write VTEP failure: ", err)
-	}
-}
-
-func (r *EdgeRouter) forwardVTEPBackend(frame []byte, desp *route.PeerBackend) error {
-	var b backend.Backend
-	r.visitBackendsWithType(desp.Type, func(endpoint string, be backend.Backend) bool {
-		b = be
-		return false
-	})
-	if b == nil {
-		return ErrRelayNoBackend
-	}
-	link, err := b.Connect(desp.Endpoint)
-	if err != nil {
-		if err == backend.ErrOperationCanceled {
-			return nil
+	eli, isSelf := 0, false
+	for i := 0; i < len(peers); i++ {
+		peer := peers[i]
+		if peer == nil {
+			continue
 		}
-		return nil
+		if peer.IsSelf() {
+			isSelf = true
+			continue
+		}
+		if i != eli {
+			peers[eli] = peers[i]
+		}
 	}
-	return link.Send(frame)
-}
-
-// VTEP to remote peers.
-func (r *EdgeRouter) forwardVTEPPeer(frame []byte, peer route.MembershipPeer) error {
-	if frame == nil || peer == nil {
-		// drop nil frame and unknown destination.
-		return nil
+	peers = peers[:eli]
+	for isSelf {
+		lease, err := r.vtep.QueueLease()
+		if err != nil {
+			r.log.Errorf("cannot acquire queue lease. (err = \"%v\")", err)
+			break
+		}
+		if lease == nil {
+			break
+		}
+		err = lease.Tx(func(rw *water.Interface) error {
+			_, err := rw.Write(msg.Payload)
+			return err
+		})
+		if err != nil && err != ErrVTEPQueueRevoke {
+			r.log.Errorf("fail to write VTEP. (err = \"%v\")", err)
+		}
+		break
 	}
-	desp := peer.ActiveBackend()
-	if desp.Type == pb.PeerBackend_UNKNOWN {
-		// no active backend. drop.
-		return nil
+	for _, p := range peers {
+		// TODO(xutao): optimization.
+		r.metaNet.SendToPeers(proto.MsgTypeRawFrame, msg.Payload, p.(*metanet.MetaPeer))
 	}
-	return r.forwardVTEPBackend(frame, desp)
 }
 
 func (r *EdgeRouter) goForwardVTEP() {
@@ -98,6 +70,7 @@ func (r *EdgeRouter) goForwardVTEP() {
 			lease        *vtepQueueLease
 			err, readErr error
 			read         int
+			peers        []*metanet.MetaPeer
 		)
 
 		for r.forwardArbiter.ShouldRun() {
@@ -129,7 +102,7 @@ func (r *EdgeRouter) goForwardVTEP() {
 			// forward frames.
 			for r.forwardArbiter.ShouldRun() {
 				// encode frame.
-				readBuf := buf[proto.ProtocolMessageHeaderSize:]
+				readBuf := buf[:]
 				err = lease.Tx(func(rw *water.Interface) error {
 					read, readErr = rw.Read(readBuf)
 					if readErr != nil {
@@ -153,32 +126,25 @@ func (r *EdgeRouter) goForwardVTEP() {
 				if read < 1 {
 					continue
 				}
+				readBuf = readBuf[:read]
 
 				// forward.
-				peers := r.route.Forward(readBuf)
-				if len(peers) < 1 {
+				meshPeers := r.route.Route(readBuf, r.metaNet.Publish.Self)
+				if len(meshPeers) < 1 {
 					continue
 				}
-				proto.PackProtocolMessageHeader(buf[:proto.ProtocolMessageHeaderSize], proto.MsgTypeRawFrame)
-				packed := buf[:proto.ProtocolMessageHeaderSize+read]
-				if len(peers) > 1 {
-					// burst.
-					var wg sync.WaitGroup
-					for idx := range peers {
-						wg.Add(1)
-						go func(idx int) {
-							r.forwardVTEPPeer(packed, peers[idx])
-							wg.Done()
-						}(idx)
+				peers = peers[:0]
+				for _, metaPeer := range meshPeers {
+					if metaPeer == nil {
+						continue
 					}
-					wg.Wait()
-					continue
-				}
-				if err = r.forwardVTEPPeer(packed, peers[0]); err != nil {
-					if err != backend.ErrOperationCanceled {
-						r.log.Error("forwardVTEPPeer error:", err)
+					peer, isPeer := metaPeer.(*metanet.MetaPeer)
+					if !isPeer {
+						continue
 					}
+					peers = append(peers, peer)
 				}
+				r.metaNet.SendToPeers(proto.MsgTypeRawFrame, readBuf, peers...)
 			}
 		}
 	})

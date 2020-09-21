@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package pb;
 
+option go_package = "github.com/crossmesh/fabric/proto/pb";
+
 import "google/protobuf/any.proto";
 
 message PeerBackend {
@@ -53,6 +55,6 @@ message RPC {
     bytes data = 5;
 }
 
-message Ping {
-    string echo = 1;
-}
+//message Ping {
+//    string echo = 1;
+//}

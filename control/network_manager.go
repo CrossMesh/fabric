@@ -64,7 +64,7 @@ func (n *NetworkManager) ApplyControlRPCConfig(cfg *config.ControlRPC) (err erro
 				log:            n.log.WithField("type", "control_rpc"),
 			}
 			n.controlRPCServer = grpc.NewServer()
-			pb.RegisterNetworkManagmentServer(n.controlRPCServer, rpcServer)
+			pb.RegisterNetworkManagmentService(n.controlRPCServer, rpcServer.Svc())
 			n.arbiter.Go(func() {
 				if err := n.controlRPCServer.Serve(n.controlListener); err != nil {
 					n.log.Error("grpc.Server.Serve() failure: ", err)
