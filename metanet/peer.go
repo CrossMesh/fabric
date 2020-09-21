@@ -38,6 +38,9 @@ type MetaPeer struct {
 	intervalSubs map[*MetaPeerStateWatcher]struct{}
 }
 
+// SladderNode returns related *sladder.Node.
+func (p *MetaPeer) SladderNode() *sladder.Node { return p.Node }
+
 // HashID returns unique id for hash.
 // This ID will nerver change within lifecycle of peer.
 func (p *MetaPeer) HashID() string {

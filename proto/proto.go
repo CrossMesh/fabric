@@ -36,7 +36,7 @@ const (
 var IDByProtoType map[reflect.Type]uint16 = map[reflect.Type]uint16{
 	reflect.TypeOf((*pb.RPC)(nil)).Elem():          MsgTypeRPC,
 	reflect.TypeOf((*pb.PeerExchange)(nil)).Elem(): MsgTypePeerExchange,
-	reflect.TypeOf((*pb.Ping)(nil)).Elem():         MsgTypePing,
+	//reflect.TypeOf((*pb.Ping)(nil)).Elem():         MsgTypePing,
 
 	reflect.TypeOf((*NetworkRawFrame)(nil)).Elem(): MsgTypeRawFrame,
 }
@@ -44,8 +44,8 @@ var IDByProtoType map[reflect.Type]uint16 = map[reflect.Type]uint16{
 var ConstructorByID map[uint16]func() interface{} = map[uint16]func() interface{}{
 	MsgTypeRPC:          func() interface{} { return &pb.RPC{} },
 	MsgTypePeerExchange: func() interface{} { return &pb.PeerExchange{} },
-	MsgTypePing:         func() interface{} { return &pb.Ping{} },
-	MsgTypeRawFrame:     func() interface{} { return make(NetworkRawFrame, 0) },
+	//MsgTypePing:         func() interface{} { return &pb.Ping{} },
+	MsgTypeRawFrame: func() interface{} { return make(NetworkRawFrame, 0) },
 }
 
 const (

@@ -3,12 +3,79 @@ package metanet
 import (
 	"sort"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/crossmesh/fabric/backend"
+	"github.com/crossmesh/fabric/common"
 	gossipUtils "github.com/crossmesh/fabric/gossip"
 	"github.com/crossmesh/sladder"
 	"github.com/crossmesh/sladder/engine/gossip"
 )
+
+// SeedEndpoints add seed endpoints.
+func (n *MetadataNetwork) SeedEndpoints(endpoints ...backend.Endpoint) (err error) {
+	var errs common.Errors
+
+	errs.Trace(n.gossip.cluster.Txn(func(t *sladder.Transaction) (changed bool) {
+		changed = false
+		for _, endpoint := range endpoints {
+			name := gossipUtils.BuildNodeName(endpoint)
+			node := t.MostPossibleNode([]string{name})
+			if node != nil {
+				continue
+			}
+			if node, err = t.NewNode(); err != nil {
+				errs.Trace(err)
+				return false
+			}
+			rtx, ierr := t.KV(node, gossipUtils.DefaultNetworkEndpointKey)
+			if ierr != nil {
+				errs.Trace(ierr)
+				return false
+			}
+			eps := rtx.(*gossipUtils.NetworkEndpointsV1Txn)
+			if eps.AddEndpoints(endpoint) {
+				changed = true
+			}
+		}
+		return
+	}, sladder.MembershipModification()))
+
+	return errs.AsError()
+}
+
+// UnregisterPeerJoinWatcher registers peer handler for peer joining event.
+func (n *MetadataNetwork) UnregisterPeerJoinWatcher(watch PeerHandler) {
+	n.registerPeerHandler(&n.peerJoinWatcher, watch)
+}
+
+// UnregisterPeerLeaveWatcher registers peer handler for peer leaving event.
+func (n *MetadataNetwork) UnregisterPeerLeaveWatcher(watch PeerHandler) {
+	n.registerPeerHandler(&n.peerLeaveWatcher, watch)
+}
+
+// RegisterPeerJoinWatcher registers peer handler for peer joining event.
+func (n *MetadataNetwork) RegisterPeerJoinWatcher(watch PeerHandler) {
+	n.registerPeerHandler(&n.peerJoinWatcher, watch)
+}
+
+// RegisterPeerLeaveWatcher registers peer handler for peer leaving event.
+func (n *MetadataNetwork) RegisterPeerLeaveWatcher(watch PeerHandler) {
+	n.registerPeerHandler(&n.peerLeaveWatcher, watch)
+}
+
+func (n *MetadataNetwork) registerPeerHandler(registry *sync.Map, watch PeerHandler) {
+	n.lock.Lock()
+	defer n.lock.Unlock()
+	registry.Store(&watch, watch)
+}
+
+func (n *MetadataNetwork) unregisterPeerHandler(registry *sync.Map, watch PeerHandler) {
+	n.lock.Lock()
+	defer n.lock.Unlock()
+	registry.Delete(&watch)
+}
 
 func (n *MetadataNetwork) initializeMembership() (err error) {
 	if n.gossip.cluster != nil {
@@ -182,7 +249,7 @@ func (n *MetadataNetwork) onGossipNodeRemoved(node *sladder.Node) {
 
 	n.lock.Unlock()
 
-	n.notifyPeerLeft(peer)
+	n.notifyPeerWatcher(&n.peerLeaveWatcher, peer)
 }
 
 func (n *MetadataNetwork) onGossipNodeJoined(node *sladder.Node) {
@@ -191,7 +258,7 @@ func (n *MetadataNetwork) onGossipNodeJoined(node *sladder.Node) {
 	n.peers[node] = &peer
 
 	// notify joined event before publish network endpoint.
-	n.notifyPeerJoin(&peer)
+	n.notifyPeerWatcher(&n.peerJoinWatcher, &peer)
 
 	n.updateNetworkEndpoint(&peer, nil)
 
@@ -211,14 +278,6 @@ func (n *MetadataNetwork) notifyPeerWatcher(set *sync.Map, peer *MetaPeer) {
 		}
 		return true
 	})
-}
-
-func (n *MetadataNetwork) notifyPeerJoin(peer *MetaPeer) {
-	n.notifyPeerWatcher(&n.peerJoinWatcher, peer)
-}
-
-func (n *MetadataNetwork) notifyPeerLeft(peer *MetaPeer) {
-	n.notifyPeerWatcher(&n.peerLeaveWatcher, peer)
 }
 
 func (n *MetadataNetwork) onGossipNodeEvent(ctx *sladder.ClusterEventContext, event sladder.Event, node *sladder.Node) {
@@ -262,4 +321,121 @@ func (n *MetadataNetwork) onNetworkEndpointEvent(ctx *sladder.WatchEventContext,
 		meta := meta.(sladder.KeyChangeEventMetadata)
 		n.updateNetworkEndpointFromRaw(peer, meta.New())
 	}
+}
+
+// RepublishEndpoint republish Endpoints.
+func (n *MetadataNetwork) RepublishEndpoint() {
+	id := atomic.AddUint32(&n.configID, 1)
+	n.delayPublishEndpoint(id, false) // submit.
+}
+
+func (n *MetadataNetwork) delayPublishEndpoint(id uint32, delay bool) {
+	n.arbiter.Go(func() {
+		if delay {
+			select {
+			case <-time.After(time.Second * 5):
+			case <-n.arbiter.Exit():
+				return
+			}
+		}
+
+		n.lock.Lock()
+		defer n.lock.Unlock()
+
+		if id < n.configID {
+			return
+		}
+
+		oldEndpoints := make(map[backend.Endpoint]*MetaPeerEndpoint)
+		for _, endpoint := range n.self.Endpoints {
+			oldEndpoints[endpoint.Endpoint] = &endpoint
+		}
+
+		var (
+			newEndpoints []gossipUtils.NetworkEndpointV1
+		)
+
+		localPublish := make([]MetaPeerEndpoint, 0, len(n.backends))
+		for endpoint, backend := range n.backends {
+			oldPublish, hasOldPublish := oldEndpoints[endpoint]
+			if hasOldPublish && oldPublish != nil {
+				localPublish = append(localPublish, MetaPeerEndpoint{
+					Endpoint: endpoint,
+					Priority: backend.Priority(),
+					Disabled: oldPublish.Disabled,
+				})
+				if oldPublish.Disabled {
+					continue // do not gossip disabled endpoint.
+				}
+			} else {
+				localPublish = append(localPublish, MetaPeerEndpoint{
+					Endpoint: endpoint,
+					Priority: backend.Priority(),
+					Disabled: false,
+				})
+			}
+
+			newEndpoints = append(newEndpoints, gossipUtils.NetworkEndpointV1{
+				Type:     endpoint.Type,
+				Endpoint: endpoint.Endpoint,
+				Priority: backend.Priority(),
+			})
+		}
+
+		var errs common.Errors
+
+		errs.Trace(n.gossip.cluster.Txn(func(t *sladder.Transaction) bool {
+			rtx, err := t.KV(n.gossip.cluster.Self(), gossipUtils.DefaultNetworkEndpointKey)
+			if err != nil {
+				errs.Trace(err)
+				return false
+			}
+			eps := rtx.(*gossipUtils.NetworkEndpointsV1Txn)
+			eps.UpdateEndpoints(newEndpoints...)
+			return true
+		}))
+		if err := errs.AsError(); err != nil {
+			n.log.Errorf("failed to commit transaction for endpoint publication. (err = \"%v\")", err)
+			n.delayPublishEndpoint(id, true)
+		}
+
+		// publish locally.
+		typePublish := make(map[backend.Type]backend.Backend)
+		sort.Slice(localPublish, func(i, j int) bool { return localPublish[i].Higher(localPublish[j]) }) // sort by priority.
+		for _, endpoint := range localPublish {
+			candidate, hasBackend := n.backends[endpoint.Endpoint]
+			if !hasBackend {
+				// should not happen.
+				n.log.Warnf("[BUG!] publish an endpoint with a missing backend in local backend store.")
+				n.RepublishEndpoint() // for safefy.
+				continue
+			}
+
+			rb, hasPublish := n.Publish.Type2Backend.Load(endpoint.Type)
+			if hasPublish && rb != nil {
+				currentBackend, valid := rb.(backend.Backend)
+				if !valid || currentBackend == nil {
+					n.log.Warnf("[BUG!] published a invalid backend. [nil = %v]", currentBackend == nil)
+					n.Publish.Type2Backend.Delete(endpoint.Type)
+				} else if currentBackend == candidate && endpoint.Disabled { // disabled
+					n.Publish.Type2Backend.Delete(endpoint.Type)
+				} else { // preserve the currently selected.
+					typePublish[endpoint.Type] = currentBackend
+				}
+			}
+
+			if !endpoint.Disabled {
+				if _, hasCandidate := typePublish[endpoint.Type]; !hasCandidate {
+					typePublish[endpoint.Type] = candidate // select this candidate.
+				}
+			}
+		}
+		for ty, backend := range typePublish { // now publish backends by type.
+			n.Publish.Type2Backend.Store(ty, backend)
+		}
+		// publish to MetaPeer.
+		pub := MetaPeerStatePublication{}
+		pub.Endpoints = localPublish
+		n.self.publishInterval(&pub)
+	})
 }

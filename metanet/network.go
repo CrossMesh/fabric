@@ -1,28 +1,16 @@
 package metanet
 
 import (
-	"sort"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/crossmesh/fabric/backend"
-	"github.com/crossmesh/fabric/common"
 	gossipUtils "github.com/crossmesh/fabric/gossip"
 	"github.com/crossmesh/sladder"
 	"github.com/crossmesh/sladder/engine/gossip"
 	logging "github.com/sirupsen/logrus"
 	arbit "github.com/sunmxt/arbiter"
 )
-
-// KeyReservedError indicates a invalid key for reservation reason.
-type KeyReservedError struct {
-	key string
-}
-
-func (e *KeyReservedError) Error() string {
-	return "key \"" + e.key + "\" is reserved by framework."
-}
 
 // PeerHandler accepts a MetaPeer and does something.
 type PeerHandler func(peer *MetaPeer) bool
@@ -119,10 +107,13 @@ func NewMetadataNetwork(arbiter *arbit.Arbiter, log *logging.Entry) (n *Metadata
 func (n *MetadataNetwork) RegisterDataModel(
 	key string,
 	validator sladder.KVValidator,
-	forceReplace bool,
+	versionWrap bool, forceReplace bool,
 	flags uint32) error {
 	if key == gossipUtils.DefaultNetworkEndpointKey {
 		return &KeyReservedError{key: key}
+	}
+	if versionWrap {
+		validator = n.gossip.engine.WrapVersionKVValidator(validator)
 	}
 	return n.gossip.cluster.RegisterKey(key, validator, forceReplace, flags)
 }
@@ -130,6 +121,22 @@ func (n *MetadataNetwork) RegisterDataModel(
 // SladderTxn executes transaction on Sladder framework.
 func (n *MetadataNetwork) SladderTxn(do func(t *sladder.Transaction) bool) error {
 	return n.gossip.cluster.Txn(do)
+}
+
+// KeyChangeWatcher accepts key change event.
+type KeyChangeWatcher func(meta sladder.KeyValueEventMetadata) bool
+
+// WatchKeyChanges registers key changes watcher.
+func (n *MetadataNetwork) WatchKeyChanges(watcher KeyChangeWatcher, keys ...string) bool {
+	if watcher == nil {
+		return false
+	}
+	ctx := n.gossip.cluster.Keys(keys...).Watch(func(ctx *sladder.WatchEventContext, meta sladder.KeyValueEventMetadata) {
+		if !watcher(meta) {
+			ctx.Unregister()
+		}
+	})
+	return ctx != nil
 }
 
 // Close quits from metadata network.
@@ -192,123 +199,6 @@ func (n *MetadataNetwork) delayLocalEndpointCreation(id uint32, creators ...back
 		if changed {
 			n.delayPublishEndpoint(id, false)
 		}
-	})
-}
-
-// RepublishEndpoint republish Endpoints.
-func (n *MetadataNetwork) RepublishEndpoint() {
-	id := atomic.AddUint32(&n.configID, 1)
-	n.delayPublishEndpoint(id, false) // submit.
-}
-
-func (n *MetadataNetwork) delayPublishEndpoint(id uint32, delay bool) {
-	n.arbiter.Go(func() {
-		if delay {
-			select {
-			case <-time.After(time.Second * 5):
-			case <-n.arbiter.Exit():
-				return
-			}
-		}
-
-		n.lock.Lock()
-		defer n.lock.Unlock()
-
-		if id < n.configID {
-			return
-		}
-
-		oldEndpoints := make(map[backend.Endpoint]*MetaPeerEndpoint)
-		for _, endpoint := range n.self.Endpoints {
-			oldEndpoints[endpoint.Endpoint] = &endpoint
-		}
-
-		var (
-			newEndpoints []gossipUtils.NetworkEndpointV1
-		)
-
-		localPublish := make([]MetaPeerEndpoint, 0, len(n.backends))
-		for endpoint, backend := range n.backends {
-			oldPublish, hasOldPublish := oldEndpoints[endpoint]
-			if hasOldPublish && oldPublish != nil {
-				localPublish = append(localPublish, MetaPeerEndpoint{
-					Endpoint: endpoint,
-					Priority: backend.Priority(),
-					Disabled: oldPublish.Disabled,
-				})
-				if oldPublish.Disabled {
-					continue // do not gossip disabled endpoint.
-				}
-			} else {
-				localPublish = append(localPublish, MetaPeerEndpoint{
-					Endpoint: endpoint,
-					Priority: backend.Priority(),
-					Disabled: false,
-				})
-			}
-
-			newEndpoints = append(newEndpoints, gossipUtils.NetworkEndpointV1{
-				Type:     endpoint.Type,
-				Endpoint: endpoint.Endpoint,
-				Priority: backend.Priority(),
-			})
-		}
-
-		var errs common.Errors
-
-		errs.Trace(n.gossip.cluster.Txn(func(t *sladder.Transaction) bool {
-			rtx, err := t.KV(n.gossip.cluster.Self(), gossipUtils.DefaultNetworkEndpointKey)
-			if err != nil {
-				errs.Trace(err)
-				return false
-			}
-			eps := rtx.(*gossipUtils.NetworkEndpointsV1Txn)
-			eps.UpdateEndpoints(newEndpoints...)
-			return true
-		}))
-		if err := errs.AsError(); err != nil {
-			n.log.Errorf("failed to commit transaction for endpoint publication. (err = \"%v\")", err)
-			n.delayPublishEndpoint(id, true)
-		}
-
-		// publish locally.
-		typePublish := make(map[backend.Type]backend.Backend)
-		sort.Slice(localPublish, func(i, j int) bool { return localPublish[i].Higher(localPublish[j]) }) // sort by priority.
-		for _, endpoint := range localPublish {
-			candidate, hasBackend := n.backends[endpoint.Endpoint]
-			if !hasBackend {
-				// should not happen.
-				n.log.Warnf("[BUG!] publish an endpoint with a missing backend in local backend store.")
-				n.RepublishEndpoint() // for safefy.
-				continue
-			}
-
-			rb, hasPublish := n.Publish.Type2Backend.Load(endpoint.Type)
-			if hasPublish && rb != nil {
-				currentBackend, valid := rb.(backend.Backend)
-				if !valid || currentBackend == nil {
-					n.log.Warnf("[BUG!] published a invalid backend. [nil = %v]", currentBackend == nil)
-					n.Publish.Type2Backend.Delete(endpoint.Type)
-				} else if currentBackend == candidate && endpoint.Disabled { // disabled
-					n.Publish.Type2Backend.Delete(endpoint.Type)
-				} else { // preserve the currently selected.
-					typePublish[endpoint.Type] = currentBackend
-				}
-			}
-
-			if !endpoint.Disabled {
-				if _, hasCandidate := typePublish[endpoint.Type]; !hasCandidate {
-					typePublish[endpoint.Type] = candidate // select this candidate.
-				}
-			}
-		}
-		for ty, backend := range typePublish { // now publish backends by type.
-			n.Publish.Type2Backend.Store(ty, backend)
-		}
-		// publish to MetaPeer.
-		pub := MetaPeerStatePublication{}
-		pub.Endpoints = localPublish
-		n.self.publishInterval(&pub)
 	})
 }
 

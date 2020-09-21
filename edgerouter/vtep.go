@@ -16,6 +16,7 @@ var (
 	ErrNoAvaliableInterface = errors.New("no avaliable interface")
 	ErrVTEPClosed           = errors.New("VTEP is closed")
 	ErrVTEPQueueRevoke      = errors.New("VTEP queue is revoked")
+	ErrUnknownMode          = errors.New("unknown tuntap mode")
 )
 
 type vtepQueueLease struct {

@@ -46,6 +46,8 @@ require (
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1 // indirect
 	golang.org/x/mobile v0.0.0-20200212152714-2b26a4705d24 // indirect
 	google.golang.org/api v0.19.0 // indirect
-	google.golang.org/grpc v1.27.1
+	google.golang.org/grpc v1.32.0
+	google.golang.org/grpc/cmd/protoc-gen-go-grpc v0.0.0-20200917190803-0f7e218c2cf4 // indirect
+	google.golang.org/protobuf v1.25.0
 	gopkg.in/yaml.v2 v2.2.8 // indirect
 )

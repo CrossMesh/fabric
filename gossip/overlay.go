@@ -40,6 +40,7 @@ func (e *NetworkNotFoundError) Error() string {
 type OverlayDriverType uint16
 
 const (
+	UnknownOverlayDriver      = OverlayDriverType(0)
 	CrossmeshSymmetryEthernet = OverlayDriverType(1)
 	CrossmeshSymmetryRoute    = OverlayDriverType(2)
 	VxLAN                     = OverlayDriverType(3)
@@ -475,6 +476,12 @@ func (t *OverlayNetworksV1Txn) NetworkList() (ids []NetworkID) {
 		ids = append(ids, netID)
 	}
 	return ids
+}
+
+// NetworkFromID returns network with specific NetworkID.
+func (t *OverlayNetworksV1Txn) NetworkFromID(id NetworkID) *OverlayNetworkV1 {
+	v1, _ := t.cur.Networks[id]
+	return v1
 }
 
 // ParamsTxn creates get KVTransaction for network params.

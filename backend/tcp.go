@@ -12,7 +12,6 @@ import (
 
 	"github.com/crossmesh/fabric/config"
 	"github.com/crossmesh/fabric/proto"
-	"github.com/crossmesh/fabric/proto/pb"
 	logging "github.com/sirupsen/logrus"
 	arbit "github.com/sunmxt/arbiter"
 )
@@ -72,9 +71,9 @@ func newTCPCreator(cfg *config.Backend) (BackendCreator, error) {
 	return c, nil
 }
 
-func (c *tcpCreator) Type() pb.PeerBackend_BackendType { return pb.PeerBackend_TCP }
-func (c *tcpCreator) Priority() uint32                 { return c.cfg.Priority }
-func (c *tcpCreator) Publish() string                  { return c.cfg.Publish }
+func (c *tcpCreator) Type() Type       { return TCPBackend }
+func (c *tcpCreator) Priority() uint32 { return c.cfg.Priority }
+func (c *tcpCreator) Publish() string  { return c.cfg.Publish }
 func (c *tcpCreator) New(arbiter *arbit.Arbiter, log *logging.Entry) (Backend, error) {
 	return NewTCP(arbiter, log, &c.cfg, &c.cfg.raw.PSK)
 }
@@ -314,8 +313,8 @@ func (t *TCP) Port() uint16 {
 }
 
 // Type returns backend type ID.
-func (t *TCP) Type() pb.PeerBackend_BackendType {
-	return pb.PeerBackend_TCP
+func (t *TCP) Type() Type {
+	return TCPBackend
 }
 
 // Publish returns publish endpoint.
