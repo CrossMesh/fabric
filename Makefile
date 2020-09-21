@@ -53,9 +53,9 @@ rpm:
 srpm:
 	rpm/makerpm.sh srpm
 
-proto: bin/protoc-gen-go
-	protoc -I=$(PROJECT_ROOT) --go_out=$(PROJECT_ROOT) proto/pb/core.proto
-	protoc -I=$(PROJECT_ROOT) --go_out=plugins=grpc:$(PROJECT_ROOT) control/rpc/pb/core.proto
+proto: $(GOPATH)/bin/protoc-gen-go $(GOPATH)/bin/protoc-gen-go-grpc
+	protoc -I=$(PROJECT_ROOT) --go_out=module=$(GOMOD):. proto/pb/core.proto
+	protoc -I=$(PROJECT_ROOT) --go_out=. --go-grpc_out=. --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative control/rpc/pb/core.proto
 	find -E . -name '*.pb.go' -type f -not -path './build/*' | xargs sed -i '' "s|\"proto/pb\"|\"$(GOMOD)/proto/pb\"|g; s|\"control/rpc/pb\"|\"$(GOMOD)/control/rpc/pb\"|g"
 
 docker: bin/utt
@@ -97,3 +97,6 @@ $(GOPATH)/bin/goimports:
 
 $(GOPATH)/bin/mockery:
 	go get -u github.com/vektra/mockery/cmd/mockery
+
+$(GOPATH)/bin/protoc-gen-go-grpc:
+	go get -u google.golang.org/grpc/cmd/protoc-gen-go-grpc

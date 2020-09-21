@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/crossmesh/fabric/backend"
+	"github.com/crossmesh/fabric/control/rpc/pb"
 	cpb "github.com/crossmesh/fabric/control/rpc/pb"
-	pb "github.com/crossmesh/fabric/proto/pb"
 	logging "github.com/sirupsen/logrus"
 )
 
@@ -20,6 +20,14 @@ type controlRPCServer struct {
 	*NetworkManager
 
 	log *logging.Entry
+}
+
+func (s *controlRPCServer) Svc() *pb.NetworkManagmentService {
+	return &pb.NetworkManagmentService{
+		SeedPeer:     s.SeedPeer,
+		SetNetwork:   s.SetNetwork,
+		ReloadConfig: s.ReloadConfig,
+	}
 }
 
 func (s *controlRPCServer) SetNetwork(ctx context.Context, req *cpb.SetNetworkRequest) (*cpb.Result, error) {
@@ -59,18 +67,18 @@ func (s *controlRPCServer) SeedPeer(ctx context.Context, req *cpb.SeedPeerReques
 	if !net.Active() || router == nil {
 		return resultNetworkIsDown, nil
 	}
-	endpoints := make([]backend.PeerBackendIdentity, 0, len(req.Endpoint))
+	endpoints := make([]backend.Endpoint, 0, len(req.Endpoint))
 	for _, b := range req.Endpoint {
 		ty, hasType := backend.TypeByName[b.EndpointType]
-		if !hasType || ty == pb.PeerBackend_UNKNOWN {
+		if !hasType || ty == backend.UnknownBackend {
 			return &cpb.Result{Succeed: false, Message: "unsupported endpoint type \"" + b.EndpointType + "\""}, nil
 		}
-		endpoints = append(endpoints, backend.PeerBackendIdentity{
+		endpoints = append(endpoints, backend.Endpoint{
 			Type:     ty,
 			Endpoint: b.Endpoint,
 		})
 	}
-	if err := net.Router().GossipSeedPeer(endpoints...); err != nil {
+	if err := net.Router().SeedPeer(endpoints...); err != nil {
 		return &cpb.Result{Succeed: false, Message: err.Error()}, err
 	}
 	return resultOK, nil

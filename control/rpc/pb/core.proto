@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package pb;
 
+option go_package = "github.com/crossmesh/fabric/control/rpc/pb";
+
 message SeedPeerRequest {
     string network = 1;
     message EndpointIdentity {
