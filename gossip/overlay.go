@@ -108,7 +108,7 @@ type OverlayNetworksV1 struct {
 }
 
 const (
-	// DefaultOverlayNetworkKey
+	// DefaultOverlayNetworkKey is default key name for OverlayNetworks model on gossip framework.
 	DefaultOverlayNetworkKey = "overlay_network"
 )
 
@@ -349,6 +349,9 @@ type OverlayNetworksV1Txn struct {
 	old, cur  *OverlayNetworksV1
 	paramTxns map[NetworkID]sladder.KVTransaction
 }
+
+// CloneCurrent makes deepcopy of current OverlayNetworksV1 structure.
+func (t *OverlayNetworksV1Txn) CloneCurrent() *OverlayNetworksV1 { return t.cur.DeepCopy() }
 
 // Txn starts KVTransaction of OverlayNetworksV1.
 func (v1 *OverlayNetworksValidatorV1) Txn(kv sladder.KeyValue) (sladder.KVTransaction, error) {

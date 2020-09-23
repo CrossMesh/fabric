@@ -95,6 +95,8 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 					log.Info("network mode: overlay")
 					r.route = route.NewP2PL3IPv4MeshNetworkRouter()
 				}
+
+				r.rebuildRoute(false)
 			}
 
 			// update vetp.

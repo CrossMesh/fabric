@@ -1,9 +1,11 @@
 package route
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net"
+	"sort"
 	"sync"
 
 	"github.com/crossmesh/fabric/common"
@@ -240,8 +242,49 @@ func (r *P2PL3IPv4MeshNetworkRouter) PeerLeave(peer MeshNetPeer) {
 	r.peers = newPeers
 }
 
+// RemoveStaticCIDRRoutes removes static CIDR prefix routes.
+func (r *P2PL3IPv4MeshNetworkRouter) RemoveStaticCIDRRoutes(peer MeshNetPeer, routes ...*net.IPNet) bool {
+	if len(routes) < 1 {
+		return false
+	}
+	if peer == nil {
+		return false
+	}
+
+	cidrRoutes, newCIDRRoutes := r.cidrRoutes, ([]*p2pL3IPv4CIDRRoute)(nil)
+	set := common.IPNetSet(routes)
+	set.Build()
+	for i, copyPtr := 0, 0; i < len(cidrRoutes); i++ {
+		route := cidrRoutes[i]
+		if route.peer == peer {
+			if idx := sort.Search(set.Len(), func(i int) bool { return common.IPNetLess(&route.cidr, set[i]) }); idx < set.Len() {
+				if possibleRoute := set[i]; bytes.Compare(possibleRoute.IP, route.cidr.IP) == 0 &&
+					bytes.Compare(possibleRoute.Mask, route.cidr.Mask) == 0 {
+					continue
+				}
+			}
+		}
+
+		if newCIDRRoutes == nil {
+			if copyPtr != i {
+				newCIDRRoutes = append(newCIDRRoutes, cidrRoutes[:copyPtr]...)
+			}
+		} else {
+			newCIDRRoutes = append(newCIDRRoutes, route)
+		}
+		copyPtr++
+	}
+
+	if newCIDRRoutes != nil {
+		r.cidrRoutes = newCIDRRoutes
+		return true
+	}
+
+	return false
+}
+
 // AddStaticCIDRRoutes add static CIDR prefix routes.
-func (r *P2PL3IPv4MeshNetworkRouter) AddStaticCIDRRoutes(peer MeshNetPeer, routes ...net.IPNet) error {
+func (r *P2PL3IPv4MeshNetworkRouter) AddStaticCIDRRoutes(peer MeshNetPeer, routes ...*net.IPNet) error {
 	if len(routes) < 1 {
 		return nil
 	}
@@ -266,14 +309,17 @@ func (r *P2PL3IPv4MeshNetworkRouter) AddStaticCIDRRoutes(peer MeshNetPeer, route
 		set = append(set, &route.cidr)
 	}
 	for _, route := range routes {
-		set = append(set, &route)
+		if route == nil {
+			continue
+		}
+		set = append(set, route)
 	}
 	if overlapped, n1, n2 := common.IPNetOverlapped(set...); overlapped {
 		return fmt.Errorf("route CIDR %v and route CIDR %v are overlapped in range", n1.String(), n2.String())
 	}
 	for _, cidr := range routes { // just append.
 		cidrRoutes = append(cidrRoutes, &p2pL3IPv4CIDRRoute{
-			cidr: cidr,
+			cidr: *cidr,
 			peer: peer,
 		})
 	}

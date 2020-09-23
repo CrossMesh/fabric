@@ -124,7 +124,7 @@ func (n *MetadataNetwork) SladderTxn(do func(t *sladder.Transaction) bool) error
 }
 
 // KeyChangeWatcher accepts key change event.
-type KeyChangeWatcher func(meta sladder.KeyValueEventMetadata) bool
+type KeyChangeWatcher func(peer *MetaPeer, meta sladder.KeyValueEventMetadata) bool
 
 // WatchKeyChanges registers key changes watcher.
 func (n *MetadataNetwork) WatchKeyChanges(watcher KeyChangeWatcher, keys ...string) bool {
@@ -132,7 +132,14 @@ func (n *MetadataNetwork) WatchKeyChanges(watcher KeyChangeWatcher, keys ...stri
 		return false
 	}
 	ctx := n.gossip.cluster.Keys(keys...).Watch(func(ctx *sladder.WatchEventContext, meta sladder.KeyValueEventMetadata) {
-		if !watcher(meta) {
+		n.lock.RLock()
+		peer, hasPeer := n.peers[meta.Node()]
+		n.lock.RUnlock()
+		if !hasPeer {
+			return
+		}
+
+		if !watcher(peer, meta) {
 			ctx.Unregister()
 		}
 	})

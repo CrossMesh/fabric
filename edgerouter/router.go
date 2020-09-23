@@ -24,6 +24,9 @@ type EdgeRouter struct {
 	overlayModel    *gossip.OverlayNetworksValidatorV1
 	overlayModelKey string
 
+	// contains global overlay network.
+	networkMap map[*metanet.MetaPeer]map[gossip.NetworkID]interface{}
+
 	vtep *virtualTunnelEndpoint
 
 	endpointFailures sync.Map // map[backend.Endpoint]time.Time
