@@ -103,11 +103,12 @@ func (s *IPNetSet) Equal(s2 *IPNetSet) bool {
 }
 
 // Merge merges IPNetSet.
-func (s *IPNetSet) Merge(src *IPNetSet) bool { return SortedSetMerge(s, src) }
+func (s *IPNetSet) Merge(src IPNetSet) bool { return SortedSetMerge(s, &src) }
 
 // Remove removes networks from set.
 func (s *IPNetSet) Remove(nets ...*net.IPNet) bool {
 	r := IPNetSet(nets)
+	r = r.Clone()
 	r.Build()
 
 	return SortedSetSubstract(s, &r, func(x, y interface{}) bool {
@@ -140,6 +141,7 @@ func IPNetOverlapped(nets ...*net.IPNet) (bool, *net.IPNet, *net.IPNet) {
 		return false, nil, nil
 	}
 	set := IPNetSet(nets)
+	set = set.Clone()
 	set.Build()
 	_, n1, n2 := set.FindOverlapped(0)
 	return n1 != nil, n1, n2

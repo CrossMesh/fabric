@@ -70,21 +70,30 @@ func SortedSetSubstract(l, r SortedSetInterface, less func(x, y interface{}) boo
 	changed = false
 	if l.Len() > 0 && r.Len() > 0 {
 		eli, lh := 0, 0
-		for rh := 0; lh < l.Len() && rh < r.Len(); lh++ {
-			le, re := l.Elem(lh), l.Elem(rh)
+		for rh := 0; lh < l.Len() && rh < r.Len(); {
+			le, re := l.Elem(lh), r.Elem(rh)
 			lle, rle := less(le, re), less(re, le)
 			if lle == rle {
+				lh++
 				continue
 			} else if rle {
 				rh++
+				continue
 			}
 
 			if eli != lh {
 				l.Swap(eli, lh)
 			}
+			lh++
+			eli++
 		}
-		if eli != lh {
-			l.Pop(eli - lh)
+		if lh < l.Len() && eli != lh {
+			for lh < l.Len() {
+				l.Swap(eli, lh)
+				lh++
+				eli++
+			}
+			l.Pop(lh - eli)
 			changed = true
 		}
 	}
@@ -134,11 +143,12 @@ func SortedSetMerge(l, r SortedSetInterface) (changed bool) {
 	for lh > 0 && rh > 0 {
 		lidx, ridx := lIdxMap[lh-1], rIdxMap[rh-1]
 		lle, rle := l.Less(lidx, ridx), l.Less(ridx, lidx)
-		if lle || // left is less.
-			lle == rle { // equal.
-			left(lidx)
-		} else {
+		if lle == rle {
 			right(ridx)
+		} else if lle {
+			right(ridx)
+		} else {
+			left(lidx)
 		}
 	}
 	for lh > 0 {
