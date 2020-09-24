@@ -9,7 +9,7 @@ func (e Errors) Error() (s string) {
 	}
 
 	for _, err := range e[:len(e)-1] {
-		s += err.Error() + "=>"
+		s += err.Error() + " => "
 	}
 	s += e[len(e)-1].Error()
 
