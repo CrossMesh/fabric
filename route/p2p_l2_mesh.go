@@ -45,7 +45,14 @@ func (r *P2PL2MeshNetworkRouter) Route(frame []byte, from MeshNetPeer) (peers []
 
 	routes, peerSet := r.mac2Peer, r.peers // for lock-free read, must copy a reference first.
 
+	fromRef, _ := peerSet[from.HashID()]
+	if fromRef == nil {
+		// drop frame from an unknown peer.
+		return
+	}
+
 	copy(dst[:], frame[0:6])
+	copy(src[:], frame[6:12])
 	if 0 != bytes.Compare(dst[:], EthernetBoardcastAddress[:]) { // not boardcast.
 		if dst[0]&0x01 != 0 { // multicast not supported now.
 			return nil
@@ -55,10 +62,10 @@ func (r *P2PL2MeshNetworkRouter) Route(frame []byte, from MeshNetPeer) (peers []
 			peers = []MeshNetPeer{peer.(MeshNetPeer)}
 		}
 	}
-	if len(peers) < 1 { // boardcast.
+	if len(peers) < 1 && from.IsSelf() { // boardcast.
 		for _, ref := range peerSet {
 			peer := ref.peer
-			if peer.IsSelf() {
+			if peer.IsSelf() || peer == from {
 				continue
 			}
 			peers = append(peers, peer)
@@ -66,7 +73,6 @@ func (r *P2PL2MeshNetworkRouter) Route(frame []byte, from MeshNetPeer) (peers []
 	}
 
 	// learn.
-	copy(src[:], frame[6:12])
 	if 0 == bytes.Compare(src[:], EthernetBoardcastAddress[:]) {
 		// do not learn boardcast address.
 		return
@@ -74,12 +80,6 @@ func (r *P2PL2MeshNetworkRouter) Route(frame []byte, from MeshNetPeer) (peers []
 
 	origin, hasRoute := routes[src]
 	if hasRoute && origin == from {
-		return
-	}
-
-	peerRef, _ := peerSet[from.HashID()]
-	if peerRef == nil {
-		// do not learn route for an unknown peer.
 		return
 	}
 
@@ -91,14 +91,16 @@ func (r *P2PL2MeshNetworkRouter) Route(frame []byte, from MeshNetPeer) (peers []
 		r.lock.Unlock()
 		return
 	}
-	if ref, _ := peerSet[origin.HashID()]; ref != nil { // should has peer.
-		ref.lock.Lock()
-		delete(ref.macSet, src)
-		ref.lock.Unlock()
+	if origin != nil {
+		if ref, _ := peerSet[origin.HashID()]; ref != nil { // should has peer.
+			ref.lock.Lock()
+			delete(ref.macSet, src)
+			ref.lock.Unlock()
+		}
 	}
-	peerRef.lock.Lock()
-	peerRef.macSet[src] = struct{}{}
-	peerRef.lock.Unlock()
+	fromRef.lock.Lock()
+	fromRef.macSet[src] = struct{}{}
+	fromRef.lock.Unlock()
 
 	// route updates.
 	newRoutes := make(map[[6]byte]MeshNetPeer, len(routes))
@@ -124,7 +126,7 @@ func (r *P2PL2MeshNetworkRouter) PeerJoin(peer MeshNetPeer) {
 	}
 
 	peers := r.peers
-	if ref := peers[id]; peer == ref.peer {
+	if ref, hasPeer := peers[id]; hasPeer && peer == ref.peer {
 		return
 	}
 
@@ -132,7 +134,7 @@ func (r *P2PL2MeshNetworkRouter) PeerJoin(peer MeshNetPeer) {
 	defer r.lock.Unlock()
 
 	peers = r.peers
-	if ref := peers[id]; peer == ref.peer {
+	if ref, hasPeer := peers[id]; hasPeer && peer == ref.peer {
 		return
 	}
 	newPeers := make(map[string]*p2pL2MeshPeerRef, len(peers))
@@ -173,22 +175,22 @@ func (r *P2PL2MeshNetworkRouter) PeerLeave(peer MeshNetPeer) {
 	ref.lock.Lock()
 	// route updates.
 	newRoutes := make(map[[6]byte]MeshNetPeer, len(routes))
-	for mac, peer := range routes {
-		if _, exist := ref.macSet[mac]; exist {
+	for mac, target := range routes {
+		if _, exist := ref.macSet[mac]; exist && peer == target {
 			continue
 		}
-		newRoutes[mac] = peer
+		newRoutes[mac] = target
 	}
 	r.mac2Peer = newRoutes // replace the old.
 	ref.lock.Unlock()
 
 	// peer updates.
 	newPeers := make(map[string]*p2pL2MeshPeerRef, len(peers))
-	for oid, peer := range peers {
-		if oid == id {
+	for pid, peer := range peers {
+		if pid == id {
 			continue
 		}
-		newPeers[id] = peer
+		newPeers[pid] = peer
 	}
 	r.peers = newPeers
 }

@@ -61,6 +61,12 @@ func (r *P2PL3IPv4MeshNetworkRouter) Route(packet []byte, from MeshNetPeer) (pee
 
 	ip2Peer, peerSet, cidrRoutes := r.ip2Peer, r.peers, r.cidrRoutes // for lock-free read, must copy a reference first.
 
+	fromRef, _ := peerSet[from.HashID()]
+	if fromRef == nil {
+		// drop packet from an unknown peer.
+		return
+	}
+
 	copy(dst[:], packet[16:20])
 	ip := net.IP(dst[0:4])
 	if !ip.IsLoopback() && !ip.IsMulticast() && !ip.IsUnspecified() && !ip.IsLinkLocalUnicast() {
@@ -82,7 +88,11 @@ func (r *P2PL3IPv4MeshNetworkRouter) Route(packet []byte, from MeshNetPeer) (pee
 		}
 		if len(peers) < 1 { // boardcast.
 			for _, ref := range peerSet {
-				peers = append(peers, ref.peer)
+				peer := ref.peer
+				if peer.IsSelf() || peer == from {
+					continue
+				}
+				peers = append(peers, peer)
 			}
 		}
 	} // else {
@@ -103,11 +113,6 @@ func (r *P2PL3IPv4MeshNetworkRouter) Route(packet []byte, from MeshNetPeer) (pee
 	if hasRoute && origin == from { // exists.
 		return
 	}
-	peerRef, _ := peerSet[from.HashID()]
-	if peerRef == nil {
-		// do not learn route for an unknown peer.
-		return
-	}
 
 	// try to update routes.
 	r.lock.Lock()
@@ -117,14 +122,16 @@ func (r *P2PL3IPv4MeshNetworkRouter) Route(packet []byte, from MeshNetPeer) (pee
 		r.lock.Unlock()
 		return
 	}
-	if ref, _ := peerSet[origin.HashID()]; ref != nil { // should has peer.
-		ref.lock.Lock()
-		delete(ref.ipSet, src)
-		ref.lock.Unlock()
+	if origin != nil {
+		if ref, _ := peerSet[origin.HashID()]; ref != nil { // should has peer.
+			ref.lock.Lock()
+			delete(ref.ipSet, src)
+			ref.lock.Unlock()
+		}
 	}
-	peerRef.lock.Lock()
-	peerRef.ipSet[src] = struct{}{}
-	peerRef.lock.Unlock()
+	fromRef.lock.Lock()
+	fromRef.ipSet[src] = struct{}{}
+	fromRef.lock.Unlock()
 
 	// route updates.
 	newRoutes := make(map[[4]byte]MeshNetPeer, len(ip2Peer))
@@ -150,7 +157,7 @@ func (r *P2PL3IPv4MeshNetworkRouter) PeerJoin(peer MeshNetPeer) {
 	}
 
 	peers := r.peers
-	if ref := peers[id]; peer == ref.peer {
+	if ref, hasPeer := peers[id]; hasPeer && peer == ref.peer {
 		return
 	}
 
@@ -158,7 +165,7 @@ func (r *P2PL3IPv4MeshNetworkRouter) PeerJoin(peer MeshNetPeer) {
 	defer r.lock.Unlock()
 
 	peers = r.peers
-	if ref := peers[id]; peer == ref.peer {
+	if ref, hasPeer := peers[id]; hasPeer && peer == ref.peer {
 		return
 	}
 	newPeers := make(map[string]*p2pL3IPv4MeshPeerRef, len(peers))
@@ -183,7 +190,7 @@ func (r *P2PL3IPv4MeshNetworkRouter) PeerLeave(peer MeshNetPeer) {
 	}
 
 	peers := r.peers
-	if ref := peers[id]; peer != ref.peer {
+	if ref, hasPeer := peers[id]; !hasPeer || peer != ref.peer {
 		return
 	}
 
@@ -191,8 +198,8 @@ func (r *P2PL3IPv4MeshNetworkRouter) PeerLeave(peer MeshNetPeer) {
 	defer r.lock.Unlock()
 
 	peers, ip2Peer := r.peers, r.ip2Peer
-	ref := peers[id]
-	if peer != ref.peer {
+	ref, hasPeer := peers[id]
+	if !hasPeer || peer != ref.peer {
 		return
 	}
 
@@ -233,11 +240,11 @@ func (r *P2PL3IPv4MeshNetworkRouter) PeerLeave(peer MeshNetPeer) {
 
 	// peer updates.
 	newPeers := make(map[string]*p2pL3IPv4MeshPeerRef, len(peers))
-	for oid, peer := range peers {
-		if oid == id {
+	for pid, peer := range peers {
+		if pid == id {
 			continue
 		}
-		newPeers[id] = peer
+		newPeers[pid] = peer
 	}
 	r.peers = newPeers
 }
@@ -253,12 +260,16 @@ func (r *P2PL3IPv4MeshNetworkRouter) RemoveStaticCIDRRoutes(peer MeshNetPeer, ro
 
 	cidrRoutes, newCIDRRoutes := r.cidrRoutes, ([]*p2pL3IPv4CIDRRoute)(nil)
 	set := common.IPNetSet(routes)
+	set = set.Clone()
 	set.Build()
 	for i, copyPtr := 0, 0; i < len(cidrRoutes); i++ {
 		route := cidrRoutes[i]
 		if route.peer == peer {
-			if idx := sort.Search(set.Len(), func(i int) bool { return common.IPNetLess(&route.cidr, set[i]) }); idx < set.Len() {
-				if possibleRoute := set[i]; bytes.Compare(possibleRoute.IP, route.cidr.IP) == 0 &&
+			if idx := sort.Search(set.Len(), func(i int) bool {
+				le, ge := common.IPNetLess(&route.cidr, set[i]), common.IPNetLess(set[i], &route.cidr)
+				return le == ge || ge
+			}); idx < set.Len() {
+				if possibleRoute := set[idx]; bytes.Compare(possibleRoute.IP, route.cidr.IP) == 0 &&
 					bytes.Compare(possibleRoute.Mask, route.cidr.Mask) == 0 {
 					continue
 				}
