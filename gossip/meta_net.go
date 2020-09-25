@@ -3,8 +3,11 @@ package gossip
 import (
 	"encoding/json"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/crossmesh/fabric/backend"
+	"github.com/crossmesh/fabric/common"
 	"github.com/crossmesh/sladder"
 )
 
@@ -13,6 +16,11 @@ type NetworkEndpointV1 struct {
 	Type     backend.Type `json:"t"`
 	Endpoint string       `json:"ep"`
 	Priority uint32       `json:"pri"`
+}
+
+// String formats NetworkEndpointV1 to readable string.
+func (v1 *NetworkEndpointV1) String() string {
+	return v1.Type.String() + "://" + v1.Endpoint + "?pri=" + strconv.FormatInt(int64(v1.Priority), 10)
 }
 
 // NetworkEndpointsV1Version is version value of NetworkEndpointsV1.
@@ -24,12 +32,55 @@ type NetworkEndpointSetV1 []*NetworkEndpointV1
 // Len is the number of elements in the collection.
 func (l NetworkEndpointSetV1) Len() int { return len(l) }
 
+// Less reports whether the element with
+// index i should sort before the element with index j.
+func (l NetworkEndpointSetV1) Less(i, j int) bool { return networkEndpointV1Less(l[i], l[j]) }
+
+// Pop removes `sz` elements from the tail.
+func (l *NetworkEndpointSetV1) Pop(sz int) { *l = (*l)[:len(*l)-sz] }
+
+// Push append `x` to tail.
+func (l *NetworkEndpointSetV1) Push(x interface{}) { *l = append(*l, x.(*NetworkEndpointV1)) }
+
+// Elem returns the element with index `i`
+func (l NetworkEndpointSetV1) Elem(i int) interface{} { return l[i] }
+
+// String formats NetworkEndpointSetV1 to readable string.
+func (l NetworkEndpointSetV1) String() (s string) {
+	ss := []string{}
+	for _, e := range l {
+		ss = append(ss, e.String())
+	}
+	return "[" + strings.Join(ss, " ") + "]"
+}
+
+// Equal checks whether two set are equal.
+func (l NetworkEndpointSetV1) Equal(s NetworkEndpointSetV1) bool {
+	if len(l) != len(s) {
+		return false
+	}
+	for idx := range l {
+		if !networkEndpointV1Equal(l[idx], s[idx]) {
+			return false
+		}
+	}
+	return true
+}
+
+// Swap swaps the elements with indexes i and j.
+func (l NetworkEndpointSetV1) Swap(i, j int) { l[j], l[i] = l[i], l[j] }
+
 // Clone makes a deep copy.
 func (l NetworkEndpointSetV1) Clone() (new NetworkEndpointSetV1) {
 	if l == nil {
 		return nil
 	}
 	for _, el := range l {
+		if el == nil {
+			new = append(new, el)
+			continue
+		}
+
 		nel := &NetworkEndpointV1{}
 		*nel = *el
 		new = append(new, nel)
@@ -38,9 +89,12 @@ func (l NetworkEndpointSetV1) Clone() (new NetworkEndpointSetV1) {
 }
 
 func networkEndpointV1Less(a, b *NetworkEndpointV1) bool {
+	if a == b {
+		return false
+	}
 	if a == nil {
 		return false
-	} else if a == nil {
+	} else if b == nil {
 		return true
 	}
 	if a.Priority < b.Priority {
@@ -69,96 +123,34 @@ func networkEndpointV1Equal(a, b *NetworkEndpointV1) bool {
 	return *a == *b
 }
 
-// Less reports whether the element with
-// index i should sort before the element with index j.
-func (l NetworkEndpointSetV1) Less(i, j int) bool { return networkEndpointV1Less(l[i], l[j]) }
-
-// Equal checks whether two set are equal.
-func (l NetworkEndpointSetV1) Equal(s NetworkEndpointSetV1) bool {
-	if len(l) != len(s) {
-		return false
-	}
-	for idx := range l {
-		if !networkEndpointV1Equal(l[idx], s[idx]) {
-			return false
-		}
-	}
-	return true
-}
-
-// Merge merges a given set into current set.
-func (l *NetworkEndpointSetV1) Merge(r NetworkEndpointSetV1, copy bool) (changed bool) {
+func (l *NetworkEndpointSetV1) removeTailNils() (changed bool) {
 	changed = false
-
-	*l = (*l)[:sort.Search(len(*l), func(i int) bool { return (*l)[i] == nil })]
-	r = r[:sort.Search(len(r), func(i int) bool { return r[i] == nil })]
-
-	*l = append(*l, r...) // expand.
-	lh, rh := len(*l), len(r)
-	widx, last := lh, (*NetworkEndpointV1)(nil)
-	write := func(ele *NetworkEndpointV1) bool {
-		if networkEndpointV1Equal(last, ele) {
-			return false
-		}
-		(*l)[widx-1] = ele
-		widx--
-		last = ele
-		return true
-	}
-	for lh > 0 && rh > 0 {
-		le, re := (*l)[lh-1], r[rh-1]
-		lle, rle := networkEndpointV1Less(le, re), networkEndpointV1Less(re, le)
-		if lle == rle { // equal.
-			write(le)
-			lh--
-			rh--
-		} else if lle { // right is bigger.
-			if write(re) {
-				changed = true
-			}
-			rh--
-		} else { // left is bigger.
-			write(le)
-			lh--
-		}
-	}
-	for ; rh > 0; rh-- {
-		if write(r[rh-1]) {
-			changed = true
-		}
-	}
-	if widx-lh > 0 { // not full. move to front.
-		for widx <= len(*l) {
-			(*l)[lh-1] = (*l)[widx-1]
-			lh++
-			widx++
-		}
-		*l = (*l)[:lh]
+	eli := sort.Search(l.Len(), func(i int) bool { return (*l)[i] == nil })
+	if eli < l.Len() {
+		*l = (*l)[:eli]
+		changed = true
 	}
 	return
 }
 
-// Swap swaps the elements with indexes i and j.
-func (l NetworkEndpointSetV1) Swap(i, j int) { l[j], l[i] = l[i], l[j] }
+// Merge merges a given set into current set.
+func (l *NetworkEndpointSetV1) Merge(r NetworkEndpointSetV1) (changed bool) {
+	changed = false
+
+	if common.SortedSetMerge(l, &r) {
+		changed = true
+	}
+	if l.removeTailNils() {
+		changed = true
+	}
+
+	return
+}
 
 // Build fixes data order.
 func (l *NetworkEndpointSetV1) Build() {
-	if len(*l) > 1 {
-		sort.Sort(l)
-		// deduplicate.
-		rear := 1
-		for last, head := (*l)[0], 1; head < len(*l); head++ {
-			if (*l)[head] == nil { // nil will be at the end of slice. it should be removed.
-				break
-			}
-			if last.Type == (*l)[head].Type && last.Endpoint == (*l)[head].Endpoint {
-				continue
-			}
-			(*l)[rear] = (*l)[head]
-			rear++
-		}
-		(*l) = (*l)[:rear]
-	}
+	common.SortedSetBuild(l)
+	l.removeTailNils()
 }
 
 // NetworkEndpointsV1 includes peer's network endpoints for metadata exchanges.
@@ -238,6 +230,9 @@ type NetworkEndpointsValidatorV1 struct{}
 func (v1 NetworkEndpointsValidatorV1) presync(
 	local, remote *sladder.KeyValue,
 	localV1, remoteV1 *NetworkEndpointsV1) (changed bool, err error) {
+	if local == nil {
+		return false, nil
+	}
 	if remote == nil {
 		return true, nil
 	}
@@ -273,7 +268,7 @@ func (v1 NetworkEndpointsValidatorV1) Sync(local, remote *sladder.KeyValue) (cha
 func (v1 NetworkEndpointsValidatorV1) mergeSync(
 	local, remote *sladder.KeyValue,
 	localV1, remoteV1 *NetworkEndpointsV1) (changed bool, err error) {
-	if localV1.Endpoints.Merge(remoteV1.Endpoints, false) {
+	if localV1.Endpoints.Merge(remoteV1.Endpoints) {
 		var newValue string
 		if newValue, err = localV1.EncodeString(); err != nil {
 			return false, err
@@ -326,6 +321,7 @@ func (v1 NetworkEndpointsValidatorV1) Txn(kv sladder.KeyValue) (sladder.KVTransa
 
 func (t *NetworkEndpointsV1Txn) copyOnWrite() {
 	if t.new == t.origin {
+		t.new = t.origin.Clone()
 	}
 }
 
@@ -357,7 +353,7 @@ func (t *NetworkEndpointsV1Txn) SetRawValue(s string) error {
 }
 
 // AddEndpoints appends new network endpoints.
-func (t *NetworkEndpointsV1Txn) AddEndpoints(eps ...backend.Endpoint) bool {
+func (t *NetworkEndpointsV1Txn) AddEndpoints(eps ...NetworkEndpointV1) bool {
 	if len(eps) < 1 {
 		return false
 	}
@@ -369,15 +365,16 @@ func (t *NetworkEndpointsV1Txn) AddEndpoints(eps ...backend.Endpoint) bool {
 		newSet = append(newSet, &NetworkEndpointV1{
 			Type:     ep.Type,
 			Endpoint: ep.Endpoint,
+			Priority: ep.Priority,
 		})
 	}
 	newSet.Build()
 
-	return t.new.Endpoints.Merge(newSet, true)
+	return t.new.Endpoints.Merge(newSet.Clone())
 }
 
 // UpdateEndpoints applies new network endpoints.
-func (t *NetworkEndpointsV1Txn) UpdateEndpoints(endpoints ...NetworkEndpointV1) {
+func (t *NetworkEndpointsV1Txn) UpdateEndpoints(endpoints ...*NetworkEndpointV1) {
 	t.copyOnWrite()
 	t.new.Endpoints = nil
 	for _, endpoint := range endpoints {

@@ -75,7 +75,7 @@ const (
 
 // OverlayNetworkV1 contains joined overlay networks of peer.
 type OverlayNetworkV1 struct {
-	Params json.RawMessage `json:"p"`
+	Params string `json:"p,omitempty"`
 }
 
 // Equal checks whether fields in two OverlayNetworkV1 are equal.
@@ -86,7 +86,7 @@ func (v1 *OverlayNetworkV1) Equal(x *OverlayNetworkV1) bool {
 	if v1 == nil || x == nil {
 		return false
 	}
-	return string(v1.Params) == string(x.Params)
+	return v1.Params == x.Params
 }
 
 // OverlayNetworkParamValidator implements network parameter data model for specific OverlayDriverType
@@ -112,14 +112,16 @@ const (
 	DefaultOverlayNetworkKey = "overlay_network"
 )
 
-// DeepCopy makes a new deepcopy.
-func (v1 *OverlayNetworksV1) DeepCopy() (new *OverlayNetworksV1) {
+// Clone makes a new deepcopy.
+func (v1 *OverlayNetworksV1) Clone() (new *OverlayNetworksV1) {
 	new = &OverlayNetworksV1{}
 	new.Version = v1.Version
 	if v1.Networks != nil {
 		new.Networks = map[NetworkID]*OverlayNetworkV1{}
 		for netID, cfg := range v1.Networks {
-			new.Networks[netID] = cfg
+			o := &OverlayNetworkV1{}
+			new.Networks[netID] = o
+			*o = *cfg
 		}
 	}
 	return
@@ -187,7 +189,9 @@ func (v1 *OverlayNetworksV1) DecodeString(s string) (err error) {
 		if _, dup := netMap[net.NetworkID]; dup {
 			return fmt.Errorf("OverlayNetworksV1 has broken integrity. Duplicated network ID %v found", net.NetworkID)
 		}
-		netMap[net.NetworkID] = &net.OverlayNetworkV1
+		o := &OverlayNetworkV1{}
+		netMap[net.NetworkID] = o
+		*o = net.OverlayNetworkV1
 	}
 	v1.Version = pack.Version
 	v1.Networks = netMap
@@ -240,14 +244,14 @@ func (v1 *OverlayNetworksValidatorV1) RegisterDriverType(driverType OverlayDrive
 }
 
 // GetDriverValidator gets validator of given driver type.
-func (v1 *OverlayNetworksValidatorV1) GetDriverValidator(driverType OverlayDriverType) (validator OverlayNetworkParamValidator, valid bool) {
+func (v1 *OverlayNetworksValidatorV1) GetDriverValidator(driverType OverlayDriverType) (validator OverlayNetworkParamValidator) {
 	v1.lock.RLock()
 	defer v1.lock.RUnlock()
 
 	if v1.paramValidators == nil {
-		return nil, false
+		return nil
 	}
-	validator, valid = v1.paramValidators[driverType]
+	validator, _ = v1.paramValidators[driverType]
 	return
 }
 
@@ -268,9 +272,17 @@ func (v1 *OverlayNetworksValidatorV1) sync(local, remote *sladder.KeyValue, isCo
 	changed = false
 
 	newNetMap := make(map[NetworkID]*OverlayNetworkV1)
-	for netID, net := range rv.Networks {
-		validator, hasValidator := v1.GetDriverValidator(netID.DriverType)
-		if !hasValidator {
+	if isConcurrent {
+		// merge.
+		for netID, net := range lv.Networks {
+			newNetMap[netID] = &OverlayNetworkV1{
+				Params: net.Params,
+			}
+		}
+	}
+	for netID, net := range rv.Networks { // update.
+		validator := v1.GetDriverValidator(netID.DriverType)
+		if validator == nil {
 			return false, &ParamValidatorMissingError{want: netID.DriverType}
 		}
 
@@ -279,16 +291,24 @@ func (v1 *OverlayNetworksValidatorV1) sync(local, remote *sladder.KeyValue, isCo
 		if hasOld {
 			// existing.
 			newNetMap[netID] = oldCfg
-			localString = string(oldCfg.Params)
+			localString = oldCfg.Params
 		}
-		if cfgChanged, ierr := validator.Sync(&localString, string(net.Params), isConcurrent); ierr != nil {
+		if cfgChanged, ierr := validator.Sync(&localString, net.Params, isConcurrent); ierr != nil {
 			return false, ierr
 		} else if cfgChanged {
 			newNetMap[netID] = &OverlayNetworkV1{
-				Params: json.RawMessage(localString),
+				Params: localString,
 			}
 			changed = true
 		}
+	}
+	lv.Networks = newNetMap
+	{
+		new, err := lv.EncodeToString()
+		if err != nil {
+			return false, nil
+		}
+		local.Value = new
 	}
 
 	return changed, nil
@@ -298,9 +318,9 @@ func (v1 *OverlayNetworksValidatorV1) presync(
 	local, remote *sladder.KeyValue,
 	lv, rv *OverlayNetworksV1) (changed bool, err error) {
 	if err = lv.DecodeStringAndValidate(local.Value); err != nil {
-		// Since a invalid remote snapshot won't be accapted, this case hardly happens.
-		// In this case, however, synchronization will be stuck if error is returned simply.
-		// To prevent this, reset raw value to the initial instead.
+		// Since a invalid remote snapshot won't be accapted, this condition hardly can be reached.
+		// In this case, however, synchronization will make no progress forever if we returns error simply.
+		// Reseting raw value to the initial will prevent this happen..
 		local.Value = "{\"v\": 1}"
 		changed = true
 	}
@@ -320,11 +340,11 @@ func (v1 *OverlayNetworksValidatorV1) Validate(kv sladder.KeyValue) bool {
 		return false
 	}
 	for netID, net := range on1.Networks {
-		validator, validDreiverType := v1.GetDriverValidator(netID.DriverType)
-		if !validDreiverType {
+		validator := v1.GetDriverValidator(netID.DriverType)
+		if validator == nil {
 			return false
 		}
-		if !validator.Validate(string(net.Params)) {
+		if !validator.Validate(net.Params) {
 			return false
 		}
 	}
@@ -351,7 +371,7 @@ type OverlayNetworksV1Txn struct {
 }
 
 // CloneCurrent makes deepcopy of current OverlayNetworksV1 structure.
-func (t *OverlayNetworksV1Txn) CloneCurrent() *OverlayNetworksV1 { return t.cur.DeepCopy() }
+func (t *OverlayNetworksV1Txn) CloneCurrent() *OverlayNetworksV1 { return t.cur.Clone() }
 
 // Txn starts KVTransaction of OverlayNetworksV1.
 func (v1 *OverlayNetworksValidatorV1) Txn(kv sladder.KeyValue) (sladder.KVTransaction, error) {
@@ -369,7 +389,7 @@ func (v1 *OverlayNetworksValidatorV1) Txn(kv sladder.KeyValue) (sladder.KVTransa
 
 func (t *OverlayNetworksV1Txn) copyOnWrite() {
 	if t.old != nil && t.old == t.cur {
-		t.cur = t.old.DeepCopy()
+		t.cur = t.old.Clone()
 	}
 }
 
@@ -384,7 +404,7 @@ func (t *OverlayNetworksV1Txn) SetRawValue(x string) error {
 		packParam := ""
 		cfg, hasCfg := t.cur.Networks[netID]
 		if hasCfg && cfg != nil {
-			packParam = string(cfg.Params)
+			packParam = cfg.Params
 		}
 		txn.SetRawValue(packParam)
 	}
@@ -397,13 +417,13 @@ func (t *OverlayNetworksV1Txn) Before() string { return t.oldRaw }
 
 // After return current raw value.
 func (t *OverlayNetworksV1Txn) After() string {
-	cur := t.cur.DeepCopy()
+	cur := t.cur.Clone()
 	for netID, cfg := range cur.Networks {
 		txn, hasTxn := t.paramTxns[netID]
 		if !hasTxn {
 			continue
 		}
-		cfg.Params = json.RawMessage(txn.After())
+		cfg.Params = txn.After()
 	}
 	s, err := cur.EncodeToString()
 	if err != nil {
@@ -465,7 +485,7 @@ func (t *OverlayNetworksV1Txn) AddNetwork(ids ...NetworkID) (err error) {
 		t.cur.Networks[netID] = new
 
 		if rtx, hasTransaction := t.paramTxns[netID]; hasTransaction {
-			if err = rtx.SetRawValue(string(new.Params)); err != nil {
+			if err = rtx.SetRawValue(new.Params); err != nil {
 				return
 			}
 		}
@@ -497,11 +517,11 @@ func (t *OverlayNetworksV1Txn) ParamsTxn(id NetworkID) (sladder.KVTransaction, e
 	if hasTransaction {
 		return rtx, nil
 	}
-	cfgValidator, hasValidator := t.validator.GetDriverValidator(id.DriverType)
-	if !hasValidator {
+	cfgValidator := t.validator.GetDriverValidator(id.DriverType)
+	if cfgValidator == nil {
 		return nil, &ParamValidatorMissingError{want: id.DriverType}
 	}
-	rtx, err := cfgValidator.Txn(string(cfg.Params))
+	rtx, err := cfgValidator.Txn(cfg.Params)
 	if err != nil {
 		return nil, err
 	}

@@ -22,7 +22,7 @@ func (v1 *CrossmeshOverlayParamV1) Clone() (new *CrossmeshOverlayParamV1) {
 }
 
 type packCrossmeshOverlayParamV1 struct {
-	Subnets json.RawMessage `json:"g,omitempty"`
+	Subnets string `json:"g,omitempty"`
 }
 
 // Encode trys to marshal content to bytes.
@@ -32,7 +32,7 @@ func (v1 *CrossmeshOverlayParamV1) Encode() ([]byte, error) {
 		return nil, err
 	}
 	raw := packCrossmeshOverlayParamV1{}
-	raw.Subnets = json.RawMessage(base64.RawStdEncoding.EncodeToString(bins))
+	raw.Subnets = base64.RawStdEncoding.EncodeToString(bins)
 	return json.Marshal(raw)
 }
 
@@ -45,7 +45,7 @@ func (v1 *CrossmeshOverlayParamV1) Decode(x []byte) error {
 	if err := json.Unmarshal(x, &raw); err != nil {
 		return err
 	}
-	bins, err := base64.RawStdEncoding.DecodeString(string(raw.Subnets))
+	bins, err := base64.RawStdEncoding.DecodeString(raw.Subnets)
 	if err != nil {
 		return err
 	}
@@ -93,7 +93,7 @@ func (v1 CrossmeshOverlayParamV1Validator) Sync(local *string, remote string, is
 		return true, nil
 	}
 	// merge.
-	if l.Subnets.Merge(&r.Subnets) {
+	if !l.Subnets.Merge(r.Subnets) {
 		return false, nil
 	}
 	bins, err := l.Encode()
@@ -171,7 +171,7 @@ func (t *CrossmeshOverlayParamV1Txn) AddSubnet(subnets ...*net.IPNet) bool {
 	newSet := common.IPNetSet(subnets)
 	newSet.Build()
 
-	return t.cur.Subnets.Merge(&newSet)
+	return t.cur.Subnets.Merge(newSet)
 }
 
 // RemoveSubnet remove subnets.

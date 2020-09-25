@@ -70,21 +70,24 @@ func IPNetSetDecode(x []byte) (subnets common.IPNetSet, err error) {
 			}
 			compressedLen++
 		}
-		if i+int(compressedLen) >= len(x) {
+		cidrInfoEnd := i + int(compressedLen)
+		if cidrInfoEnd > len(x) {
 			return nil, ErrBrokenIPNetBinary
 		}
 		subnet := &net.IPNet{
 			IP:   make(net.IP, ipLen),
 			Mask: common.IPMaskFromPrefixLen(uint(prefixLen), uint(ipLen)),
 		}
-		copy(subnet.IP[:compressedLen], x[:compressedLen])
+		copy(subnet.IP[:compressedLen], x[i:cidrInfoEnd])
 
 		subnets = append(subnets, subnet)
 
-		i += int(compressedLen)
+		i = cidrInfoEnd
 	}
 
-	subnets.Build() // for safety.
+	if len(subnets) > 1 {
+		subnets.Build() // for safety.
+	}
 
 	return
 }
