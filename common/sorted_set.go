@@ -123,7 +123,6 @@ func SortedSetMerge(l, r SortedSetInterface) (changed bool) {
 			l.Swap(widx-1, lidx)
 			lIdxMap[lh-1], fMap[rMap[widx-1]] = widx-1, lidx
 			rMap[lidx], rMap[widx-1] = rMap[widx-1], lh-1
-			changed = true
 		}
 		widx--
 		lh--
@@ -133,7 +132,6 @@ func SortedSetMerge(l, r SortedSetInterface) (changed bool) {
 			l.Swap(widx-1, ridx)
 			rIdxMap[rh-1], fMap[rMap[widx-1]] = widx-1, ridx
 			rMap[widx-1], rMap[ridx] = rh-1+olh, rMap[widx-1]
-			changed = true
 		}
 		widx--
 		rh--
@@ -147,6 +145,7 @@ func SortedSetMerge(l, r SortedSetInterface) (changed bool) {
 			right(ridx)
 		} else if lle {
 			right(ridx)
+			changed = true
 		} else {
 			left(lidx)
 		}
@@ -154,8 +153,11 @@ func SortedSetMerge(l, r SortedSetInterface) (changed bool) {
 	for lh > 0 {
 		left(lIdxMap[lh-1])
 	}
-	for rh > 0 {
-		right(rIdxMap[rh-1])
+	if rh > 0 {
+		for rh > 0 {
+			right(rIdxMap[rh-1])
+		}
+		changed = true
 	}
 	if sortedSetDeduplicate(l) {
 		changed = true
