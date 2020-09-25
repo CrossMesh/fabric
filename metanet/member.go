@@ -35,7 +35,11 @@ func (n *MetadataNetwork) SeedEndpoints(endpoints ...backend.Endpoint) (err erro
 				return false
 			}
 			eps := rtx.(*gossipUtils.NetworkEndpointsV1Txn)
-			if eps.AddEndpoints(endpoint) {
+			if eps.AddEndpoints(gossipUtils.NetworkEndpointV1{
+				Type:     endpoint.Type,
+				Endpoint: endpoint.Endpoint,
+				Priority: 0,
+			}) {
 				changed = true
 			}
 		}
@@ -352,7 +356,7 @@ func (n *MetadataNetwork) delayPublishEndpoint(id uint32, delay bool) {
 		}
 
 		var (
-			newEndpoints []gossipUtils.NetworkEndpointV1
+			newEndpoints []*gossipUtils.NetworkEndpointV1
 		)
 
 		localPublish := make([]MetaPeerEndpoint, 0, len(n.backends))
@@ -375,7 +379,7 @@ func (n *MetadataNetwork) delayPublishEndpoint(id uint32, delay bool) {
 				})
 			}
 
-			newEndpoints = append(newEndpoints, gossipUtils.NetworkEndpointV1{
+			newEndpoints = append(newEndpoints, &gossipUtils.NetworkEndpointV1{
 				Type:     endpoint.Type,
 				Endpoint: endpoint.Endpoint,
 				Priority: backend.Priority(),
