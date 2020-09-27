@@ -159,9 +159,8 @@ func SortedSetMerge(l, r SortedSetInterface) (changed bool) {
 		}
 		changed = true
 	}
-	if sortedSetDeduplicate(l) {
-		changed = true
-	}
+
+	sortedSetDeduplicate(l)
 
 	return changed
 }
