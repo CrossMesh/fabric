@@ -26,7 +26,7 @@ cover: coverage test
 	go tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html
 
 test: coverage
-	go test -v -bench=. -benchtime=2x -coverprofile=$(COVERAGE_DIR)/coverage.out -cover ./mux/... ./gossip/... ./proto ./route
+	go test -v -bench=. -benchtime=2x -coverprofile=$(COVERAGE_DIR)/coverage.out -cover ./common ./mux/... ./gossip/... ./proto ./route
 	go tool cover -func=$(COVERAGE_DIR)/coverage.out
 
 build:
@@ -43,7 +43,7 @@ bin:
 cloc:
 	cloc . --exclude-dir=build,bin,ci,mocks
 
-mock: bin/mockery
+mock: $(GOPATH)/bin/mockery
 
 devtools: $(GOPATH)/bin/protoc-gen-go $(GOPATH)/bin/gopls $(GOPATH)/bin/goimports $(GOPATH)/bin/mockery
 
