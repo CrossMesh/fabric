@@ -86,17 +86,17 @@ bin/utt: build/bin
 	    go build  -o bin/utt -v -gcflags='all=$(GCFLAGS)' -ldflags='all=-s -w $(LDFLAGS)' $(BUILD_OPTS) $(GOMOD); \
 	fi
 
-$(GOPATH)/bin/protoc-gen-go:
+$(GOPATH)/bin/protoc-gen-go: build/bin
 	go get -u github.com/golang/protobuf/protoc-gen-go
 
-$(GOPATH)/bin/gopls:
+$(GOPATH)/bin/gopls: build/bin
 	go get -u golang.org/x/tools/gopls
 
-$(GOPATH)/bin/goimports:
+$(GOPATH)/bin/goimports: build/bin
 	go get -u golang.org/x/tools/cmd/goimports
 
-$(GOPATH)/bin/mockery:
+$(GOPATH)/bin/mockery: build/bin
 	go get -u github.com/vektra/mockery/cmd/mockery
 
-$(GOPATH)/bin/protoc-gen-go-grpc:
+$(GOPATH)/bin/protoc-gen-go-grpc: build/bin
 	go get -u google.golang.org/grpc/cmd/protoc-gen-go-grpc
