@@ -88,6 +88,7 @@ func (n *MetadataNetwork) SendToPeers(typeID uint16, payload []byte, peers ...*M
 		return
 	}
 
+	// TODO(xutao): deliver directly if a message is sent to self.
 	if len(peers) == 1 {
 		endpoint := peers[0].chooseEndpoint()
 		if endpoint.Type == backend.UnknownBackend {
