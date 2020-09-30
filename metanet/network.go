@@ -65,8 +65,9 @@ type MetadataNetwork struct {
 		nameResolver *gossipUtils.PeerNameResolver
 		self         *sladder.Node
 	}
-	self  *MetaPeer
-	peers map[*sladder.Node]*MetaPeer
+	self              *MetaPeer
+	peers             map[*sladder.Node]*MetaPeer
+	nameConflictNodes map[*MetaPeer]struct{}
 
 	backends map[backend.Endpoint]backend.Backend
 	configID uint32
@@ -81,9 +82,10 @@ type MetadataNetwork struct {
 // NewMetadataNetwork creates a metadata network.
 func NewMetadataNetwork(arbiter *arbit.Arbiter, log *logging.Entry) (n *MetadataNetwork, err error) {
 	n = &MetadataNetwork{
-		peers:    make(map[*sladder.Node]*MetaPeer),
-		backends: make(map[backend.Endpoint]backend.Backend),
-		quitChan: make(chan struct{}),
+		peers:             make(map[*sladder.Node]*MetaPeer),
+		backends:          make(map[backend.Endpoint]backend.Backend),
+		quitChan:          make(chan struct{}),
+		nameConflictNodes: map[*MetaPeer]struct{}{},
 	}
 
 	n.arbiters.main = arbit.NewWithParent(arbiter)

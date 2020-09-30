@@ -210,18 +210,57 @@ func (n *MetadataNetwork) updateNetworkEndpoint(peer *MetaPeer, endpointSet goss
 	if oldNames := peer.names; !stringsEqual(names, peer.names) {
 		n.log.Debug("recalc names: old = ", peer.names, " new = ", names, " for node = ", peer)
 
-		// republish Name2Peer.
+		// start to republish Name2Peer.
+
 		oldName2Peer := n.Publish.Name2Peer
 		name2Peer := make(map[string]*MetaPeer, len(oldName2Peer)-len(oldNames)+len(names))
 		for name, metaPeer := range oldName2Peer {
 			name2Peer[name] = metaPeer
 		}
 		for _, name := range oldNames {
-			delete(name2Peer, name)
+			actual, has := name2Peer[name]
+			if has && actual == peer {
+				delete(name2Peer, name)
+			}
 		}
+
+		// try to resolve name conflict.
+		for node := range n.nameConflictNodes {
+			allResolved := true
+			for _, name := range node.names {
+				actual, has := name2Peer[name]
+				if has {
+					if actual == peer {
+						continue
+					}
+					if actual != nil && !actual.left {
+						allResolved = false // conflicts persists.
+						continue
+					}
+				}
+				n.log.Warnf("conflict name \"%v\" of peer %v is recovered.", name, peer)
+				name2Peer[name] = node
+			}
+			if allResolved {
+				delete(n.nameConflictNodes, node)
+			}
+		}
+
+		// assign new changes.
+		conflict := false
 		for _, name := range names {
+			actual, has := name2Peer[name]
+			if has && actual != nil && actual != peer && !actual.left {
+				conflict = true
+				n.log.Warnf("name \"%v\" of peer %v is temporarily removed due to name conflict with peer %v. ", name, peer, actual)
+				continue
+			}
 			name2Peer[name] = peer
 		}
+		if conflict {
+			n.nameConflictNodes[peer] = struct{}{}
+		}
+
 		n.log.Debug("republish name-to-peer mapping: ", name2Peer)
 		n.Publish.Name2Peer = name2Peer
 		pub.Names = names
@@ -243,19 +282,8 @@ func (n *MetadataNetwork) onGossipNodeRemoved(node *sladder.Node) {
 		n.lock.Unlock()
 		return
 	}
+	peer.left = true // lazy deletion.
 	delete(n.peers, node)
-
-	// republish Name2Peer.
-	oldName2Peer := n.Publish.Name2Peer
-	name2Peer := make(map[string]*MetaPeer, len(oldName2Peer)-len(peer.names))
-	for n, p := range oldName2Peer {
-		name2Peer[n] = p
-	}
-	for _, name := range peer.names {
-		delete(name2Peer, name)
-	}
-	n.log.Debug("republish name-to-peer mapping: ", name2Peer)
-	n.Publish.Name2Peer = name2Peer
 
 	n.lock.Unlock()
 
@@ -267,7 +295,7 @@ func (n *MetadataNetwork) onGossipNodeRemoved(node *sladder.Node) {
 func (n *MetadataNetwork) onGossipNodeJoined(node *sladder.Node) {
 	n.lock.Lock()
 	peer, hasPeer := n.peers[node]
-	if !hasPeer {
+	if !hasPeer || peer.left {
 		peer = &MetaPeer{Node: node}
 		n.peers[node] = peer
 	}
