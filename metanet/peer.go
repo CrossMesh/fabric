@@ -43,6 +43,7 @@ func (i *MetaPeerStatePublication) Trival() bool {
 type MetaPeer struct {
 	*sladder.Node
 	isSelf bool
+	left   bool
 	names  []string
 
 	lock         sync.RWMutex
