@@ -64,7 +64,7 @@ type NetworkID struct {
 	DriverType OverlayDriverType `json:"drv,omitempty"`
 }
 
-func (id *NetworkID) String() string {
+func (id NetworkID) String() string {
 	return id.DriverType.String() + "/" + strconv.FormatInt(int64(id.ID), 10)
 }
 
@@ -295,7 +295,7 @@ func (v1 *OverlayNetworksValidatorV1) sync(local, remote *sladder.KeyValue, isCo
 		}
 		if cfgChanged, ierr := validator.Sync(&localString, net.Params, isConcurrent); ierr != nil {
 			return false, ierr
-		} else if cfgChanged {
+		} else if cfgChanged || !hasOld {
 			newNetMap[netID] = &OverlayNetworkV1{
 				Params: localString,
 			}

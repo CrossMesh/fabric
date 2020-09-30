@@ -41,6 +41,12 @@ func TestMetaNetModel(t *testing.T) {
 				},
 				nil, nil,
 				&NetworkEndpointV1{
+					Type:     1,
+					Priority: 7,
+					Endpoint: "10.240.0.1:3890",
+				},
+				nil,
+				&NetworkEndpointV1{
 					Type:     3,
 					Priority: 11,
 					Endpoint: "ssssbs",
@@ -67,12 +73,12 @@ func TestMetaNetModel(t *testing.T) {
 				},
 				&NetworkEndpointV1{
 					Type:     1,
-					Priority: 9,
+					Priority: 8,
 					Endpoint: "10.240.0.1:3890",
 				},
 				&NetworkEndpointV1{
 					Type:     1,
-					Priority: 9,
+					Priority: 7,
 					Endpoint: "10.240.0.1:3890",
 				},
 				nil,

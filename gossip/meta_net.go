@@ -26,15 +26,30 @@ func (v1 *NetworkEndpointV1) String() string {
 // NetworkEndpointsV1Version is version value of NetworkEndpointsV1.
 const NetworkEndpointsV1Version = uint16(1)
 
+type networkEndpointSetV1MergeHelper struct {
+	*NetworkEndpointSetV1
+}
+
+// Less reports whether the element with
+// index i should sort before the element with index j.
+func (l *networkEndpointSetV1MergeHelper) Less(i, j int) bool {
+	return networkEndpointV1MergeHelpComparator.Less((*l.NetworkEndpointSetV1)[i], (*l.NetworkEndpointSetV1)[j])
+}
+
 // NetworkEndpointSetV1 contains slice of NetworkEndpointV1.
 type NetworkEndpointSetV1 []*NetworkEndpointV1
 
 // Len is the number of elements in the collection.
 func (l NetworkEndpointSetV1) Len() int { return len(l) }
 
+var defaultNetworkEndpointV1Comparator = networkEndpointV1Comparator{enablePriority: true}
+var networkEndpointV1MergeHelpComparator = networkEndpointV1Comparator{enablePriority: false}
+
 // Less reports whether the element with
 // index i should sort before the element with index j.
-func (l NetworkEndpointSetV1) Less(i, j int) bool { return networkEndpointV1Less(l[i], l[j]) }
+func (l NetworkEndpointSetV1) Less(i, j int) bool {
+	return defaultNetworkEndpointV1Comparator.Less(l[i], l[j])
+}
 
 // Pop removes `sz` elements from the tail.
 func (l *NetworkEndpointSetV1) Pop(sz int) { *l = (*l)[:len(*l)-sz] }
@@ -88,7 +103,11 @@ func (l NetworkEndpointSetV1) Clone() (new NetworkEndpointSetV1) {
 	return
 }
 
-func networkEndpointV1Less(a, b *NetworkEndpointV1) bool {
+type networkEndpointV1Comparator struct {
+	enablePriority bool
+}
+
+func (c *networkEndpointV1Comparator) Less(a, b *NetworkEndpointV1) bool {
 	if a == b {
 		return false
 	}
@@ -97,10 +116,12 @@ func networkEndpointV1Less(a, b *NetworkEndpointV1) bool {
 	} else if b == nil {
 		return true
 	}
-	if a.Priority < b.Priority {
-		return true
-	} else if a.Priority > b.Priority {
-		return false
+	if c.enablePriority {
+		if a.Priority < b.Priority {
+			return true
+		} else if a.Priority > b.Priority {
+			return false
+		}
 	}
 	if a.Type < b.Type {
 		return true
@@ -137,9 +158,30 @@ func (l *NetworkEndpointSetV1) removeTailNils() (changed bool) {
 func (l *NetworkEndpointSetV1) Merge(r NetworkEndpointSetV1) (changed bool) {
 	changed = false
 
-	if common.SortedSetMerge(l, &r) {
+	hl := networkEndpointSetV1MergeHelper{NetworkEndpointSetV1: l}
+	hr := networkEndpointSetV1MergeHelper{NetworkEndpointSetV1: &r}
+	sort.Sort(&hl)
+	sort.Sort(&hr)
+
+	if common.SortedSetSelectMerge(&hl, &hr, func(s common.SortedSetInterface, i, j int) bool {
+		le := s.Elem(i).(*NetworkEndpointV1)
+		re := s.Elem(j).(*NetworkEndpointV1)
+		if re == nil {
+			return true
+		}
+		if le == nil {
+			changed = true
+			return false
+		}
+		if le.Priority > re.Priority {
+			changed = true
+			return false
+		}
+		return true
+	}) {
 		changed = true
 	}
+	common.SortedSetBuild(l)
 	if l.removeTailNils() {
 		changed = true
 	}
@@ -147,8 +189,55 @@ func (l *NetworkEndpointSetV1) Merge(r NetworkEndpointSetV1) (changed bool) {
 	return
 }
 
+func (l *NetworkEndpointSetV1) removeDuplicatedEndpoint() (removed bool) {
+	removed = false
+
+	if l.Len() > 1 {
+		cmper := networkEndpointV1Comparator{enablePriority: false}
+		sort.Slice(([]*NetworkEndpointV1)(*l), func(i, j int) bool {
+			return cmper.Less((*l)[i], (*l)[j])
+		})
+
+		eli, rearIdx := 0, 0
+		rear := (*l)[rearIdx]
+		if rear != nil {
+			minPriority := rear.Priority
+			for i := rearIdx + 1; i < l.Len(); i++ {
+				cur := (*l)[i]
+				if cur == nil {
+					break
+				}
+				if rear.Endpoint == cur.Endpoint && rear.Type == cur.Type {
+					if cur.Priority < minPriority {
+						minPriority = cur.Priority
+						rearIdx = i
+						rear = (*l)[rearIdx]
+					}
+				} else {
+					if eli != rearIdx {
+						(*l)[eli] = (*l)[rearIdx]
+					}
+					eli++
+					rearIdx, minPriority = i, cur.Priority
+					rear = (*l)[rearIdx]
+				}
+			}
+			if eli != rearIdx {
+				(*l)[eli] = (*l)[rearIdx]
+			}
+			eli++
+		}
+		if eli != l.Len() {
+			*l = (*l)[:eli]
+			removed = true
+		}
+	}
+	return
+}
+
 // Build fixes data order.
 func (l *NetworkEndpointSetV1) Build() {
+	l.removeDuplicatedEndpoint()
 	common.SortedSetBuild(l)
 	l.removeTailNils()
 }
