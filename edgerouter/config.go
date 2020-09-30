@@ -96,7 +96,6 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 					r.route = route.NewP2PL3IPv4MeshNetworkRouter()
 				}
 
-				r.rebuildRoute(false)
 			}
 
 			// update vetp.
@@ -121,6 +120,8 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 			r.cfg = cfg
 
 			if rebootForward {
+				r.rebuildRoute(false)
+
 				// start forward.
 				for n := uint(0); n < forwardRoutines; n++ {
 					r.goForwardVTEP()
