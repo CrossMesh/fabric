@@ -24,7 +24,7 @@ type EdgeRouter struct {
 	overlayModel    *gossip.OverlayNetworksValidatorV1
 	overlayModelKey string
 
-	// contains global overlay network.
+	// viewpoint of global overlay networks.
 	networkMap map[*metanet.MetaPeer]map[gossip.NetworkID]interface{}
 
 	vtep *virtualTunnelEndpoint
@@ -51,11 +51,12 @@ func New(arbiter *arbit.Arbiter) (a *EdgeRouter, err error) {
 	}()
 
 	a = &EdgeRouter{
-		log:     logging.WithField("module", "edge_router"),
-		arbiter: arbiter,
-		vtep:    newVirtualTunnelEndpoint(nil),
+		log:        logging.WithField("module", "edge_router"),
+		arbiter:    arbiter,
+		vtep:       newVirtualTunnelEndpoint(nil),
+		networkMap: make(map[*metanet.MetaPeer]map[gossip.NetworkID]interface{}),
 	}
-	if a.metaNet, err = metanet.NewMetadataNetwork(arbiter, a.log); err != nil {
+	if a.metaNet, err = metanet.NewMetadataNetwork(arbiter, a.log.WithField("module", "metanet")); err != nil {
 		return nil, err
 	}
 	a.metaNet.RegisterMessageHandler(proto.MsgTypeRawFrame, a.receiveRemote)
@@ -104,5 +105,9 @@ func (r *EdgeRouter) waitCleanUp() {
 // Mode returns name of edge router working mode.
 // values can be: ethernet, overlay.
 func (r *EdgeRouter) Mode() string {
+	cfg := r.cfg
+	if cfg == nil {
+		return "unknown"
+	}
 	return r.cfg.Mode
 }

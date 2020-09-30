@@ -22,10 +22,14 @@ var (
 
 func (r *EdgeRouter) receiveRemote(msg *metanet.Message) {
 	peers := r.route.Route(msg.Payload, msg.Peer())
+
 	eli, isSelf := 0, false
 	for i := 0; i < len(peers); i++ {
 		peer := peers[i]
-		if peer == nil || peer.IsSelf() {
+		if peer == nil {
+			continue
+		}
+		if peer.IsSelf() {
 			isSelf = true
 			continue
 		}
@@ -50,6 +54,7 @@ func (r *EdgeRouter) receiveRemote(msg *metanet.Message) {
 		if err != nil && err != ErrVTEPQueueRevoke {
 			r.log.Errorf("fail to write VTEP. (err = \"%v\")", err)
 		}
+		break
 	}
 	for _, p := range peers {
 		// TODO(xutao): optimization.
@@ -121,6 +126,7 @@ func (r *EdgeRouter) goForwardVTEP() {
 				if read < 1 {
 					continue
 				}
+				readBuf = readBuf[:read]
 
 				// forward.
 				meshPeers := r.route.Route(readBuf, r.metaNet.Publish.Self)
@@ -133,7 +139,7 @@ func (r *EdgeRouter) goForwardVTEP() {
 						continue
 					}
 					peer, isPeer := metaPeer.(*metanet.MetaPeer)
-					if isPeer {
+					if !isPeer {
 						continue
 					}
 					peers = append(peers, peer)

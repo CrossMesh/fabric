@@ -15,7 +15,7 @@ import (
 func (r *EdgeRouter) updateBackends(cfgs []*config.Backend) (succeed bool) {
 	var err error
 
-	creators := make([]backend.BackendCreator, len(cfgs))
+	creators := make([]backend.BackendCreator, 0, len(cfgs))
 	for _, cfg := range cfgs {
 		var creator backend.BackendCreator
 		if cfg == nil {
@@ -101,9 +101,10 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 
 			// update vetp.
 			if updateVTEP || r.cfg == nil || !cfg.Iface.Equal(r.cfg.Iface) {
-				if err = r.vtep.ApplyConfig(r.Mode(), cfg.Iface); err != nil {
+				if err = r.vtep.ApplyConfig(cfg.Mode, cfg.Iface); err != nil {
 					log.Error("update VTEP failure: ", err)
 					succeed = false
+					continue
 				}
 				r.vtep.SetMaxQueue(uint32(forwardRoutines))
 			}

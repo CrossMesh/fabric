@@ -2,7 +2,9 @@ package edgerouter
 
 import (
 	"errors"
+	"time"
 
+	"github.com/crossmesh/fabric/common"
 	"github.com/crossmesh/fabric/gossip"
 	"github.com/crossmesh/fabric/metanet"
 	"github.com/crossmesh/fabric/route"
@@ -23,33 +25,129 @@ func (r *EdgeRouter) initializeNetworkMap() (err error) {
 	r.metaNet.RegisterPeerJoinWatcher(r.onPeerJoin)
 	r.metaNet.RegisterPeerLeaveWatcher(r.onPeerLeave)
 	// watch for overlay metadata changes.
-	if r.metaNet.WatchKeyChanges(r.onOverlayNetworkStateChanged, gossip.DefaultNetworkEndpointKey) {
+	if !r.metaNet.WatchKeyChanges(r.onOverlayNetworkStateChanged, gossip.DefaultOverlayNetworkKey) {
 		return errors.New("cannot watch overlay metadata changes")
 	}
 
 	return nil
 }
 
-func (r *EdgeRouter) onPeerExistenceChange(peer *metanet.MetaPeer, isLeaving bool) {
-	r.metaNet.SladderTxn(func(t *sladder.Transaction) bool {
+func (r *EdgeRouter) publishLocalOverlayConfig(peer *metanet.MetaPeer, nets *gossip.OverlayNetworksV1Txn) (updated bool, err error) {
+	switch m := r.Mode(); m {
+	case "ethernet":
+		nets.RemoveNetwork(gossip.NetworkID{
+			ID:         0,
+			DriverType: gossip.CrossmeshSymmetryRoute,
+		})
+		netID := gossip.NetworkID{
+			ID:         0,
+			DriverType: gossip.CrossmeshSymmetryEthernet,
+		}
+		if err = nets.AddNetwork(netID); err != nil {
+			return false, err
+		}
+
+	case "overlay":
+		nets.RemoveNetwork(gossip.NetworkID{
+			ID:         0,
+			DriverType: gossip.CrossmeshSymmetryEthernet,
+		})
+		netID := gossip.NetworkID{
+			ID:         0,
+			DriverType: gossip.CrossmeshSymmetryRoute,
+		}
+		if err = nets.AddNetwork(netID); err != nil {
+			return false, err
+		}
+
+		// TODO(xutao): publish static routes.
+
+	default:
+		r.log.Errorf("Unknown working mode \"%v\". Skip publishing local overlay config for safety.", m)
+		return false, nil
+	}
+
+	return nets.Updated(), nil
+}
+
+func (r *EdgeRouter) delayProcessOnPeerJoin(peer *metanet.MetaPeer, d time.Duration) {
+	r.arbiter.Go(func() {
+		if d > 0 {
+			select {
+			case <-time.After(d):
+			case <-r.arbiter.Exit():
+				return
+			}
+		} else if !r.arbiter.ShouldRun() {
+			return
+		}
+
+		r.lock.Lock()
+		_, hasMap := r.networkMap[peer]
+		if hasMap { // peer left.
+			return
+		}
+		r.lock.Unlock()
+
+		r.processOnPeerJoin(peer)
+	})
+}
+
+func (r *EdgeRouter) processOnPeerJoin(peer *metanet.MetaPeer) {
+	var errs common.Errors
+
+	errs.Trace(r.metaNet.SladderTxn(func(t *sladder.Transaction) bool {
 		rtx, err := t.KV(peer.SladderNode(), r.overlayModelKey)
 		if err != nil {
 			r.log.Errorf("cannot open overlay network metadata. (err = \"%v\")", err)
 			return false
 		}
+
 		nets := rtx.(*gossip.OverlayNetworksV1Txn)
-		r.networkMapLearnNetworkAppeared(peer, nets.CloneCurrent())
-		return false
-	})
+		if !peer.IsSelf() {
+			r.networkMapLearnNetworkAppeared(peer, nets.CloneCurrent())
+			return false
+		}
+
+		updated, err := r.publishLocalOverlayConfig(peer, nets)
+		if err != nil {
+			errs.Trace(err)
+			return false
+		}
+
+		t.DeferOnCommit(func() {
+			r.log.Info("local overlay network config published.")
+		})
+
+		return updated
+	}))
+
+	if err := errs.AsError(); err != nil {
+		r.log.Error("some errors raised during processing peer join event. retry later. (err = \"%v\")", err)
+		r.delayProcessOnPeerJoin(peer, time.Second*5)
+	}
 }
 
 func (r *EdgeRouter) onPeerJoin(peer *metanet.MetaPeer) bool {
-	r.onPeerExistenceChange(peer, false)
+	r.lock.Lock()
+	netMap, has := r.networkMap[peer]
+	if !has || netMap == nil {
+		r.networkMap[peer] = make(map[gossip.NetworkID]interface{})
+	}
+	r.lock.Unlock()
+
+	r.processOnPeerJoin(peer)
+
 	return true
 }
 
 func (r *EdgeRouter) onPeerLeave(peer *metanet.MetaPeer) bool {
-	r.onPeerExistenceChange(peer, true)
+	r.networkMapLearnOverlayMetadataDisappeared(peer)
+
+	r.lock.Lock()
+	delete(r.networkMap, peer)
+	r.lock.Unlock()
+
 	return true
 }
 
@@ -68,6 +166,7 @@ func (r *EdgeRouter) rebuildRoute(lock bool) {
 					ID:         0,
 					DriverType: gossip.CrossmeshSymmetryEthernet,
 				}]; appeared {
+					r.log.Infof("rebuilding route discovers peer %v.", peer)
 					watcher.PeerJoin(peer)
 				}
 			}
@@ -84,9 +183,12 @@ func (r *EdgeRouter) rebuildRoute(lock bool) {
 				continue
 			}
 
+			names := peer.Names()
 			route.PeerJoin(peer)
+			r.log.Infof("rebuilding route discovers peer %v.", peer)
 			params := paramContainer.(*gossip.CrossmeshOverlayParamV1)
 			if len(params.Subnets) > 0 {
+				r.log.Infof("add static route %v to peer %v.", params.Subnets, names)
 				route.AddStaticCIDRRoutes(peer, params.Subnets...)
 			}
 		}
@@ -124,6 +226,7 @@ func (r *EdgeRouter) networkMapLearnNetworkAppeared(peer *metanet.MetaPeer, v1 *
 
 			if r.Mode() == "ethernet" {
 				if !hasPrev {
+					r.log.Infof("network %v learns a new peer %v.", netID, peer)
 					if isActivityWatcher {
 						watcher.PeerJoin(peer) // activate.
 					}
@@ -142,19 +245,32 @@ func (r *EdgeRouter) networkMapLearnNetworkAppeared(peer *metanet.MetaPeer, v1 *
 
 			if r.Mode() == "overlay" {
 				if !hasPrev {
+					r.log.Infof("network %v learns a new peer %v.", netID, peer)
 					if isActivityWatcher {
 						watcher.PeerJoin(peer) // activate.
+					}
+					if param.Subnets.Len() > 0 {
+						r.log.Infof("network %v adds static routes: %v --> %v.", netID, param.Subnets, peer)
+						route.AddStaticCIDRRoutes(peer, param.Subnets...)
 					}
 				} else {
 					// update static routes.
 					oldParam := oldParamContainer.(*gossip.CrossmeshOverlayParamV1)
 					toRemove := oldParam.Subnets.Clone()
+					r.log.Info("toRemove", toRemove)
 					toRemove.Remove(param.Subnets...)
 					if toRemove.Len() > 0 {
+						r.log.Infof("network %v removes static routes: %v --> %v.", netID, toRemove, peer)
 						route.RemoveStaticCIDRRoutes(peer, toRemove...)
 					}
+					additions := param.Subnets.Clone()
+					additions.Remove(oldParam.Subnets...)
+					r.log.Info("add", additions)
+					if additions.Len() > 0 {
+						r.log.Infof("network %v adds static routes: %v --> %v.", netID, additions, peer)
+						route.AddStaticCIDRRoutes(peer, param.Subnets...)
+					}
 				}
-				route.AddStaticCIDRRoutes(peer, param.Subnets...)
 			}
 
 			peerNetMap[netID] = param
@@ -168,12 +284,14 @@ func (r *EdgeRouter) networkMapLearnNetworkAppeared(peer *metanet.MetaPeer, v1 *
 		switch netID.DriverType {
 		case gossip.CrossmeshSymmetryEthernet:
 			if r.Mode() == "ethernet" {
+				r.log.Info("peer %v left network %v.", peer, netID)
 				if isActivityWatcher {
 					watcher.PeerLeave(peer)
 				}
 			}
 		case gossip.CrossmeshSymmetryRoute:
 			if r.Mode() == "overlay" {
+				r.log.Info("peer %v left network %v.", peer, netID)
 				if isActivityWatcher {
 					watcher.PeerLeave(peer)
 				}
@@ -213,18 +331,22 @@ func (r *EdgeRouter) networkMapLearnOverlayMetadataDisappeared(peer *metanet.Met
 	if isActivityWatcher {
 		switch r.Mode() {
 		case "ethernet":
-			if _, appeared := peerNetMap[gossip.NetworkID{
+			netID := gossip.NetworkID{
 				ID:         0,
 				DriverType: gossip.CrossmeshSymmetryEthernet,
-			}]; appeared {
+			}
+			if _, appeared := peerNetMap[netID]; appeared {
+				r.log.Infof("peer %v leaves network %v.", peer, netID)
 				watcher.PeerLeave(peer)
 			}
 
 		case "overlay":
-			if _, appeared := peerNetMap[gossip.NetworkID{
+			netID := gossip.NetworkID{
 				ID:         0,
-				DriverType: gossip.CrossmeshSymmetryEthernet,
-			}]; appeared {
+				DriverType: gossip.CrossmeshSymmetryRoute,
+			}
+			if _, appeared := peerNetMap[netID]; appeared {
+				r.log.Infof("peer %v leaves network %v.", peer, netID)
 				watcher.PeerLeave(peer)
 			}
 		}
