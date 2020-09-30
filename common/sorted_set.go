@@ -46,7 +46,9 @@ func sortedSetDeduplicate(data SortedSetInterface) bool {
 		}
 		fill(i - 1)
 	}
-	fill(max - 1)
+	if max > 0 {
+		fill(max - 1)
+	}
 
 	if eli < max {
 		data.Pop(max - eli)
@@ -101,8 +103,11 @@ func SortedSetSubstract(l, r SortedSetInterface, less func(x, y interface{}) boo
 	return
 }
 
-// SortedSetMerge merges two sorted set.
-func SortedSetMerge(l, r SortedSetInterface) (changed bool) {
+// SortedSetSelectMerge merges two sorted set.
+// When any two equivalents are found, `equalSelect` will be called to determine which one is accepted.
+// `left` and `right` are indices of the equivalent pair.
+// If `equalSelect` returns true, the left is accepted. Otherwise, the right is accepted.
+func SortedSetSelectMerge(l, r SortedSetInterface, equalSelect func(s SortedSetInterface, left, right int) bool) (changed bool) {
 	changed = false
 
 	// maps
@@ -142,7 +147,11 @@ func SortedSetMerge(l, r SortedSetInterface) (changed bool) {
 		lidx, ridx := lIdxMap[lh-1], rIdxMap[rh-1]
 		lle, rle := l.Less(lidx, ridx), l.Less(ridx, lidx)
 		if lle == rle {
-			right(ridx)
+			if equalSelect(l, lidx, ridx) {
+				left(lidx)
+			} else {
+				right(ridx)
+			}
 		} else if lle {
 			right(ridx)
 			changed = true
@@ -163,4 +172,12 @@ func SortedSetMerge(l, r SortedSetInterface) (changed bool) {
 	sortedSetDeduplicate(l)
 
 	return changed
+}
+
+// SortedSetMerge merges two sorted set.
+// SortedSetMerge is equivalent of SortedSetSelectMerge with `equalSelect` which always select the left element.
+func SortedSetMerge(l, r SortedSetInterface) (changed bool) {
+	return SortedSetSelectMerge(l, r, func(s SortedSetInterface, l, r int) bool {
+		return false
+	})
 }
