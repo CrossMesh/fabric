@@ -20,6 +20,17 @@ var (
 	ErrRelayNoBackend = errors.New("backend unavaliable")
 )
 
+func (r *EdgeRouter) writeLocalVTEP(lease *vtepQueueLease, frame []byte) (err error) {
+	if err = lease.Tx(func(rw *water.Interface) error {
+		_, err := rw.Write(frame)
+		return err
+	}); err != nil && err != ErrVTEPQueueRevoke {
+		r.log.Errorf("fail to write VTEP. (err = \"%v\")", err)
+		return err
+	}
+	return nil
+}
+
 func (r *EdgeRouter) receiveRemote(msg *metanet.Message) {
 	peers := r.route.Route(msg.Payload, msg.Peer())
 
@@ -47,13 +58,7 @@ func (r *EdgeRouter) receiveRemote(msg *metanet.Message) {
 		if lease == nil {
 			break
 		}
-		err = lease.Tx(func(rw *water.Interface) error {
-			_, err := rw.Write(msg.Payload)
-			return err
-		})
-		if err != nil && err != ErrVTEPQueueRevoke {
-			r.log.Errorf("fail to write VTEP. (err = \"%v\")", err)
-		}
+		r.writeLocalVTEP(lease, msg.Payload)
 		break
 	}
 	for _, p := range peers {
@@ -129,6 +134,7 @@ func (r *EdgeRouter) goForwardVTEP() {
 				readBuf = readBuf[:read]
 
 				// forward.
+				isSelf := false
 				meshPeers := r.route.Route(readBuf, r.metaNet.Publish.Self)
 				if len(meshPeers) < 1 {
 					continue
@@ -138,13 +144,22 @@ func (r *EdgeRouter) goForwardVTEP() {
 					if metaPeer == nil {
 						continue
 					}
+					if metaPeer.IsSelf() {
+						isSelf = true
+						continue
+					}
 					peer, isPeer := metaPeer.(*metanet.MetaPeer)
 					if !isPeer {
 						continue
 					}
 					peers = append(peers, peer)
 				}
-				r.metaNet.SendToPeers(proto.MsgTypeRawFrame, readBuf, peers...)
+				if isSelf {
+					r.writeLocalVTEP(lease, readBuf)
+				}
+				if len(peers) > 0 {
+					r.metaNet.SendToPeers(proto.MsgTypeRawFrame, readBuf, peers...)
+				}
 			}
 		}
 	})

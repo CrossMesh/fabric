@@ -84,7 +84,8 @@ func (r *EdgeRouter) delayProcessOnPeerJoin(peer *metanet.MetaPeer, d time.Durat
 
 		r.lock.Lock()
 		_, hasMap := r.networkMap[peer]
-		if hasMap { // peer left.
+		if !hasMap { // peer left.
+			r.lock.Unlock()
 			return
 		}
 		r.lock.Unlock()
@@ -177,7 +178,7 @@ func (r *EdgeRouter) rebuildRoute(lock bool) {
 		for peer, netMap := range r.networkMap {
 			paramContainer, appeared := netMap[gossip.NetworkID{
 				ID:         0,
-				DriverType: gossip.CrossmeshSymmetryEthernet,
+				DriverType: gossip.CrossmeshSymmetryRoute,
 			}]
 			if !appeared {
 				continue
@@ -193,6 +194,8 @@ func (r *EdgeRouter) rebuildRoute(lock bool) {
 			}
 		}
 	}
+
+	r.delayProcessOnPeerJoin(r.metaNet.Publish.Self, 0)
 }
 
 func (r *EdgeRouter) networkMapLearnNetworkAppeared(peer *metanet.MetaPeer, v1 *gossip.OverlayNetworksV1) {
@@ -223,7 +226,6 @@ func (r *EdgeRouter) networkMapLearnNetworkAppeared(peer *metanet.MetaPeer, v1 *
 				r.log.Errorf("cannot decode new CrossmeshOverlayParamV1 structure. (err = \"%v\")", err)
 				continue
 			}
-
 			if r.Mode() == "ethernet" {
 				if !hasPrev {
 					r.log.Infof("network %v learns a new peer %v.", netID, peer)
@@ -236,7 +238,6 @@ func (r *EdgeRouter) networkMapLearnNetworkAppeared(peer *metanet.MetaPeer, v1 *
 			peerNetMap[netID] = param
 
 		case gossip.CrossmeshSymmetryRoute:
-			route := r.route.(*route.P2PL3IPv4MeshNetworkRouter)
 			param := &gossip.CrossmeshOverlayParamV1{}
 			if err := param.Decode([]byte(rawParam.Params)); err != nil {
 				r.log.Errorf("cannot decode new CrossmeshOverlayParamV1 structure. (err = \"%v\")", err)
@@ -244,6 +245,7 @@ func (r *EdgeRouter) networkMapLearnNetworkAppeared(peer *metanet.MetaPeer, v1 *
 			}
 
 			if r.Mode() == "overlay" {
+				route := r.route.(*route.P2PL3IPv4MeshNetworkRouter)
 				if !hasPrev {
 					r.log.Infof("network %v learns a new peer %v.", netID, peer)
 					if isActivityWatcher {
@@ -257,7 +259,6 @@ func (r *EdgeRouter) networkMapLearnNetworkAppeared(peer *metanet.MetaPeer, v1 *
 					// update static routes.
 					oldParam := oldParamContainer.(*gossip.CrossmeshOverlayParamV1)
 					toRemove := oldParam.Subnets.Clone()
-					r.log.Info("toRemove", toRemove)
 					toRemove.Remove(param.Subnets...)
 					if toRemove.Len() > 0 {
 						r.log.Infof("network %v removes static routes: %v --> %v.", netID, toRemove, peer)
@@ -265,7 +266,6 @@ func (r *EdgeRouter) networkMapLearnNetworkAppeared(peer *metanet.MetaPeer, v1 *
 					}
 					additions := param.Subnets.Clone()
 					additions.Remove(oldParam.Subnets...)
-					r.log.Info("add", additions)
 					if additions.Len() > 0 {
 						r.log.Infof("network %v adds static routes: %v --> %v.", netID, additions, peer)
 						route.AddStaticCIDRRoutes(peer, param.Subnets...)
