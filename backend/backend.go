@@ -65,8 +65,8 @@ type Endpoint struct {
 
 var NullEndpoint = Endpoint{Type: UnknownBackend}
 
-func (p *Endpoint) String() string {
-	return p.Type.String() + ":" + p.Endpoint
+func (p Endpoint) String() string {
+	return p.Type.String() + "://" + p.Endpoint
 }
 
 type BackendCreator interface {
