@@ -70,7 +70,7 @@ func (n *MetadataNetwork) RegisterMessageHandler(typeID uint16, handler MessageH
 		if handler == nil && !found {
 			break
 		}
-		actual, stored := n.messageHandlers.LoadOrStore(typeID, rv)
+		actual, stored := n.messageHandlers.LoadOrStore(typeID, handler)
 		if stored {
 			break
 		}
@@ -145,7 +145,7 @@ func (n *MetadataNetwork) SendToNames(typeID uint16, payload []byte, names ...st
 // SendToEndpoints sends a message to endpoints.
 func (n *MetadataNetwork) SendToEndpoints(typeID uint16, payload []byte, endpoints ...backend.Endpoint) {
 	bins := make([]byte, proto.ProtocolMessageHeaderSize, len(payload)+proto.ProtocolMessageHeaderSize)
-	proto.PackProtocolMessageHeader(bins[:proto.ProtocolMessageHeaderSize], proto.MsgTypeGossip)
+	proto.PackProtocolMessageHeader(bins[:proto.ProtocolMessageHeaderSize], typeID)
 	bins = append(bins, payload...)
 	n.nakedSendToEndpoint(bins, endpoints...)
 }
@@ -162,7 +162,10 @@ func (n *MetadataNetwork) nakedSendToEndpoint(packed []byte, endpoints ...backen
 		}
 		link, err := b.Connect(endpoint.Endpoint)
 		if err != nil {
-			n.log.Errorf("failed to get link. (err = \"%v\")", err)
+			if err != backend.ErrOperationCanceled {
+				n.log.Errorf("failed to get link. (err = \"%v\")", err)
+			}
+			return
 		}
 		if err = link.Send(packed); err != nil {
 			n.log.Errorf("failed to send packet. (err = \"%v\")", err)
@@ -195,7 +198,13 @@ func (n *MetadataNetwork) newGossipEngineTransport(maxSize uint) (t *gossipEngin
 
 func (t *gossipEngineTransport) putMessage(m *Message) {
 	msg := t.msgPool.Get().(*gossipEngineMessage)
-	msg.name, msg.payload = m.GetPeerName(), m.Payload
+	if msg.payload == nil {
+		msg.payload = make([]byte, 0, len(m.Payload))
+	} else {
+		msg.payload = msg.payload[:0]
+	}
+	msg.payload = append(msg.payload, m.Payload...)
+	msg.name = m.GetPeerName()
 
 	select { // send or drop.
 	case t.bufChan <- msg:
@@ -208,6 +217,8 @@ func (t *gossipEngineTransport) Receive(ctx context.Context) (names []string, pa
 	select {
 	case msg := <-t.bufChan:
 		payload, names = msg.payload, []string{msg.name}
+		t.n.log.Debug("get a gossip message from ", msg.name, ", payload len = ", len(msg.payload))
+
 		t.msgPool.Put(msg)
 	case <-ctx.Done():
 		return nil, nil
@@ -217,4 +228,5 @@ func (t *gossipEngineTransport) Receive(ctx context.Context) (names []string, pa
 
 func (t *gossipEngineTransport) Send(names []string, payload []byte) {
 	t.n.SendToNames(proto.MsgTypeGossip, payload, names...)
+	t.n.log.Debug("send a gossip message to ", names, ", payload len = ", len(payload))
 }

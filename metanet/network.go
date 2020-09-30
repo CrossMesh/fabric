@@ -49,9 +49,12 @@ type MetadataNetwork struct {
 	peerLeaveWatcher sync.Map // map[uintptr]PeerHandler
 	peerJoinWatcher  sync.Map // map[uintptr]PeerHandler
 
-	lock    sync.RWMutex
-	arbiter *arbit.Arbiter
-	log     *logging.Entry
+	lock     sync.RWMutex
+	arbiters struct {
+		main    *arbit.Arbiter
+		backend *arbit.Arbiter
+	}
+	log *logging.Entry
 
 	quitChan chan struct{}
 
@@ -83,7 +86,9 @@ func NewMetadataNetwork(arbiter *arbit.Arbiter, log *logging.Entry) (n *Metadata
 		quitChan: make(chan struct{}),
 	}
 
-	n.arbiter = arbit.NewWithParent(arbiter)
+	n.arbiters.main = arbit.NewWithParent(arbiter)
+	n.arbiters.backend = arbit.NewWithParent(nil)
+
 	if log == nil {
 		n.log = logging.WithField("module", "metadata_network")
 	} else {
@@ -92,9 +97,9 @@ func NewMetadataNetwork(arbiter *arbit.Arbiter, log *logging.Entry) (n *Metadata
 	if err = n.initializeMembership(); err != nil {
 		return nil, err
 	}
-	n.arbiter.Go(func() {
+	n.arbiters.main.Go(func() {
 		select {
-		case <-n.arbiter.Exit():
+		case <-n.arbiters.main.Exit():
 			n.Close()
 		case <-n.quitChan:
 		}
@@ -148,13 +153,21 @@ func (n *MetadataNetwork) WatchKeyChanges(watcher KeyChangeWatcher, keys ...stri
 
 // Close quits from metadata network.
 func (n *MetadataNetwork) Close() {
+	n.log.Debug("metanet closing...")
+
 	n.lock.Lock()
 	defer n.lock.Unlock()
 
 	n.gossip.cluster.Quit()
+	n.log.Debug("gossip stopped.")
+
+	// stop backends.
+	n.arbiters.backend.Shutdown()
+	n.arbiters.backend.Join()
 
 	for endpoint, backend := range n.backends {
 		backend.Shutdown()
+		n.log.Infof("endpoint %v stopped.", endpoint)
 		delete(n.backends, endpoint)
 	}
 	n.Publish.Type2Backend.Range(func(k, v interface{}) bool {
@@ -166,10 +179,10 @@ func (n *MetadataNetwork) Close() {
 }
 
 func (n *MetadataNetwork) delayLocalEndpointCreation(id uint32, creators ...backend.BackendCreator) {
-	n.arbiter.Go(func() {
+	n.arbiters.main.Go(func() {
 		select {
 		case <-time.After(time.Second * 5):
-		case <-n.arbiter.Exit():
+		case <-n.arbiters.main.Exit():
 			return
 		}
 
@@ -188,7 +201,7 @@ func (n *MetadataNetwork) delayLocalEndpointCreation(id uint32, creators ...back
 			}
 
 			// new.
-			new, err := creator.New(n.arbiter, nil)
+			new, err := creator.New(n.arbiters.backend, nil)
 			if err != nil {
 				n.log.Errorf("failed to create backend %v:%v. (err = \"%v\")", creator.Type().String(), creator.Publish, err)
 				failCreation = append(failCreation, creator)
@@ -247,6 +260,7 @@ func (n *MetadataNetwork) UpdateLocalEndpoints(creators ...backend.BackendCreato
 		if _, hasEndpoint := indexCreators[endpoint]; !hasEndpoint {
 			delete(n.backends, endpoint)
 			backend.Shutdown()
+			n.log.Infof("endpoint %v stopped.", endpoint)
 			removePublishEndpoint(endpoint.Type, backend)
 			changed = true
 		}
@@ -259,17 +273,20 @@ func (n *MetadataNetwork) UpdateLocalEndpoints(creators ...backend.BackendCreato
 		// TODO(xutao): backend support configuration change.
 		if hasBackend && isBackend && b != nil { // update
 			delete(n.backends, endpoint)
+			n.log.Infof("try to restart endpoint %v.", endpoint)
 			b.Shutdown()
 			removePublishEndpoint(endpoint.Type, b)
 			changed = true
 		}
 
 		// new.
-		new, err := creator.New(n.arbiter, nil)
+		new, err := creator.New(n.arbiters.backend, nil)
 		if err != nil {
 			n.log.Errorf("failed to create backend %v:%v. (err = \"%v\")", creator.Type().String(), creator.Publish, err)
 			failCreation = append(failCreation, creator)
 		} else {
+			changed = true
+			n.log.Infof("endpoint %v started.", endpoint)
 			n.backends[endpoint] = new
 			new.Watch(n.receiveRemote)
 		}

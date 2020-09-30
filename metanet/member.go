@@ -208,6 +208,8 @@ func (n *MetadataNetwork) updateNetworkEndpoint(peer *MetaPeer, endpointSet goss
 
 	// deal with names.
 	if oldNames := peer.names; !stringsEqual(names, peer.names) {
+		n.log.Debug("recalc names: old = ", peer.names, " new = ", names, " for node = ", peer)
+
 		// republish Name2Peer.
 		oldName2Peer := n.Publish.Name2Peer
 		name2Peer := make(map[string]*MetaPeer, len(oldName2Peer)-len(oldNames)+len(names))
@@ -220,11 +222,13 @@ func (n *MetadataNetwork) updateNetworkEndpoint(peer *MetaPeer, endpointSet goss
 		for _, name := range names {
 			name2Peer[name] = peer
 		}
+		n.log.Debug("republish name-to-peer mapping: ", name2Peer)
 		n.Publish.Name2Peer = name2Peer
 		pub.Names = names
 	}
 
 	if !pub.Trival() {
+		n.log.Debugf("republish peer %v interval: %v", peer.Names(), &pub)
 		peer.publishInterval(&pub)
 	}
 }
@@ -236,6 +240,7 @@ func (n *MetadataNetwork) onGossipNodeRemoved(node *sladder.Node) {
 	if !hasPeer {
 		// should not hanppen.
 		n.log.Warnf("[BUG!] a untracked peer left. [node = %v]", node)
+		n.lock.Unlock()
 		return
 	}
 	delete(n.peers, node)
@@ -249,25 +254,29 @@ func (n *MetadataNetwork) onGossipNodeRemoved(node *sladder.Node) {
 	for _, name := range peer.names {
 		delete(name2Peer, name)
 	}
+	n.log.Debug("republish name-to-peer mapping: ", name2Peer)
 	n.Publish.Name2Peer = name2Peer
 
 	n.lock.Unlock()
 
 	n.notifyPeerWatcher(&n.peerLeaveWatcher, peer)
+
+	n.log.Infof("peer %v left.", node.Names())
 }
 
 func (n *MetadataNetwork) onGossipNodeJoined(node *sladder.Node) {
 	n.lock.Lock()
-	peer := MetaPeer{Node: node}
-	n.peers[node] = &peer
-
-	// notify joined event before publish network endpoint.
-	n.notifyPeerWatcher(&n.peerJoinWatcher, &peer)
-
-	n.updateNetworkEndpoint(&peer, nil)
-
+	peer, hasPeer := n.peers[node]
+	if !hasPeer {
+		peer = &MetaPeer{Node: node}
+		n.peers[node] = peer
+	}
 	n.lock.Unlock()
 
+	n.updateNetworkEndpoint(peer, nil)
+	n.notifyPeerWatcher(&n.peerJoinWatcher, peer)
+
+	n.log.Infof("peer %v joins", node.Names())
 }
 
 func (n *MetadataNetwork) notifyPeerWatcher(set *sync.Map, peer *MetaPeer) {
@@ -297,9 +306,9 @@ func (n *MetadataNetwork) onGossipNodeEvent(ctx *sladder.ClusterEventContext, ev
 func (n *MetadataNetwork) onNetworkEndpointEvent(ctx *sladder.WatchEventContext, meta sladder.KeyValueEventMetadata) {
 	switch meta.Event() {
 	case sladder.KeyInsert:
-		n.lock.Lock()
-		defer n.lock.Unlock()
+		n.lock.RLock()
 		peer, _ := n.peers[meta.Node()]
+		n.lock.RUnlock()
 		if peer == nil {
 			break
 		}
@@ -307,18 +316,18 @@ func (n *MetadataNetwork) onNetworkEndpointEvent(ctx *sladder.WatchEventContext,
 		n.updateNetworkEndpointFromRaw(peer, meta.Value())
 
 	case sladder.KeyDelete:
-		n.lock.Lock()
-		defer n.lock.Unlock()
+		n.lock.RLock()
 		peer, _ := n.peers[meta.Node()]
+		n.lock.RUnlock()
 		if peer == nil {
 			break
 		}
 		n.updateNetworkEndpoint(peer, gossipUtils.NetworkEndpointSetV1{})
 
 	case sladder.ValueChanged:
-		n.lock.Lock()
-		defer n.lock.Unlock()
+		n.lock.RLock()
 		peer, _ := n.peers[meta.Node()]
+		n.lock.RUnlock()
 		if peer == nil {
 			break
 		}
@@ -334,11 +343,11 @@ func (n *MetadataNetwork) RepublishEndpoint() {
 }
 
 func (n *MetadataNetwork) delayPublishEndpoint(id uint32, delay bool) {
-	n.arbiter.Go(func() {
+	n.arbiters.main.Go(func() {
 		if delay {
 			select {
 			case <-time.After(time.Second * 5):
-			case <-n.arbiter.Exit():
+			case <-n.arbiters.main.Exit():
 				return
 			}
 		}
@@ -401,7 +410,9 @@ func (n *MetadataNetwork) delayPublishEndpoint(id uint32, delay bool) {
 		if err := errs.AsError(); err != nil {
 			n.log.Errorf("failed to commit transaction for endpoint publication. (err = \"%v\")", err)
 			n.delayPublishEndpoint(id, true)
+			return
 		}
+		n.log.Infof("gossip publish endpoints %v", newEndpoints)
 
 		// publish locally.
 		typePublish := make(map[backend.Type]backend.Backend)

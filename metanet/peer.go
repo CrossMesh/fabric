@@ -3,6 +3,7 @@ package metanet
 import (
 	"encoding/binary"
 	"fmt"
+	"strings"
 	"sync"
 	"unsafe"
 
@@ -20,8 +21,21 @@ type MetaPeerStatePublication struct {
 	Endpoints []MetaPeerEndpoint
 }
 
+// String formats a human-friendly string of a state publication.
+func (i *MetaPeerStatePublication) String() string {
+	changes := []string(nil)
+
+	if i.Endpoints != nil {
+		changes = append(changes, fmt.Sprintf("endpoints(%v)", i.Endpoints))
+	}
+	if i.Names != nil {
+		changes = append(changes, fmt.Sprintf("names(%v)", i.Names))
+	}
+	return "<" + strings.Join(changes, ",") + ">"
+}
+
 // Trival reports whether publication has no change.
-func (i MetaPeerStatePublication) Trival() bool {
+func (i *MetaPeerStatePublication) Trival() bool {
 	return i.Names == nil && i.Endpoints == nil
 }
 
@@ -36,6 +50,16 @@ type MetaPeer struct {
 
 	Endpoints    []MetaPeerEndpoint // (COW. safe to lock-free read and lock-free write except slice itself)
 	intervalSubs map[*MetaPeerStateWatcher]struct{}
+}
+
+func (p *MetaPeer) String() (s string) {
+	if p.Node != nil {
+		s = p.PrintableName()
+	}
+	if p.isSelf {
+		s = "self," + s
+	}
+	return "meta_peer<" + s + ">"
 }
 
 // SladderNode returns related *sladder.Node.
@@ -65,6 +89,12 @@ func (p *MetaPeer) HashID() string {
 // IsSelf reports the peer is myself.
 func (p *MetaPeer) IsSelf() bool { return p.isSelf }
 
+// Names reports node names.
+func (p *MetaPeer) Names() (names []string) {
+	names = append(names, p.names...)
+	return
+}
+
 func (p *MetaPeer) publishInterval(interval *MetaPeerStatePublication) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
@@ -84,6 +114,9 @@ func (p *MetaPeer) publishInterval(interval *MetaPeerStatePublication) {
 
 func (p *MetaPeer) chooseEndpoint() backend.Endpoint {
 	endpoints := p.Endpoints
+	if len(endpoints) < 1 {
+		return backend.NullEndpoint
+	}
 	selected := endpoints[0]
 	if selected.Disabled {
 		return backend.NullEndpoint
