@@ -62,13 +62,11 @@ func (r *P2PL2MeshNetworkRouter) Route(frame []byte, from MeshNetPeer) (peers []
 			peers = []MeshNetPeer{peer.(MeshNetPeer)}
 		}
 	}
-	if len(peers) < 1 && from.IsSelf() { // boardcast.
+	if len(peers) < 1 { // boardcast.
 		for _, ref := range peerSet {
-			peer := ref.peer
-			if peer.IsSelf() || peer == from {
-				continue
+			if peer := ref.peer; from.IsSelf() != peer.IsSelf() {
+				peers = append(peers, peer)
 			}
-			peers = append(peers, peer)
 		}
 	}
 

@@ -70,8 +70,15 @@ func TestP2PL3Mesh(t *testing.T) {
 		route.PeerJoin(peer2)
 		route.PeerJoin(peer3)
 
+		// accept packet in case of unicast miss.
+		peers := route.Route(packet[1], peer2)
+		assert.Equal(t, 1, len(peers))
+		assert.Contains(t, peers, MeshNetPeer(self))
+		route.PeerLeave(peer2)
+		route.PeerJoin(peer2)
+
 		// unicast miss.
-		peers := route.Route(packet[0], self)
+		peers = route.Route(packet[0], self)
 		assert.Equal(t, 3, len(peers))
 		assert.Contains(t, peers, MeshNetPeer(peer1))
 		assert.Contains(t, peers, MeshNetPeer(peer2))

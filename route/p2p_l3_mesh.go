@@ -88,11 +88,9 @@ func (r *P2PL3IPv4MeshNetworkRouter) Route(packet []byte, from MeshNetPeer) (pee
 		}
 		if len(peers) < 1 { // boardcast.
 			for _, ref := range peerSet {
-				peer := ref.peer
-				if peer.IsSelf() || peer == from {
-					continue
+				if peer := ref.peer; from.IsSelf() != peer.IsSelf() {
+					peers = append(peers, peer)
 				}
-				peers = append(peers, peer)
 			}
 		}
 	} // else {

@@ -99,8 +99,15 @@ func TestP2PL2Mesh(t *testing.T) {
 	route.PeerJoin(peer2)
 	route.PeerJoin(peer3)
 
+	// arp. receive req.
+	peers := route.Route(frames[0], peer3)
+	assert.Equal(t, 1, len(peers))
+	assert.Contains(t, peers, MeshNetPeer(self))
+	route.PeerLeave(peer3)
+	route.PeerJoin(peer3)
+
 	// arp. req.
-	peers := route.Route(frames[0], self)
+	peers = route.Route(frames[0], self)
 	assert.Equal(t, 3, len(peers))
 	assert.Contains(t, peers, MeshNetPeer(peer1))
 	assert.Contains(t, peers, MeshNetPeer(peer2))
@@ -135,9 +142,10 @@ func TestP2PL2Mesh(t *testing.T) {
 	assert.Equal(t, 1, len(peers))
 	assert.Contains(t, peers, MeshNetPeer(peer2))
 
-	// do not forward boardcast frame.
+	// do not forward boardcast frame. buf accept it myself.
 	peers = route.Route(frames[4], peer3)
-	assert.Equal(t, 0, len(peers))
+	assert.Equal(t, 1, len(peers))
+	assert.Contains(t, peers, MeshNetPeer(self))
 
 	// drop incoming multicast frame.
 	peers = route.Route(frames[5], peer3)
