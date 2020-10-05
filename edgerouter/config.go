@@ -45,7 +45,7 @@ func (r *EdgeRouter) updateBackends(cfgs []*config.Backend) (succeed bool) {
 func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 	id, log := atomic.AddUint32(&r.configID, 1), r.log.WithField("type", "config")
 
-	log.Debugf("start apply configuration %v", id)
+	log.Infof("start apply configuration %v", id)
 
 	r.arbiter.Go(func() {
 		var err error
@@ -68,7 +68,7 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 
 			// update peer and route.
 			if current := r.Mode(); current != "unknown" && cfg.Mode != current {
-				r.log.Debug("shutting down forwarding...")
+				r.log.Info("shutting down forwarding...")
 				if arbiter := r.forwardArbiter; arbiter != nil {
 					arbiter.Shutdown()
 					arbiter.Join()
@@ -91,8 +91,8 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 					log.Info("network mode: ethernet")
 					r.route = route.NewP2PL2MeshNetworkRouter()
 
-				case "overlay":
-					log.Info("network mode: overlay")
+				case "ip":
+					log.Info("network mode: ip")
 					r.route = route.NewP2PL3IPv4MeshNetworkRouter()
 				}
 
@@ -163,7 +163,7 @@ func (r *EdgeRouter) ApplyConfig(cfg *config.Network) (err error) {
 		err = fmt.Errorf("empty network interface name")
 		return
 	}
-	if cfg.Mode != "ethernet" && cfg.Mode != "overlay" {
+	if cfg.Mode != "ethernet" && cfg.Mode != "overlay" && cfg.Mode != "ip" {
 		err = fmt.Errorf("unknwon network mode: %v", cfg.Mode)
 		return
 	}
@@ -176,6 +176,9 @@ func (r *EdgeRouter) ApplyConfig(cfg *config.Network) (err error) {
 				return err
 			}
 		}
+	case "overlay":
+		r.log.Warn("network mode \"overlay\" is now renamed \"ip\". ")
+		cfg.Mode = "ip"
 	}
 
 	r.goApplyConfig(cfg, cfg.Iface.Subnet)
