@@ -63,8 +63,6 @@ link:
       # pre-shared key for encryption.
       psk: 123456
 
-      # encryption enable.
-      encrypt: false
 
       # backend driver. only TCP supported yet.
       type: tcp
@@ -77,6 +75,9 @@ link:
         publish: 192.168.0.161:80
         # priority.
         priority: 1
+
+        # encryption enable.
+        encrypt: true
 
         # packet sending timeout.
         # sendTimeout: 50
