@@ -108,10 +108,25 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 				r.vtep.SetMaxQueue(uint32(forwardRoutines))
 			}
 
+			if old, err := r.metaNet.SetRegion(cfg.Region); err != nil {
+				log.Error("cannot set region for metadata network. (err = \"%v\")", err)
+				succeed = false
+				continue
+			} else if old != cfg.Region {
+				log.Infof("metanet region: \"%v\" --> \"%v\"", old, cfg.Region)
+			}
+
 			// update backends.
 			if succeed = r.updateBackends(cfg.Backend); !succeed {
 				continue
 			}
+
+			minRegionPeer := cfg.MinRegionPeer
+			if minRegionPeer < 1 {
+				minRegionPeer = 2
+			}
+			log.Infof("minimum region peer = %v", minRegionPeer)
+			r.metaNet.SetMinRegionPeer(uint(minRegionPeer))
 
 			break
 		}
