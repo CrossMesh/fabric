@@ -64,7 +64,7 @@ func (m *GCMStreamMuxer) Mux(frame []byte) (written int, err error) {
 	hdrBuf[2] = byte((dataSize >> 16) & 0xFF)
 	buf = m.aead.Seal(buf, m.nonce, hdrBuf[:], nil)
 	// encrypt data.
-	buf = m.aead.Seal(buf, m.nonce, frame, buf[:len(buf)])
+	buf = m.aead.Seal(buf, m.nonce, frame, buf)
 
 	return m.w.Write(buf)
 }
@@ -137,47 +137,73 @@ func (d *GCMStreamDemuxer) Demux(raw []byte, emit func([]byte) bool) (read int, 
 		openBuf := d.allocBuffer()
 		defer d.freeBuffer(openBuf)
 
-		for {
+		for cont {
 			// no enough bytes to open header.
 			if frameLength < 0 {
 				// decrypt header.
-				fill := headerLength - len(buf)
-				if fill > len(raw) {
-					fill = len(raw)
-				}
-				// fill buffer.
-				buf, raw = append(buf, raw[:fill]...), raw[fill:]
-				if len(buf) < headerLength {
-					// no bytes left to fill.
-					break
-				}
-				if openBuf, err = d.aead.Open(openBuf[:0], d.nonce, buf[:headerLength], nil); err != nil {
-					return 0, err
+				if lenBuf := len(buf); lenBuf == 0 {
+					if len(raw) < headerLength {
+						// no enough bytes to decrypt header.
+						buf, raw = append(buf, raw...), raw[len(raw):]
+						break
+					}
+
+					// fast path: avoid copying.
+					if openBuf, err = d.aead.Open(openBuf[:0], d.nonce, raw[:headerLength], nil); err != nil {
+						return 0, err
+					}
+				} else {
+					fill := headerLength - len(buf)
+					if fill > len(raw) {
+						fill = len(raw)
+					}
+					buf, raw = append(buf, raw[:fill]...), raw[fill:]
+					if len(buf) < headerLength {
+						// no enough bytes left to decrypt header.
+						break
+					}
+					if openBuf, err = d.aead.Open(openBuf[:0], d.nonce, buf[:headerLength], nil); err != nil {
+						return 0, err
+					}
 				}
 				if len(openBuf) != 3 {
 					return 0, FrameCorrupted
 				}
 				frameLength = int(uint32(openBuf[0]) | (uint32(openBuf[1]) << 8) | (uint32(openBuf[2]) << 16))
-				if len(raw) < 1 {
-					break
-				}
 			}
 
-			// decrypt data.
-			fill := frameLength + headerLength - len(buf) // frameLength calculated by muxer. overhead has included.
-			if fill > len(raw) {
-				fill = len(raw)
+			need := frameLength + headerLength   // frameLength calculated by muxer. overhead has included.
+			if lenBuf := len(buf); lenBuf == 0 { // no copy?
+				if need > len(raw) { // no enough bytes left to decrypt payload.
+					buf, raw = append(buf, raw...), raw[len(raw):]
+					break
+				}
+
+				// fast path: avoid copying while decrypting.
+				if openBuf, err = d.aead.Open(openBuf[:0], d.nonce, raw[headerLength:need], raw[:headerLength]); err != nil {
+					return 0, err
+				}
+				cont = emit(openBuf)
+
+			} else {
+				need -= lenBuf
+				if need > len(raw) { // no enough bytes left to decrypt payload.
+					buf, raw = append(buf, raw...), raw[len(raw):]
+					break
+				}
+
+				originBuf := buf
+				buf = append(buf, raw[:need]...)
+				// decrypt data.
+				if openBuf, err = d.aead.Open(openBuf[:0], d.nonce, buf[headerLength:headerLength+frameLength], buf[:headerLength]); err != nil {
+					buf = originBuf
+					return 0, err
+				}
+				cont = emit(openBuf)
+				buf = buf[:0]
 			}
-			buf, raw = append(buf, raw[:fill]...), raw[fill:]
-			if len(buf) < headerLength+frameLength {
-				// no bytes left to fill.
-				break
-			}
-			if openBuf, err = d.aead.Open(openBuf[:0], d.nonce, buf[headerLength:headerLength+frameLength], buf[:headerLength]); err != nil {
-				return 0, err
-			}
-			cont = emit(openBuf)
-			buf, frameLength = buf[0:0], -1
+
+			raw, frameLength = raw[need:], -1
 		}
 	}
 
