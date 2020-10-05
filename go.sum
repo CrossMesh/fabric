@@ -80,6 +80,8 @@ github.com/crossmesh/sladder v0.0.0-20200901100157-f948602ca4c3 h1:RAEcTCpBMGhhq
 github.com/crossmesh/sladder v0.0.0-20200901100157-f948602ca4c3/go.mod h1:jnHohIbC4deJJxOInlyqt8A1InSKykswv788vIYGQtM=
 github.com/crossmesh/sladder v0.0.0-20200908070640-c8167afe569d h1:s1NaPhYkFiMyiAVFl2dXm3J4KfKzL0kR9IFgU10OrPI=
 github.com/crossmesh/sladder v0.0.0-20200908070640-c8167afe569d/go.mod h1:jnHohIbC4deJJxOInlyqt8A1InSKykswv788vIYGQtM=
+github.com/crossmesh/sladder v0.0.0-20200929102044-cccbbb01cbf1 h1:uuCr57qKxdvv049RT25waXmm+vJE604P9QEwCFCxOVA=
+github.com/crossmesh/sladder v0.0.0-20200929102044-cccbbb01cbf1/go.mod h1:jnHohIbC4deJJxOInlyqt8A1InSKykswv788vIYGQtM=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
