@@ -47,7 +47,7 @@ func (r *EdgeRouter) publishLocalOverlayConfig(peer *metanet.MetaPeer, nets *gos
 			return false, err
 		}
 
-	case "overlay":
+	case "ip":
 		nets.RemoveNetwork(gossip.NetworkID{
 			ID:         0,
 			DriverType: gossip.CrossmeshSymmetryEthernet,
@@ -173,7 +173,7 @@ func (r *EdgeRouter) rebuildRoute(lock bool) {
 			}
 		}
 
-	case "overlay":
+	case "ip":
 		route := r.route.(*route.P2PL3IPv4MeshNetworkRouter)
 		for peer, netMap := range r.networkMap {
 			paramContainer, appeared := netMap[gossip.NetworkID{
@@ -244,7 +244,7 @@ func (r *EdgeRouter) networkMapLearnNetworkAppeared(peer *metanet.MetaPeer, v1 *
 				continue
 			}
 
-			if r.Mode() == "overlay" {
+			if r.Mode() == "ip" {
 				route := r.route.(*route.P2PL3IPv4MeshNetworkRouter)
 				if !hasPrev {
 					r.log.Infof("network %v learns a new peer %v.", netID, peer)
@@ -290,7 +290,7 @@ func (r *EdgeRouter) networkMapLearnNetworkAppeared(peer *metanet.MetaPeer, v1 *
 				}
 			}
 		case gossip.CrossmeshSymmetryRoute:
-			if r.Mode() == "overlay" {
+			if r.Mode() == "ip" {
 				r.log.Info("peer %v left network %v.", peer, netID)
 				if isActivityWatcher {
 					watcher.PeerLeave(peer)
@@ -340,7 +340,7 @@ func (r *EdgeRouter) networkMapLearnOverlayMetadataDisappeared(peer *metanet.Met
 				watcher.PeerLeave(peer)
 			}
 
-		case "overlay":
+		case "ip":
 			netID := gossip.NetworkID{
 				ID:         0,
 				DriverType: gossip.CrossmeshSymmetryRoute,

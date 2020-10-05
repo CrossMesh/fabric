@@ -109,5 +109,9 @@ func (r *EdgeRouter) Mode() string {
 	if cfg == nil {
 		return "unknown"
 	}
-	return r.cfg.Mode
+	mode := r.cfg.Mode
+	if mode == "overlay" {
+		mode = "ip"
+	}
+	return mode
 }

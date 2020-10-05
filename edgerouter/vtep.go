@@ -248,7 +248,7 @@ func (v *virtualTunnelEndpoint) ApplyConfig(mode string, cfg *config.Interface) 
 	switch mode {
 	case "ethernet":
 		deviceConfig.DeviceType = water.TAP
-	case "overlay":
+	case "ip":
 		deviceConfig.DeviceType = water.TUN
 	default:
 		return ErrUnknownMode
