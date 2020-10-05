@@ -58,6 +58,8 @@ func (l *TCPLink) reset() {
 	l.cursor, l.maxCursor = 0, 0
 	l.demuxer, l.muxer, l.crypt = nil, nil, nil
 	l.remote, l.conn = nil, nil
+	l.publish = ""
+	l.w = nil
 }
 
 // Active determines whether link is avaliable.
@@ -81,8 +83,11 @@ func (l *TCPLink) assign(right *TCPLink) bool {
 	}
 	l.cursor, l.maxCursor = right.cursor, right.maxCursor
 	l.crypt, l.demuxer, l.muxer = right.crypt, right.demuxer, right.muxer
+	l.buf = right.buf
 	l.remote, l.conn, l.publish = right.remote, right.conn, right.publish
 	l.backend = right.backend
+	l.w = right.w
+
 	right.reset()
 
 	return true
@@ -99,8 +104,7 @@ func (l *TCPLink) read(emit func(frame []byte) bool) (err error) {
 
 		if l.maxCursor <= 0 {
 			// 1. read stream
-			feed, err = conn.Read(l.buf)
-			if err != nil {
+			if feed, err = conn.Read(l.buf); err != nil {
 				break
 			}
 			l.cursor, l.maxCursor = 0, feed
@@ -126,7 +130,7 @@ func (l *TCPLink) Send(frame []byte) (err error) {
 		return ErrOperationCanceled
 	}
 
-	if l.muxer.Parallel() {
+	if !l.muxer.Parallel() {
 		l.writeLock.Lock()
 		defer l.writeLock.Unlock()
 	}
@@ -196,6 +200,7 @@ func (l *TCPLink) InitializeNoCryption() {
 }
 
 func (l *TCPLink) close() (err error) {
+	// TODO(xutao): fix race.
 	conn := l.conn
 	if conn != nil {
 		conn.Close()

@@ -120,7 +120,7 @@ func (t *TCP) handshakeConnect(log *logging.Entry, connID uint32, adaptedConn ne
 			return false, nil
 		}
 	}
-	if !t.Arbiter.ShouldRun() || err != nil {
+	if !t.Arbiter.ShouldRun() || err != nil || connectReq == nil {
 		return false, err
 	}
 
@@ -235,6 +235,7 @@ func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TC
 		link.InitializeNoCryption()
 
 	case proto.ConnectAES256GCM:
+		log.Debug("enable encryption.")
 		// let it is.
 	default:
 		// should not hit this.
