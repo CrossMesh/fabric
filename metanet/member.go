@@ -96,7 +96,9 @@ func (n *MetadataNetwork) initializeMembership() (err error) {
 
 	logger := n.log.WithField("submodule", "sladder")
 	engineLogger := n.log.WithField("submodule", "sladder/gossip")
-	n.gossip.engine = gossip.New(n.gossip.transport, gossip.WithLogger(engineLogger)).(*gossip.EngineInstance)
+	n.gossip.engine = gossip.New(n.gossip.transport,
+		gossip.WithLogger(engineLogger),
+		gossip.WithGossipPeriod(time.Second*3)).(*gossip.EngineInstance)
 	n.gossip.nameResolver = gossipUtils.NewPeerNameResolver()
 	if n.gossip.cluster, n.gossip.self, err =
 		sladder.NewClusterWithNameResolver(n.gossip.engine, n.gossip.nameResolver, sladder.Logger(logger)); err != nil {

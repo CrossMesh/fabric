@@ -110,6 +110,24 @@ func NewMetadataNetwork(arbiter *arbit.Arbiter, log *logging.Entry) (n *Metadata
 	return n, nil
 }
 
+// SetRegion sets region of self.
+func (n *MetadataNetwork) SetRegion(region string) (string, error) {
+	engine := n.gossip.engine
+	if engine == nil {
+		return "", nil
+	}
+	return engine.SetRegion(region)
+}
+
+// SetMinRegionPeer sets the minimum number of peers in region.
+func (n *MetadataNetwork) SetMinRegionPeer(p uint) uint {
+	engine := n.gossip.engine
+	if engine == nil {
+		return 0
+	}
+	return engine.SetMinRegionPeer(p)
+}
+
 // RegisterDataModel registers new data model to sladder framework.
 func (n *MetadataNetwork) RegisterDataModel(
 	key string,
