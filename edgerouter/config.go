@@ -1,7 +1,6 @@
 package edgerouter
 
 import (
-	"errors"
 	"fmt"
 	"net"
 	"sync/atomic"
@@ -13,8 +12,10 @@ import (
 	arbit "github.com/sunmxt/arbiter"
 )
 
-func (r *EdgeRouter) updateBackends(cfgs []*config.Backend) (err error) {
-	backendCreators := make(map[backend.PeerBackendIdentity]backend.BackendCreator, len(cfgs))
+func (r *EdgeRouter) updateBackends(cfgs []*config.Backend) (succeed bool) {
+	var err error
+
+	creators := make([]backend.BackendCreator, 0, len(cfgs))
 	for _, cfg := range cfgs {
 		var creator backend.BackendCreator
 		if cfg == nil {
@@ -22,83 +23,43 @@ func (r *EdgeRouter) updateBackends(cfgs []*config.Backend) (err error) {
 		}
 		if creator, err = backend.GetCreator(cfg.Type, cfg); err != nil {
 			if err == backend.ErrBackendTypeUnknown {
-				return fmt.Errorf("unknown backend type \"%v\"", cfg.Type)
+				r.log.Errorf("unknown backend type \"%v\"", cfg.Type)
+			} else {
+				r.log.Errorf("failed to get backend creator. (err = \"%v\")", err)
 			}
-			return err
+			continue
 		}
-		if creator == nil {
-			return errors.New("got nil backend creator")
-		}
-		backendCreators[backend.PeerBackendIdentity{
-			Type:     creator.Type(),
-			Endpoint: creator.Publish(),
-		}] = creator
+		creators = append(creators, creator)
 	}
 
-	// shutdown.
-	r.visitBackends(func(index backend.PeerBackendIdentity, b backend.Backend) bool {
-		if _, hasBackend := backendCreators[index]; !hasBackend {
-			b.Shutdown()
-			r.deleteBackend(index)
-		}
-		return true
-	})
-
-	for index, creator := range backendCreators {
-		var new backend.Backend
-		b := r.getBackend(index)
-		if b != nil {
-			// update
-			b.Shutdown()
-			r.deleteBackend(index)
-		}
-		// new.
-		if new, err = creator.New(r.arbiter, nil); err != nil {
-			r.log.Errorf("create backend %v:%v failure: %v", backend.GetBackendIdentityName(creator.Type()), creator.Publish, err)
-		} else {
-			r.storeBackend(index, new)
-			new.Watch(r.receiveRemote)
-		}
+	if len(creators) < 1 {
+		r.log.Errorf("no valid backend configure. reject configuration changes.")
+		return false
 	}
 
-	// publish backends.
-	backendID := make([]*route.PeerBackend, 0)
-	r.visitBackends(func(id backend.PeerBackendIdentity, b backend.Backend) bool {
-		backendID = append(backendID, &route.PeerBackend{
-			PeerBackendIdentity: id,
-			Priority:            b.Priority(),
-			Disabled:            false,
-		})
-		return true
-	})
-	r.peerSelf.Meta().Tx(func(p route.MembershipPeer, tx *route.PeerReleaseTx) bool {
-		tx.Backend(backendID...)
-		return true
-	})
+	r.metaNet.UpdateLocalEndpoints(creators...)
 
-	return
+	return true
 }
 
 func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 	id, log := atomic.AddUint32(&r.configID, 1), r.log.WithField("type", "config")
 
-	log.Debugf("start apply configuration %v", id)
+	log.Infof("start apply configuration %v", id)
 
 	r.arbiter.Go(func() {
-		var (
-			nextTry time.Time
-			err     error
-		)
+		var err error
 
-		succeed, rebootRoute, rebootForward, nextTry, forwardRoutines := false, false, false, time.Now(), cfg.GetMaxConcurrency()
+		succeed, rebootForward, forwardRoutines := true, false, cfg.GetMaxConcurrency()
 		r.lock.Lock()
 		defer r.lock.Unlock()
-		for r.arbiter.ShouldRun() && !succeed {
-			if time.Now().Before(nextTry) {
-				time.Sleep(time.Second)
-				continue
+
+		for r.arbiter.ShouldRun() {
+			if !succeed {
+				log.Info("retry at 15 seconds.")
+				time.Sleep(15 * time.Second)
+				succeed = true
 			}
-			succeed = true
 
 			if thisID := r.configID; thisID != id {
 				break
@@ -107,30 +68,18 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 
 			// update peer and route.
 			if current := r.Mode(); current != "unknown" && cfg.Mode != current {
-				r.log.Debug("shutting down forwarding...")
-				r.routeArbiter.Shutdown()
-				r.routeArbiter.Join()
-				r.routeArbiter, r.forwardArbiter, r.route, r.peerSelf, r.membership = nil, nil, nil, nil, nil
+				r.log.Info("shutting down forwarding...")
+				if arbiter := r.forwardArbiter; arbiter != nil {
+					arbiter.Shutdown()
+					arbiter.Join()
+					r.forwardArbiter = nil
+					r.route = nil
+				}
 				updateVTEP = true
-			}
-			if r.routeArbiter == nil {
-				rebootRoute = true
-				r.routeArbiter = arbit.NewWithParent(r.arbiter)
 			}
 			if r.forwardArbiter == nil {
 				rebootForward = true
 				r.forwardArbiter = arbit.NewWithParent(r.arbiter)
-			}
-			// only gossip membership supported yet.
-			if r.membership == nil {
-				g := route.NewGossipMembership()
-				g.New = r.newGossipPeer
-				r.membership = g
-			}
-			if cfg.MinRegionPeer > 0 {
-				if g, isGossip := r.membership.(*route.GossipMembership); isGossip && g != nil {
-					g.SetMinRegionPeers(cfg.MinRegionPeer)
-				}
 			}
 
 			// create route.
@@ -140,67 +89,57 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 				switch cfg.Mode {
 				case "ethernet":
 					log.Info("network mode: ethernet")
+					r.route = route.NewP2PL2MeshNetworkRouter()
 
-					r.route = route.NewL2Router(r.routeArbiter, r.membership, nil, time.Second*180)
-					r.peerSelf = &route.L2Peer{}
-
-				case "overlay":
-					log.Info("network mode: overlay")
-
-					r.route = route.NewL3Router(r.routeArbiter, r.membership, nil, time.Second*180)
-					l3 := &route.L3Peer{}
-					r.peerSelf = l3
-					l3.Tx(func(p route.MembershipPeer, tx *route.L3PeerReleaseTx) bool {
-						if err = tx.CIDR(cidr); err != nil {
-							return false
-						}
-						return true
-					})
-				}
-				if err != nil {
-					log.Error("create netlink failure: ", err)
-					succeed = false
-					continue
+				case "ip":
+					log.Info("network mode: ip")
+					r.route = route.NewP2PL3IPv4MeshNetworkRouter()
 				}
 
-				r.peerSelf.Meta().Tx(func(p route.MembershipPeer, tx *route.PeerReleaseTx) bool {
-					tx.Region(cfg.Region)
-					tx.ClaimAlive()
-					return true
-				})
 			}
+
 			// update vetp.
 			if updateVTEP || r.cfg == nil || !cfg.Iface.Equal(r.cfg.Iface) {
-				if err = r.vtep.ApplyConfig(r.Mode(), cfg.Iface); err != nil {
+				if err = r.vtep.ApplyConfig(cfg.Mode, cfg.Iface); err != nil {
 					log.Error("update VTEP failure: ", err)
 					succeed = false
+					continue
 				}
 				r.vtep.SetMaxQueue(uint32(forwardRoutines))
 			}
 
-			// update backends.
-			if err = r.updateBackends(cfg.Backend); err != nil {
-				log.Error("update backend failure: ", err)
+			if old, err := r.metaNet.SetRegion(cfg.Region); err != nil {
+				log.Error("cannot set region for metadata network. (err = \"%v\")", err)
 				succeed = false
+				continue
+			} else if old != cfg.Region {
+				log.Infof("metanet region: \"%v\" --> \"%v\"", old, cfg.Region)
 			}
 
-			if !succeed {
-				nextTry = time.Now().Add(15 * time.Second)
-				log.Info("retry at 15 seconds.")
+			// update backends.
+			if succeed = r.updateBackends(cfg.Backend); !succeed {
+				continue
 			}
+
+			minRegionPeer := cfg.MinRegionPeer
+			if minRegionPeer < 1 {
+				minRegionPeer = 2
+			}
+			log.Infof("minimum region peer = %v", minRegionPeer)
+			r.metaNet.SetMinRegionPeer(uint(minRegionPeer))
+
+			break
 		}
 
 		if succeed {
 			r.cfg = cfg
 
-			if rebootRoute {
-				r.goMembership()
-			}
 			if rebootForward {
+				r.rebuildRoute(false)
+
 				// start forward.
 				for n := uint(0); n < forwardRoutines; n++ {
 					r.goForwardVTEP()
-
 				}
 			}
 
@@ -224,7 +163,7 @@ func (r *EdgeRouter) ApplyConfig(cfg *config.Network) (err error) {
 		err = fmt.Errorf("empty network interface name")
 		return
 	}
-	if cfg.Mode != "ethernet" && cfg.Mode != "overlay" {
+	if cfg.Mode != "ethernet" && cfg.Mode != "overlay" && cfg.Mode != "ip" {
 		err = fmt.Errorf("unknwon network mode: %v", cfg.Mode)
 		return
 	}
@@ -237,6 +176,9 @@ func (r *EdgeRouter) ApplyConfig(cfg *config.Network) (err error) {
 				return err
 			}
 		}
+	case "overlay":
+		r.log.Warn("network mode \"overlay\" is now renamed \"ip\". ")
+		cfg.Mode = "ip"
 	}
 
 	r.goApplyConfig(cfg, cfg.Iface.Subnet)

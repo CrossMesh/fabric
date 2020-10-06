@@ -16,6 +16,7 @@ var (
 	ErrNoAvaliableInterface = errors.New("no avaliable interface")
 	ErrVTEPClosed           = errors.New("VTEP is closed")
 	ErrVTEPQueueRevoke      = errors.New("VTEP queue is revoked")
+	ErrUnknownMode          = errors.New("unknown tuntap mode")
 )
 
 type vtepQueueLease struct {
@@ -247,7 +248,7 @@ func (v *virtualTunnelEndpoint) ApplyConfig(mode string, cfg *config.Interface) 
 	switch mode {
 	case "ethernet":
 		deviceConfig.DeviceType = water.TAP
-	case "overlay":
+	case "ip":
 		deviceConfig.DeviceType = water.TUN
 	default:
 		return ErrUnknownMode

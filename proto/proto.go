@@ -24,9 +24,8 @@ type ProtobufMessage proto.Message
 
 const (
 	MsgTypeUnknown = uint16(0)
-	MsgTypeHello   = uint16(1)
-	MsgTypeConnect = uint16(2)
-	MsgTypeWelcome = uint16(3)
+
+	MsgTypeGossip = uint16(1)
 
 	MsgTypeRPC          = uint16(4)
 	MsgTypePeerExchange = uint16(5)
@@ -35,23 +34,18 @@ const (
 )
 
 var IDByProtoType map[reflect.Type]uint16 = map[reflect.Type]uint16{
-	reflect.TypeOf((*Hello)(nil)).Elem():           MsgTypeHello,
-	reflect.TypeOf((*Connect)(nil)).Elem():         MsgTypeConnect,
-	reflect.TypeOf((*Welcome)(nil)).Elem():         MsgTypeWelcome,
 	reflect.TypeOf((*pb.RPC)(nil)).Elem():          MsgTypeRPC,
 	reflect.TypeOf((*pb.PeerExchange)(nil)).Elem(): MsgTypePeerExchange,
-	reflect.TypeOf((*pb.Ping)(nil)).Elem():         MsgTypePing,
+	//reflect.TypeOf((*pb.Ping)(nil)).Elem():         MsgTypePing,
+
 	reflect.TypeOf((*NetworkRawFrame)(nil)).Elem(): MsgTypeRawFrame,
 }
 
 var ConstructorByID map[uint16]func() interface{} = map[uint16]func() interface{}{
-	MsgTypeHello:        func() interface{} { return &Hello{} },
-	MsgTypeConnect:      func() interface{} { return &Connect{} },
-	MsgTypeWelcome:      func() interface{} { return &Welcome{} },
 	MsgTypeRPC:          func() interface{} { return &pb.RPC{} },
 	MsgTypePeerExchange: func() interface{} { return &pb.PeerExchange{} },
-	MsgTypePing:         func() interface{} { return &pb.Ping{} },
-	MsgTypeRawFrame:     func() interface{} { return make(NetworkRawFrame, 0) },
+	//MsgTypePing:         func() interface{} { return &pb.Ping{} },
+	MsgTypeRawFrame: func() interface{} { return make(NetworkRawFrame, 0) },
 }
 
 const (

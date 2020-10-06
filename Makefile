@@ -26,7 +26,7 @@ cover: coverage test
 	go tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html
 
 test: coverage
-	go test -v -bench=. -benchtime=2x -coverprofile=$(COVERAGE_DIR)/coverage.out -cover ./mux/... ./rpc/... ./gossip/... ./proto ./route
+	go test -v -bench=. -benchtime=2x -coverprofile=$(COVERAGE_DIR)/coverage.out -cover ./common ./mux/... ./gossip/... ./proto ./route
 	go tool cover -func=$(COVERAGE_DIR)/coverage.out
 
 build:
@@ -43,7 +43,7 @@ bin:
 cloc:
 	cloc . --exclude-dir=build,bin,ci,mocks
 
-mock: bin/mockery
+mock: $(GOPATH)/bin/mockery
 
 devtools: $(GOPATH)/bin/protoc-gen-go $(GOPATH)/bin/gopls $(GOPATH)/bin/goimports $(GOPATH)/bin/mockery
 
@@ -53,9 +53,9 @@ rpm:
 srpm:
 	rpm/makerpm.sh srpm
 
-proto: bin/protoc-gen-go
-	protoc -I=$(PROJECT_ROOT) --go_out=$(PROJECT_ROOT) proto/pb/core.proto
-	protoc -I=$(PROJECT_ROOT) --go_out=plugins=grpc:$(PROJECT_ROOT) control/rpc/pb/core.proto
+proto: $(GOPATH)/bin/protoc-gen-go $(GOPATH)/bin/protoc-gen-go-grpc
+	protoc -I=$(PROJECT_ROOT) --go_out=module=$(GOMOD):. proto/pb/core.proto
+	protoc -I=$(PROJECT_ROOT) --go_out=. --go-grpc_out=. --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative control/rpc/pb/core.proto
 	find -E . -name '*.pb.go' -type f -not -path './build/*' | xargs sed -i '' "s|\"proto/pb\"|\"$(GOMOD)/proto/pb\"|g; s|\"control/rpc/pb\"|\"$(GOMOD)/control/rpc/pb\"|g"
 
 docker: bin/utt
@@ -86,14 +86,17 @@ bin/utt: build/bin
 	    go build  -o bin/utt -v -gcflags='all=$(GCFLAGS)' -ldflags='all=-s -w $(LDFLAGS)' $(BUILD_OPTS) $(GOMOD); \
 	fi
 
-$(GOPATH)/bin/protoc-gen-go:
+$(GOPATH)/bin/protoc-gen-go: build/bin
 	go get -u github.com/golang/protobuf/protoc-gen-go
 
-$(GOPATH)/bin/gopls:
+$(GOPATH)/bin/gopls: build/bin
 	go get -u golang.org/x/tools/gopls
 
-$(GOPATH)/bin/goimports:
+$(GOPATH)/bin/goimports: build/bin
 	go get -u golang.org/x/tools/cmd/goimports
 
-$(GOPATH)/bin/mockery:
+$(GOPATH)/bin/mockery: build/bin
 	go get -u github.com/vektra/mockery/cmd/mockery
+
+$(GOPATH)/bin/protoc-gen-go-grpc: build/bin
+	go get -u google.golang.org/grpc/cmd/protoc-gen-go-grpc

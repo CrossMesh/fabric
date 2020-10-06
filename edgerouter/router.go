@@ -1,75 +1,91 @@
 package edgerouter
 
 import (
-	"errors"
 	"sync"
 
 	"github.com/crossmesh/fabric/backend"
 	"github.com/crossmesh/fabric/config"
 	"github.com/crossmesh/fabric/gossip"
-	"github.com/crossmesh/fabric/proto/pb"
+	"github.com/crossmesh/fabric/metanet"
+	"github.com/crossmesh/fabric/proto"
 	"github.com/crossmesh/fabric/route"
-	"github.com/crossmesh/fabric/rpc"
 	logging "github.com/sirupsen/logrus"
 	arbit "github.com/sunmxt/arbiter"
 )
 
+const defaultGossiperTransportBufferSize = uint(1024)
+
 // EdgeRouter builds overlay network.
 type EdgeRouter struct {
-	rpc       *rpc.Stub
-	rpcClient *rpc.Client
-	rpcServer *rpc.Server
+	lock sync.RWMutex
 
-	lock         sync.RWMutex
-	routeArbiter *arbit.Arbiter
-	route        route.Router
-	membership   route.Membership
-	peerSelf     route.MembershipPeer
+	route           route.MeshDataNetworkRouter
+	metaNet         *metanet.MetadataNetwork
+	overlayModel    *gossip.OverlayNetworksValidatorV1
+	overlayModelKey string
 
-	forwardArbiter *arbit.Arbiter
-	backends       sync.Map // map[pb.PeerBackend_BackendType]map[string]backend.Backend
-	vtep           *virtualTunnelEndpoint
+	// viewpoint of global overlay networks.
+	networkMap map[*metanet.MetaPeer]map[gossip.NetworkID]interface{}
 
-	endpointFailures sync.Map // map[backend.PeerBackendIdentity]time.Time
+	vtep *virtualTunnelEndpoint
+
+	endpointFailures sync.Map // map[backend.Endpoint]time.Time
 
 	configID uint32
 	cfg      *config.Network
 	log      *logging.Entry
-	arbiter  *arbit.Arbiter
+
+	arbiter        *arbit.Arbiter
+	forwardArbiter *arbit.Arbiter
 }
 
 // New creates a new EdgeRouter.
 func New(arbiter *arbit.Arbiter) (a *EdgeRouter, err error) {
-	if arbiter == nil {
-		return nil, errors.New("arbiter missing")
-	}
+	arbiter = arbit.NewWithParent(arbiter)
+
+	defer func() {
+		if err != nil {
+			arbiter.Shutdown()
+			arbiter.Join()
+		}
+	}()
+
 	a = &EdgeRouter{
-		log:     logging.WithField("module", "edge_router"),
-		arbiter: arbiter,
-		vtep:    newVirtualTunnelEndpoint(nil),
+		log:        logging.WithField("module", "edge_router"),
+		arbiter:    arbiter,
+		vtep:       newVirtualTunnelEndpoint(nil),
+		networkMap: make(map[*metanet.MetaPeer]map[gossip.NetworkID]interface{}),
 	}
-	if err = a.initRPCStub(); err != nil {
+	if a.metaNet, err = metanet.NewMetadataNetwork(arbiter, a.log.WithField("module", "metanet")); err != nil {
 		return nil, err
 	}
-	a.goCleanUp()
+	a.metaNet.RegisterMessageHandler(proto.MsgTypeRawFrame, a.receiveRemote)
+
+	if err = a.initializeNetworkMap(); err != nil {
+		return nil, err
+	}
+
+	a.waitCleanUp()
 	return a, nil
 }
 
-func (r *EdgeRouter) goCleanUp() {
+// SeedPeer adds seed endpoint.
+func (r *EdgeRouter) SeedPeer(endpoints ...backend.Endpoint) error {
+	return r.metaNet.SeedEndpoints(endpoints...)
+}
+
+func (r *EdgeRouter) waitCleanUp() {
 	r.arbiter.Go(func() {
 		<-r.arbiter.Exit() // watch exit signal.
 
 		r.lock.Lock()
 		defer r.lock.Unlock()
 
-		fa, ra := r.forwardArbiter, r.routeArbiter
+		fa := r.forwardArbiter
 
 		// terminate forwarding.
 		if fa != nil {
 			fa.Shutdown()
-		}
-		if ra != nil {
-			ra.Shutdown()
 		}
 
 		// close vtep.
@@ -77,16 +93,6 @@ func (r *EdgeRouter) goCleanUp() {
 			r.log.Warn("cannot close vtep: ", err)
 		}
 
-		// close backend.
-		r.visitBackends(func(id backend.PeerBackendIdentity, b backend.Backend) bool {
-			b.Shutdown()
-			r.deleteBackend(id)
-			return true
-		})
-		if ra != nil {
-			ra.Join()
-		}
-		r.log.Debug("all routes stopped.")
 		if fa != nil {
 			fa.Join()
 		}
@@ -96,135 +102,16 @@ func (r *EdgeRouter) goCleanUp() {
 	})
 }
 
-// Membership gives current membership of edge router.
-func (r *EdgeRouter) Membership() route.Membership {
-	return r.membership
-}
-
 // Mode returns name of edge router working mode.
 // values can be: ethernet, overlay.
 func (r *EdgeRouter) Mode() string {
-	switch r.route.(type) {
-	case *route.L2Router:
-		return "ethernet"
-
-	case *route.L3Router:
-		return "overlay"
+	cfg := r.cfg
+	if cfg == nil {
+		return "unknown"
 	}
-	return "unknown"
-}
-
-func visitBackendEndpointMap(byEndpoint *sync.Map, visit func(string, backend.Backend) bool) {
-	byEndpoint.Range(func(k, v interface{}) bool {
-		endpoint, isEndpoint := k.(string)
-		if !isEndpoint {
-			byEndpoint.Delete(k)
-			return true
-		}
-		b, isBackend := v.(backend.Backend)
-		if !isBackend {
-			byEndpoint.Delete(k)
-			return true
-		}
-		return visit(endpoint, b)
-	})
-}
-
-func (r *EdgeRouter) visitBackendsWithType(ty pb.PeerBackend_BackendType, visit func(string, backend.Backend) bool) {
-	raw, hasType := r.backends.Load(ty)
-	if !hasType {
-		return
+	mode := r.cfg.Mode
+	if mode == "overlay" {
+		mode = "ip"
 	}
-	byEndpoint, isMap := raw.(*sync.Map)
-	if !isMap {
-		return
-	}
-	visitBackendEndpointMap(byEndpoint, visit)
-}
-
-func (r *EdgeRouter) visitBackends(visit func(backend.PeerBackendIdentity, backend.Backend) bool) {
-	r.backends.Range(func(k, v interface{}) (cont bool) {
-		ty, isTy := k.(pb.PeerBackend_BackendType)
-		if !isTy {
-			r.backends.Delete(k)
-			return true
-		}
-		byEndpoint, isMap := v.(*sync.Map)
-		if !isMap || byEndpoint == nil {
-			r.backends.Delete(k)
-			return true
-		}
-		visitBackendEndpointMap(byEndpoint, func(endpoint string, b backend.Backend) bool {
-			cont = visit(backend.PeerBackendIdentity{
-				Type:     ty,
-				Endpoint: endpoint,
-			}, b)
-			return cont
-		})
-		return
-	})
-}
-
-func (r *EdgeRouter) getEndpointBackendMap(ty pb.PeerBackend_BackendType, create bool) (m *sync.Map) {
-	rm, hasType := r.backends.Load(ty)
-	if rm == nil || !hasType {
-		if create {
-			m = &sync.Map{}
-			rm, hasType = r.backends.LoadOrStore(ty, m)
-			if !hasType {
-				return m
-			}
-		} else {
-			return nil
-		}
-	}
-	return rm.(*sync.Map) // let it crash.
-}
-
-func (r *EdgeRouter) getBackend(index backend.PeerBackendIdentity) backend.Backend {
-	byEndpoint := r.getEndpointBackendMap(index.Type, false)
-	if byEndpoint == nil {
-		return nil
-	}
-	rb, hasBackend := byEndpoint.Load(index.Endpoint)
-	if !hasBackend {
-		return nil
-	}
-	b, isBackend := rb.(backend.Backend)
-	if !isBackend {
-		return nil
-	}
-	return b
-}
-
-func (r *EdgeRouter) deleteBackend(index backend.PeerBackendIdentity) {
-	m := r.getEndpointBackendMap(index.Type, false)
-	if m == nil {
-		return
-	}
-	m.Delete(index.Endpoint)
-}
-
-func (r *EdgeRouter) storeBackend(index backend.PeerBackendIdentity, b backend.Backend) {
-	m := r.getEndpointBackendMap(index.Type, true)
-	if m == nil {
-		return
-	}
-	m.Store(index.Endpoint, b)
-}
-
-// NewEmptyPeer return empty peer according to edge router mode..
-func (r *EdgeRouter) NewEmptyPeer() (gossip.MembershipPeer, route.MembershipPeer) {
-	switch mode := r.Mode(); mode {
-	case "ethernet":
-		p := &route.L2Peer{}
-		return p, p
-	case "overlay":
-		p := &route.L3Peer{}
-		return p, p
-	default:
-		// should not hit this.
-		r.log.Errorf("EdgeRouter.NewPeer() got unknown mode %v.", mode)
-	}
-	return nil, nil
+	return mode
 }
