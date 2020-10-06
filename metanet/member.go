@@ -184,10 +184,10 @@ func (n *MetadataNetwork) updateNetworkEndpoint(peer *MetaPeer, endpointSet goss
 	// deal with endpoints.
 	oldEndpoints, oldEndpointIndex := peer.Endpoints, make(map[backend.Endpoint]*MetaPeerEndpoint)
 	for _, oldEndpoint := range oldEndpoints {
-		oldEndpointIndex[oldEndpoint.Endpoint] = &oldEndpoint
+		oldEndpointIndex[oldEndpoint.Endpoint] = oldEndpoint
 	}
 	var pub MetaPeerStatePublication
-	var newEndpoints []MetaPeerEndpoint
+	var newEndpoints []*MetaPeerEndpoint
 	var names []string
 	for _, ep := range endpointSet {
 		endpoint := backend.Endpoint{
@@ -195,17 +195,17 @@ func (n *MetadataNetwork) updateNetworkEndpoint(peer *MetaPeer, endpointSet goss
 			Endpoint: ep.Endpoint,
 		}
 		names = append(names, gossipUtils.BuildNodeName(endpoint))
-		newEndpoints = append(newEndpoints, MetaPeerEndpoint{
+		newEndpoints = append(newEndpoints, &MetaPeerEndpoint{
 			Endpoint: endpoint,
 			Priority: ep.Priority,
 			Disabled: false,
 		})
-		newEndpoint := &newEndpoints[len(newEndpoints)-1]
+		newEndpoint := newEndpoints[len(newEndpoints)-1]
 		if oldEndpoint, hasOldEndpoint := oldEndpointIndex[endpoint]; hasOldEndpoint && oldEndpoint.Disabled {
 			newEndpoint.Disabled = true
 		}
 	}
-	sort.Slice(newEndpoints, func(i, j int) bool { return newEndpoints[i].Higher(newEndpoints[j]) }) // sort by priority.
+	sort.Slice(newEndpoints, func(i, j int) bool { return newEndpoints[i].Higher(*newEndpoints[j]) }) // sort by priority.
 	pub.Endpoints = newEndpoints
 
 	// deal with names.
@@ -270,7 +270,11 @@ func (n *MetadataNetwork) updateNetworkEndpoint(peer *MetaPeer, endpointSet goss
 
 	if !pub.Trival() {
 		n.log.Debugf("republish peer %v interval: %v", peer.Names(), &pub)
-		peer.publishInterval(&pub)
+		peer.publishInterval(func(interval *MetaPeerStatePublication) bool {
+			interval.Endpoints = pub.Endpoints
+			interval.Names = pub.Names
+			return true
+		})
 	}
 }
 
@@ -391,18 +395,18 @@ func (n *MetadataNetwork) delayPublishEndpoint(id uint32, delay bool) {
 
 		oldEndpoints := make(map[backend.Endpoint]*MetaPeerEndpoint)
 		for _, endpoint := range n.self.Endpoints {
-			oldEndpoints[endpoint.Endpoint] = &endpoint
+			oldEndpoints[endpoint.Endpoint] = endpoint
 		}
 
 		var (
 			newEndpoints []*gossipUtils.NetworkEndpointV1
 		)
 
-		localPublish := make([]MetaPeerEndpoint, 0, len(n.backends))
+		localPublish := make([]*MetaPeerEndpoint, 0, len(n.backends))
 		for endpoint, backend := range n.backends {
 			oldPublish, hasOldPublish := oldEndpoints[endpoint]
 			if hasOldPublish && oldPublish != nil {
-				localPublish = append(localPublish, MetaPeerEndpoint{
+				localPublish = append(localPublish, &MetaPeerEndpoint{
 					Endpoint: endpoint,
 					Priority: backend.Priority(),
 					Disabled: oldPublish.Disabled,
@@ -411,7 +415,7 @@ func (n *MetadataNetwork) delayPublishEndpoint(id uint32, delay bool) {
 					continue // do not gossip disabled endpoint.
 				}
 			} else {
-				localPublish = append(localPublish, MetaPeerEndpoint{
+				localPublish = append(localPublish, &MetaPeerEndpoint{
 					Endpoint: endpoint,
 					Priority: backend.Priority(),
 					Disabled: false,
@@ -446,7 +450,7 @@ func (n *MetadataNetwork) delayPublishEndpoint(id uint32, delay bool) {
 
 		// publish locally.
 		typePublish := make(map[backend.Type]backend.Backend)
-		sort.Slice(localPublish, func(i, j int) bool { return localPublish[i].Higher(localPublish[j]) }) // sort by priority.
+		sort.Slice(localPublish, func(i, j int) bool { return localPublish[i].Higher(*localPublish[j]) }) // sort by priority.
 		for _, endpoint := range localPublish {
 			candidate, hasBackend := n.backends[endpoint.Endpoint]
 			if !hasBackend {
@@ -479,8 +483,9 @@ func (n *MetadataNetwork) delayPublishEndpoint(id uint32, delay bool) {
 			n.Publish.Type2Backend.Store(ty, backend)
 		}
 		// publish to MetaPeer.
-		pub := MetaPeerStatePublication{}
-		pub.Endpoints = localPublish
-		n.self.publishInterval(&pub)
+		n.self.publishInterval(func(interval *MetaPeerStatePublication) bool {
+			interval.Endpoints = localPublish
+			return true
+		})
 	})
 }

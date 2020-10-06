@@ -12,6 +12,19 @@ import (
 	arbit "github.com/sunmxt/arbiter"
 )
 
+// MessageBrokenError indicates message is broken.
+type MessageBrokenError struct {
+	reason string
+}
+
+func (e *MessageBrokenError) Error() (s string) {
+	s = "message broken"
+	if e.reason != "" {
+		s += ": " + e.reason
+	}
+	return
+}
+
 // PeerHandler accepts a MetaPeer and does something.
 type PeerHandler func(peer *MetaPeer) bool
 
@@ -42,6 +55,25 @@ func (e *MetaPeerEndpoint) Clone() MetaPeerEndpoint {
 	new = *e
 	return new
 }
+
+type endpointProbingContext struct {
+	endpoint backend.Endpoint
+
+	id           uint64
+	tryCount     int
+	since, tryAt time.Time
+	peer         *MetaPeer
+}
+
+type lastProbingContext struct {
+	endpoint backend.Endpoint
+	id       uint64
+	peer     *MetaPeer
+	at       time.Time
+}
+
+const defaultHealthyCheckProbeBrust = 5
+const defaultHealthyCheckProbeTimeout = time.Second * 10
 
 // MetadataNetwork implements simple decentalized communication metadata network.
 type MetadataNetwork struct {
@@ -77,6 +109,17 @@ type MetadataNetwork struct {
 		Self         *MetaPeer
 		Type2Backend sync.Map // map[backend.Type]backend.Backend
 	}
+
+	// health checking parameters.
+	ProbeBrust   int
+	ProbeTimeout time.Duration
+
+	// health checking fields.
+	lastFails       sync.Map // map[backend.Endpoint]*MetaPeer
+	probeCounter    uint64
+	probeLock       sync.RWMutex
+	probes          map[backend.Endpoint]*endpointProbingContext
+	recentSuccesses map[backend.Endpoint]*lastProbingContext
 }
 
 // NewMetadataNetwork creates a metadata network.
@@ -86,6 +129,11 @@ func NewMetadataNetwork(arbiter *arbit.Arbiter, log *logging.Entry) (n *Metadata
 		backends:          make(map[backend.Endpoint]backend.Backend),
 		quitChan:          make(chan struct{}),
 		nameConflictNodes: map[*MetaPeer]struct{}{},
+
+		ProbeBrust:      defaultHealthyCheckProbeBrust,
+		ProbeTimeout:    defaultHealthyCheckProbeTimeout,
+		probes:          make(map[backend.Endpoint]*endpointProbingContext),
+		recentSuccesses: make(map[backend.Endpoint]*lastProbingContext),
 	}
 
 	n.arbiters.main = arbit.NewWithParent(arbiter)
@@ -106,6 +154,8 @@ func NewMetadataNetwork(arbiter *arbit.Arbiter, log *logging.Entry) (n *Metadata
 		case <-n.quitChan:
 		}
 	})
+
+	n.initializeEndpointHealthCheck()
 
 	return n, nil
 }

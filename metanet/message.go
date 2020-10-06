@@ -17,10 +17,12 @@ type Message struct {
 	n *MetadataNetwork
 
 	Endpoint backend.Endpoint
-	peer     *MetaPeer
-	TypeID   uint16
-	Packed   []byte
-	Payload  []byte
+	Via      backend.Endpoint
+
+	peer    *MetaPeer
+	TypeID  uint16
+	Packed  []byte
+	Payload []byte
 }
 
 // GetPeerName calculates name of sender.
@@ -59,6 +61,10 @@ func (n *MetadataNetwork) receiveRemote(b backend.Backend, packed []byte, src st
 			Type:     b.Type(),
 			Endpoint: src,
 		},
+		Via: backend.Endpoint{
+			Type:     b.Type(),
+			Endpoint: b.Publish(),
+		},
 	}
 	handler(&msg)
 }
@@ -88,25 +94,21 @@ func (n *MetadataNetwork) SendToPeers(typeID uint16, payload []byte, peers ...*M
 		return
 	}
 
-	// TODO(xutao): deliver directly if a message is sent to self.
-	if len(peers) == 1 {
-		endpoint := peers[0].chooseEndpoint()
-		if endpoint.Type == backend.UnknownBackend {
-			return
-		}
-		n.SendToEndpoints(typeID, payload, endpoint)
-		return
-	}
+	packed := make([]byte, proto.ProtocolMessageHeaderSize, len(payload)+proto.ProtocolMessageHeaderSize)
+	proto.PackProtocolMessageHeader(packed[:proto.ProtocolMessageHeaderSize], typeID)
+	packed = append(packed, payload...)
 
-	endpoints := make([]backend.Endpoint, 0, len(peers))
+	// TODO(xutao): deliver directly if a message is sent to self.
+
 	for _, peer := range peers {
 		endpoint := peer.chooseEndpoint()
 		if endpoint.Type == backend.UnknownBackend {
 			continue
 		}
-		endpoints = append(endpoints, endpoint)
+		if err := n.nakedSendToEndpoint(packed, endpoint); err != nil {
+			n.lastFails.Store(endpoint, peer)
+		}
 	}
-	n.SendToEndpoints(typeID, payload, endpoints...)
 }
 
 // SendToNames sends a message to peers with specific names.
@@ -148,30 +150,58 @@ func (n *MetadataNetwork) SendToEndpoints(typeID uint16, payload []byte, endpoin
 	bins := make([]byte, proto.ProtocolMessageHeaderSize, len(payload)+proto.ProtocolMessageHeaderSize)
 	proto.PackProtocolMessageHeader(bins[:proto.ProtocolMessageHeaderSize], typeID)
 	bins = append(bins, payload...)
-	n.nakedSendToEndpoint(bins, endpoints...)
+	for _, endpoint := range endpoints {
+		n.nakedSendToEndpoint(bins, endpoint)
+	}
 }
 
-func (n *MetadataNetwork) nakedSendToEndpoint(packed []byte, endpoints ...backend.Endpoint) {
-	for _, endpoint := range endpoints {
-		rv, hasBackend := n.Publish.Type2Backend.Load(endpoint.Type)
-		if !hasBackend || rv == nil {
-			return
+// SendViaEndpoint sends a message via given endpoint.
+func (n *MetadataNetwork) SendViaEndpoint(typeID uint16, payload []byte, via backend.Endpoint, to string) {
+	n.lock.RLock()
+	backend, hasBackend := n.backends[via]
+	n.lock.RUnlock()
+	if !hasBackend || backend == nil {
+		return
+	}
+
+	packed := make([]byte, proto.ProtocolMessageHeaderSize, len(payload)+proto.ProtocolMessageHeaderSize)
+	proto.PackProtocolMessageHeader(packed[:proto.ProtocolMessageHeaderSize], typeID)
+	packed = append(packed, payload...)
+
+	n.nakedSendViaBackend(packed, backend, to)
+}
+
+func (n *MetadataNetwork) nakedSendViaBackend(packed []byte, b backend.Backend, to string) error {
+	// TODO(xutao): implement reliable sending.
+	link, err := b.Connect(to)
+	if err != nil {
+		if err != backend.ErrOperationCanceled {
+			n.log.Errorf("failed to get link. (err = \"%v\")", err)
+		} else {
+			err = nil
 		}
-		b, isBackend := rv.(backend.Backend)
-		if !isBackend {
-			return
-		}
-		link, err := b.Connect(endpoint.Endpoint)
-		if err != nil {
-			if err != backend.ErrOperationCanceled {
-				n.log.Errorf("failed to get link. (err = \"%v\")", err)
-			}
-			return
-		}
-		if err = link.Send(packed); err != nil {
+		return err
+	}
+	if err = link.Send(packed); err != nil {
+		if err != backend.ErrOperationCanceled {
 			n.log.Errorf("failed to send packet. (err = \"%v\")", err)
+		} else {
+			err = nil
 		}
 	}
+	return err
+}
+
+func (n *MetadataNetwork) nakedSendToEndpoint(packed []byte, endpoint backend.Endpoint) error {
+	rv, hasBackend := n.Publish.Type2Backend.Load(endpoint.Type)
+	if !hasBackend || rv == nil {
+		return nil
+	}
+	b, isBackend := rv.(backend.Backend)
+	if !isBackend {
+		return nil
+	}
+	return n.nakedSendViaBackend(packed, b, endpoint.Endpoint)
 }
 
 type gossipEngineMessage struct {

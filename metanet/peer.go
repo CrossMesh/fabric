@@ -18,7 +18,7 @@ type MetaPeerStateWatcher func(peer *MetaPeer, new *MetaPeerStatePublication) bo
 // MetaPeerStatePublication contains new peer state changes.
 type MetaPeerStatePublication struct {
 	Names     []string
-	Endpoints []MetaPeerEndpoint
+	Endpoints []*MetaPeerEndpoint
 }
 
 // String formats a human-friendly string of a state publication.
@@ -49,7 +49,7 @@ type MetaPeer struct {
 	lock         sync.RWMutex
 	customKeyMap map[string]interface{}
 
-	Endpoints    []MetaPeerEndpoint // (COW. safe to lock-free read and lock-free write except slice itself)
+	Endpoints    []*MetaPeerEndpoint // (COW. lock-free read)
 	intervalSubs map[*MetaPeerStateWatcher]struct{}
 }
 
@@ -96,21 +96,32 @@ func (p *MetaPeer) Names() (names []string) {
 	return
 }
 
-func (p *MetaPeer) publishInterval(interval *MetaPeerStatePublication) {
+func (p *MetaPeer) publishInterval(prepare func(interval *MetaPeerStatePublication) bool) {
+	if prepare == nil {
+		return
+	}
+
 	p.lock.Lock()
 	defer p.lock.Unlock()
+
+	interval := &MetaPeerStatePublication{}
+	if !prepare(interval) {
+		return
+	}
 
 	for watch := range p.intervalSubs {
 		if !(*watch)(p, interval) {
 			delete(p.intervalSubs, watch)
 		}
 	}
+
 	if interval.Endpoints != nil {
 		p.Endpoints = interval.Endpoints
 	}
 	if interval.Names != nil {
 		p.names = interval.Names
 	}
+
 }
 
 func (p *MetaPeer) chooseEndpoint() backend.Endpoint {
