@@ -255,6 +255,7 @@ func (t *TCP) connect(addr *net.TCPAddr, publish string) (l *TCPLink, err error)
 
 	} else {
 		link.conn = tcpConn
+		link.publish = addr.String()
 	}
 
 	connID := atomic.AddUint32(&t.connID, 1)
@@ -296,6 +297,10 @@ func (t *TCP) forwardProc(log *logging.Entry, key string, link *TCPLink) {
 	var err error
 
 	for t.Arbiter.ShouldRun() {
+		conn := link.conn
+		if conn == nil {
+			break
+		}
 		if err = link.conn.SetReadDeadline(time.Now().Add(time.Second * 3)); err != nil {
 			log.Error("conn.SetReadDeadline() error: ", err)
 			break
@@ -311,7 +316,7 @@ func (t *TCP) forwardProc(log *logging.Entry, key string, link *TCPLink) {
 			return true
 		}); err != nil {
 			// handle errors.
-			if err == io.EOF {
+			if err == io.EOF { // connection closed.
 				break
 			}
 			if nerr, ok := err.(net.Error); ok && nerr.Timeout() {

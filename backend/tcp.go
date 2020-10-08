@@ -270,6 +270,11 @@ func (t *TCP) acceptTCPLink(log *logging.Entry, link *TCPLink, connectArg *proto
 	leftLink := t.getLink(key)
 	link.publish = key
 	link.remote = addr
+
+	// TODO(xutao): may force to replace previous link. because network partition may
+	// make connection in one side closed and the other side definitely won't notice that for a short period.
+	// Under the circumstance, link won't recover until the other side notices a broken TCP connection and closes it.
+	// We may directly close previous connection immediately.
 	if !leftLink.assign(link) {
 		log.Warnf("link to foreign peer \"%v\" exists. closing...", key)
 		return false, nil
