@@ -229,19 +229,21 @@ func (n *MetadataNetwork) updateNetworkEndpoint(peer *MetaPeer, endpointSet goss
 		// try to resolve name conflict.
 		for node := range n.nameConflictNodes {
 			allResolved := true
-			for _, name := range node.names {
-				actual, has := name2Peer[name]
-				if has {
-					if actual == peer {
-						continue
+			if !node.left {
+				for _, name := range node.names {
+					actual, has := name2Peer[name]
+					if has {
+						if actual == peer {
+							continue
+						}
+						if actual != nil && !actual.left {
+							allResolved = false // conflicts persists.
+							continue
+						}
 					}
-					if actual != nil && !actual.left {
-						allResolved = false // conflicts persists.
-						continue
-					}
+					n.log.Warnf("conflict name \"%v\" of peer %v is recovered.", name, node)
+					name2Peer[name] = node
 				}
-				n.log.Warnf("conflict name \"%v\" of peer %v is recovered.", name, peer)
-				name2Peer[name] = node
 			}
 			if allResolved {
 				delete(n.nameConflictNodes, node)
