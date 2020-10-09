@@ -3,7 +3,6 @@ package metanet
 import (
 	"sort"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/crossmesh/fabric/backend"
@@ -121,6 +120,7 @@ func (n *MetadataNetwork) initializeMembership() (err error) {
 	n.self = &MetaPeer{
 		Node:   n.gossip.self,
 		isSelf: true,
+		log:    n.log,
 	}
 	n.peers[n.gossip.self] = n.self
 
@@ -304,7 +304,7 @@ func (n *MetadataNetwork) onGossipNodeJoined(node *sladder.Node) {
 	n.lock.Lock()
 	peer, hasPeer := n.peers[node]
 	if !hasPeer || peer.left {
-		peer = &MetaPeer{Node: node}
+		peer = &MetaPeer{Node: node, log: n.log}
 		n.peers[node] = peer
 	}
 	n.lock.Unlock()
@@ -374,11 +374,15 @@ func (n *MetadataNetwork) onNetworkEndpointEvent(ctx *sladder.WatchEventContext,
 
 // RepublishEndpoint republish Endpoints.
 func (n *MetadataNetwork) RepublishEndpoint() {
-	id := atomic.AddUint32(&n.configID, 1)
-	n.delayPublishEndpoint(id, false) // submit.
+	n.lock.Lock()
+	defer n.lock.Unlock()
+
+	epoch := n.epoch + 1
+	n.delayPublishEndpoint(epoch, false) // submit.
+	n.epoch = epoch
 }
 
-func (n *MetadataNetwork) delayPublishEndpoint(id uint32, delay bool) {
+func (n *MetadataNetwork) delayPublishEndpoint(epoch uint32, delay bool) {
 	n.arbiters.main.Go(func() {
 		if delay {
 			select {
@@ -391,7 +395,7 @@ func (n *MetadataNetwork) delayPublishEndpoint(id uint32, delay bool) {
 		n.lock.Lock()
 		defer n.lock.Unlock()
 
-		if id < n.configID {
+		if epoch < n.Publish.Epoch {
 			return
 		}
 
@@ -400,11 +404,11 @@ func (n *MetadataNetwork) delayPublishEndpoint(id uint32, delay bool) {
 			oldEndpoints[endpoint.Endpoint] = endpoint
 		}
 
-		var (
-			newEndpoints []*gossipUtils.NetworkEndpointV1
-		)
+		var newEndpoints []*gossipUtils.NetworkEndpointV1
 
 		localPublish := make([]*MetaPeerEndpoint, 0, len(n.backends))
+		newBackends := map[backend.Endpoint]backend.Backend{}
+
 		for endpoint, backend := range n.backends {
 			oldPublish, hasOldPublish := oldEndpoints[endpoint]
 			if hasOldPublish && oldPublish != nil {
@@ -429,6 +433,7 @@ func (n *MetadataNetwork) delayPublishEndpoint(id uint32, delay bool) {
 				Endpoint: endpoint.Endpoint,
 				Priority: backend.Priority(),
 			})
+			newBackends[endpoint] = backend
 		}
 
 		var errs common.Errors
@@ -445,49 +450,19 @@ func (n *MetadataNetwork) delayPublishEndpoint(id uint32, delay bool) {
 		}))
 		if err := errs.AsError(); err != nil {
 			n.log.Errorf("failed to commit transaction for endpoint publication. (err = \"%v\")", err)
-			n.delayPublishEndpoint(id, true)
+			n.delayPublishEndpoint(epoch, true)
 			return
 		}
 		n.log.Infof("gossip publish endpoints %v", newEndpoints)
 
-		// publish locally.
-		typePublish := make(map[backend.Type]backend.Backend)
-		sort.Slice(localPublish, func(i, j int) bool { return localPublish[i].Higher(*localPublish[j]) }) // sort by priority.
-		for _, endpoint := range localPublish {
-			candidate, hasBackend := n.backends[endpoint.Endpoint]
-			if !hasBackend {
-				// should not happen.
-				n.log.Warnf("[BUG!] publish an endpoint with a missing backend in local backend store.")
-				n.RepublishEndpoint() // for safefy.
-				continue
-			}
-
-			rb, hasPublish := n.Publish.Type2Backend.Load(endpoint.Type)
-			if hasPublish && rb != nil {
-				currentBackend, valid := rb.(backend.Backend)
-				if !valid || currentBackend == nil {
-					n.log.Warnf("[BUG!] published a invalid backend. [nil = %v]", currentBackend == nil)
-					n.Publish.Type2Backend.Delete(endpoint.Type)
-				} else if currentBackend == candidate && endpoint.Disabled { // disabled
-					n.Publish.Type2Backend.Delete(endpoint.Type)
-				} else { // preserve the currently selected.
-					typePublish[endpoint.Type] = currentBackend
-				}
-			}
-
-			if !endpoint.Disabled {
-				if _, hasCandidate := typePublish[endpoint.Type]; !hasCandidate {
-					typePublish[endpoint.Type] = candidate // select this candidate.
-				}
-			}
-		}
-		for ty, backend := range typePublish { // now publish backends by type.
-			n.Publish.Type2Backend.Store(ty, backend)
-		}
 		// publish to MetaPeer.
 		n.self.publishInterval(func(interval *MetaPeerStatePublication) bool {
 			interval.Endpoints = localPublish
 			return true
 		})
+
+		// publish backends.
+		n.Publish.Backends = newBackends
+		n.Publish.Epoch = epoch
 	})
 }

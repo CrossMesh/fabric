@@ -56,25 +56,6 @@ func (e *MetaPeerEndpoint) Clone() MetaPeerEndpoint {
 	return new
 }
 
-type endpointProbingContext struct {
-	endpoint backend.Endpoint
-
-	id           uint64
-	tryCount     int
-	since, tryAt time.Time
-	peer         *MetaPeer
-}
-
-type lastProbingContext struct {
-	endpoint backend.Endpoint
-	id       uint64
-	peer     *MetaPeer
-	at       time.Time
-}
-
-const defaultHealthyCheckProbeBrust = 5
-const defaultHealthyCheckProbeTimeout = time.Second * 10
-
 // MetadataNetwork implements simple decentalized communication metadata network.
 type MetadataNetwork struct {
 	messageHandlers  sync.Map // map[uint16]MessageHandler
@@ -102,12 +83,14 @@ type MetadataNetwork struct {
 	nameConflictNodes map[*MetaPeer]struct{}
 
 	backends map[backend.Endpoint]backend.Backend
-	configID uint32
+	epoch    uint32
 
 	Publish struct {
-		Name2Peer    map[string]*MetaPeer // (COW)
-		Self         *MetaPeer
-		Type2Backend sync.Map // map[backend.Type]backend.Backend
+		Name2Peer map[string]*MetaPeer // (COW)
+		Self      *MetaPeer
+
+		Epoch    uint32
+		Backends map[backend.Endpoint]backend.Backend
 	}
 
 	// health checking parameters.
@@ -115,11 +98,11 @@ type MetadataNetwork struct {
 	ProbeTimeout time.Duration
 
 	// health checking fields.
-	lastFails       sync.Map // map[backend.Endpoint]*MetaPeer
+	lastFails       sync.Map // map[linkPathKey]*MetaPeer
 	probeCounter    uint64
 	probeLock       sync.RWMutex
-	probes          map[backend.Endpoint]*endpointProbingContext
-	recentSuccesses map[backend.Endpoint]*lastProbingContext
+	probes          map[linkPathKey]*endpointProbingContext
+	recentSuccesses map[linkPathKey]*lastProbingContext
 }
 
 // NewMetadataNetwork creates a metadata network.
@@ -132,8 +115,8 @@ func NewMetadataNetwork(arbiter *arbit.Arbiter, log *logging.Entry) (n *Metadata
 
 		ProbeBrust:      defaultHealthyCheckProbeBrust,
 		ProbeTimeout:    defaultHealthyCheckProbeTimeout,
-		probes:          make(map[backend.Endpoint]*endpointProbingContext),
-		recentSuccesses: make(map[backend.Endpoint]*lastProbingContext),
+		probes:          make(map[linkPathKey]*endpointProbingContext),
+		recentSuccesses: make(map[linkPathKey]*lastProbingContext),
 	}
 
 	n.arbiters.main = arbit.NewWithParent(arbiter)
@@ -240,15 +223,12 @@ func (n *MetadataNetwork) Close() {
 		n.log.Infof("endpoint %v stopped.", endpoint)
 		delete(n.backends, endpoint)
 	}
-	n.Publish.Type2Backend.Range(func(k, v interface{}) bool {
-		n.Publish.Type2Backend.Delete(k)
-		return true
-	})
+	n.Publish.Backends = nil
 
 	close(n.quitChan)
 }
 
-func (n *MetadataNetwork) delayLocalEndpointCreation(id uint32, creators ...backend.BackendCreator) {
+func (n *MetadataNetwork) delayLocalEndpointCreation(epoch uint32, creators ...backend.BackendCreator) {
 	n.arbiters.main.Go(func() {
 		select {
 		case <-time.After(time.Second * 5):
@@ -259,7 +239,7 @@ func (n *MetadataNetwork) delayLocalEndpointCreation(id uint32, creators ...back
 		n.lock.Lock()
 		defer n.lock.Unlock()
 
-		if id < n.configID {
+		if epoch < n.Publish.Epoch {
 			return
 		}
 
@@ -282,12 +262,17 @@ func (n *MetadataNetwork) delayLocalEndpointCreation(id uint32, creators ...back
 			}
 		}
 
-		if len(failCreation) > 0 {
-			n.delayLocalEndpointCreation(id, failCreation...)
+		if changed {
+			n.delayPublishEndpoint(epoch, false)
 		}
 
-		if changed {
-			n.delayPublishEndpoint(id, false)
+		if len(failCreation) > 0 {
+			epoch++
+			n.delayLocalEndpointCreation(epoch, failCreation...)
+		}
+
+		if epoch > n.epoch {
+			n.epoch = epoch
 		}
 	})
 }
@@ -297,8 +282,7 @@ func (n *MetadataNetwork) UpdateLocalEndpoints(creators ...backend.BackendCreato
 	n.lock.Lock()
 	defer n.lock.Unlock()
 
-	n.configID++
-	id, changed := n.configID, false
+	changed := false
 
 	indexCreators := make(map[backend.Endpoint]backend.BackendCreator, len(creators))
 	for _, creator := range creators {
@@ -307,17 +291,6 @@ func (n *MetadataNetwork) UpdateLocalEndpoints(creators ...backend.BackendCreato
 			// TODO(xutao): support multi-endpoint.
 			Endpoint: creator.Publish(),
 		}] = creator
-	}
-
-	removePublishEndpoint := func(ty backend.Type, except backend.Backend) {
-		rb, hasPublish := n.Publish.Type2Backend.Load(ty)
-		if !hasPublish {
-			return
-		}
-		b, isBackend := rb.(backend.Backend)
-		if !isBackend || except == b {
-			n.Publish.Type2Backend.Delete(ty)
-		}
 	}
 
 	// shutdown.
@@ -331,7 +304,6 @@ func (n *MetadataNetwork) UpdateLocalEndpoints(creators ...backend.BackendCreato
 			delete(n.backends, endpoint)
 			backend.Shutdown()
 			n.log.Infof("endpoint %v stopped.", endpoint)
-			removePublishEndpoint(endpoint.Type, backend)
 			changed = true
 		}
 	}
@@ -345,7 +317,6 @@ func (n *MetadataNetwork) UpdateLocalEndpoints(creators ...backend.BackendCreato
 			delete(n.backends, endpoint)
 			n.log.Infof("try to restart endpoint %v.", endpoint)
 			b.Shutdown()
-			removePublishEndpoint(endpoint.Type, b)
 			changed = true
 		}
 
@@ -362,11 +333,17 @@ func (n *MetadataNetwork) UpdateLocalEndpoints(creators ...backend.BackendCreato
 		}
 	}
 
-	if len(failCreation) > 0 {
-		n.delayLocalEndpointCreation(id, failCreation...)
+	epoch := n.epoch + 1
+	if changed {
+		n.delayPublishEndpoint(epoch, false)
+		epoch++
 	}
 
-	if changed {
-		n.delayPublishEndpoint(id, false)
+	if len(failCreation) > 0 {
+		n.delayLocalEndpointCreation(n.epoch, failCreation...)
+	}
+
+	if epoch > n.epoch {
+		n.epoch = epoch
 	}
 }

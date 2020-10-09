@@ -3,7 +3,6 @@ package metanet
 import (
 	"container/heap"
 	"encoding/binary"
-	"sort"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -11,6 +10,25 @@ import (
 	"github.com/crossmesh/fabric/backend"
 	"github.com/crossmesh/fabric/proto"
 )
+
+type endpointProbingContext struct {
+	path linkPathKey
+
+	id           uint64
+	tryCount     int
+	since, tryAt time.Time
+	peer         *MetaPeer
+}
+
+type lastProbingContext struct {
+	path linkPathKey
+	id   uint64
+	peer *MetaPeer
+	at   time.Time
+}
+
+const defaultHealthyCheckProbeBrust = 5
+const defaultHealthyCheckProbeTimeout = time.Second * 10
 
 // ErrMessageStreamTooShort raised when there are no enough bytes to decode message.
 // Mostly, it indicates that the message stream is incompleted.
@@ -90,7 +108,7 @@ type endpointProbeResponse struct {
 	endpointProbeHeader
 }
 
-func isUnhealthyEndpoint(ctx *endpointProbingContext) bool {
+func isUnhealthyPath(ctx *endpointProbingContext) bool {
 	return ctx != nil && ctx.tryCount > 2
 }
 
@@ -113,42 +131,47 @@ func (n *MetadataNetwork) onHealthProbingResponse(header *endpointProbeHeader, m
 	n.probeLock.Lock()
 	defer n.probeLock.Unlock()
 
-	ctx, _ := n.probes[msg.Endpoint]
-	if ctx == nil || ctx.id != header.id {
+	path := linkPathKey{
+		ty:     msg.Endpoint.Type,
+		remote: msg.Endpoint.Endpoint,
+		local:  msg.Via.Endpoint,
+	}
+	ctx, _ := n.probes[path]
+	if ctx == nil || ctx.id != header.id || ctx.path != path {
 		return
 	}
-	delete(n.probes, msg.Endpoint)
+	delete(n.probes, path)
 
-	n.recentSuccesses[msg.Endpoint] = &lastProbingContext{
-		endpoint: msg.Endpoint,
-		id:       header.id,
-		peer:     ctx.peer,
-		at:       time.Now(),
+	n.recentSuccesses[path] = &lastProbingContext{
+		path: path,
+		id:   header.id,
+		peer: ctx.peer,
+		at:   time.Now(),
 	}
 
-	if ctx.tryCount > 3 {
-		ctx.peer.publishInterval(func(interval *MetaPeerStatePublication) (commit bool) {
-			commit = false
+	last := isUnhealthyPath(ctx)
+	ctx.tryCount = 0
 
-			newEndpoints := make([]*MetaPeerEndpoint, 0, len(ctx.peer.Endpoints))
-			newEndpoints = append(newEndpoints, ctx.peer.Endpoints...)
-			for _, endpoint := range newEndpoints {
-				if endpoint.Endpoint == msg.Endpoint && endpoint.Disabled {
-					endpoint.Disabled = false
-					n.log.Infof("enabled healthy endpoint %v of %v", endpoint.Endpoint, ctx.peer)
+	if next := isUnhealthyPath(ctx); next != last {
+		ctx.peer.filterLinkPath(func(old []*linkPath) []*linkPath {
+
+			for _, currentPath := range old {
+				if currentPath.linkPathKey != path {
+					continue
+				}
+				if currentPath.Disabled != next {
+					if next {
+						n.log.Warnf("disabled unhealthy path %v.", &path)
+					} else {
+						n.log.Infof("enabled healthy path %v.", path)
+					}
+					currentPath.Disabled = next
+					return old
 				}
 			}
 
-			if commit {
-				sort.Slice(newEndpoints, func(i, j int) bool {
-					return newEndpoints[i].Higher(*newEndpoints[j])
-				})
-				interval.Endpoints = newEndpoints
-			}
-
-			return
+			return nil
 		})
-
 	}
 }
 
@@ -169,19 +192,19 @@ func (n *MetadataNetwork) onHealthProbingMessage(msg *Message) {
 func (n *MetadataNetwork) _searchForProbeTargets(need int, newProbeCandidates []*endpointProbingContext) (targets, delayed []*endpointProbingContext) {
 	now := time.Now()
 
-	type endpointPeer struct {
-		endpoint backend.Endpoint
-		peer     *MetaPeer
+	type pathPeer struct {
+		path linkPathKey
+		peer *MetaPeer
 	}
 
-	matchSet := map[endpointPeer]*endpointProbingContext{}
+	matchSet := map[pathPeer]*endpointProbingContext{}
 
 	probesMatchers := []func(*endpointProbingContext) bool{
 		func(ctx *endpointProbingContext) bool { return ctx.tryCount == 0 },
 		func(ctx *endpointProbingContext) bool {
 			return now.Sub(ctx.tryAt) >= n.ProbeTimeout
 		},
-		func(ctx *endpointProbingContext) bool { return isUnhealthyEndpoint(ctx) },
+		func(ctx *endpointProbingContext) bool { return isUnhealthyPath(ctx) },
 	}
 
 	probesMatch := func(matcherIdx int) func() {
@@ -196,9 +219,9 @@ func (n *MetadataNetwork) _searchForProbeTargets(need int, newProbeCandidates []
 					continue
 				}
 
-				matchSet[endpointPeer{
-					endpoint: ctx.endpoint,
-					peer:     ctx.peer,
+				matchSet[pathPeer{
+					path: ctx.path,
+					peer: ctx.peer,
 				}] = ctx
 			}
 		}
@@ -221,28 +244,27 @@ func (n *MetadataNetwork) _searchForProbeTargets(need int, newProbeCandidates []
 					continue
 				}
 
-				endpoints := peer.Endpoints
-				for _, endpoint := range endpoints {
-
-					latestProbingCtx, _ := n.recentSuccesses[endpoint.Endpoint]
+				paths := peer.getLinkPaths(n.Publish.Epoch, n.Publish.Backends)
+				for _, path := range paths {
+					latestProbingCtx, _ := n.recentSuccesses[path.linkPathKey]
 					if latestProbingCtx != nil {
 						if latestProbingCtx.peer != peer {
 							latestProbingCtx.peer = peer
 							latestProbingCtx.id = 0
-							delete(n.recentSuccesses, endpoint.Endpoint)
+							delete(n.recentSuccesses, path.linkPathKey)
 						}
-					} else if ctx, _ := n.probes[endpoint.Endpoint]; ctx != nil {
+					} else if ctx, _ := n.probes[path.linkPathKey]; ctx != nil {
 						latestProbingCtx = &lastProbingContext{
-							endpoint: endpoint.Endpoint,
-							id:       ctx.id,
-							peer:     peer,
-							at:       ctx.tryAt,
+							path: path.linkPathKey,
+							id:   ctx.id,
+							peer: peer,
+							at:   ctx.tryAt,
 						}
 					} else {
 						latestProbingCtx = &lastProbingContext{
-							endpoint: endpoint.Endpoint,
-							id:       0,
-							peer:     peer,
+							path: path.linkPathKey,
+							id:   0,
+							peer: peer,
 						}
 					}
 
@@ -260,10 +282,10 @@ func (n *MetadataNetwork) _searchForProbeTargets(need int, newProbeCandidates []
 			}
 
 			for _, latestProbingCtx := range latestCandidates {
-				ctx, _ := n.probes[latestProbingCtx.endpoint]
+				ctx, _ := n.probes[latestProbingCtx.path]
 				if ctx == nil {
 					ctx = &endpointProbingContext{
-						endpoint: latestProbingCtx.endpoint,
+						path:     latestProbingCtx.path,
 						id:       0,
 						tryCount: 0,
 						since:    now,
@@ -271,9 +293,9 @@ func (n *MetadataNetwork) _searchForProbeTargets(need int, newProbeCandidates []
 						peer:     latestProbingCtx.peer,
 					}
 				}
-				matchSet[endpointPeer{
-					endpoint: latestProbingCtx.endpoint,
-					peer:     latestProbingCtx.peer,
+				matchSet[pathPeer{
+					path: latestProbingCtx.path,
+					peer: latestProbingCtx.peer,
 				}] = ctx
 			}
 		},
@@ -313,34 +335,34 @@ func (n *MetadataNetwork) goHealthProbe() {
 		now := time.Now()
 
 		newProbeCandidates := []*endpointProbingContext{}
-		disablingLog := map[*MetaPeer]map[backend.Endpoint]bool{}
+		disablingLog := map[*MetaPeer]map[linkPathKey]bool{}
 
-		setDisable := func(peer *MetaPeer, endpoint backend.Endpoint, disabled bool) {
-			endpoints, _ := disablingLog[peer]
-			if endpoints == nil {
-				endpoints = make(map[backend.Endpoint]bool)
-				disablingLog[peer] = endpoints
+		setDisable := func(peer *MetaPeer, path linkPathKey, disabled bool) {
+			paths, _ := disablingLog[peer]
+			if paths == nil {
+				paths = make(map[linkPathKey]bool)
+				disablingLog[peer] = paths
 			}
-			endpoints[endpoint] = disabled
+			paths[path] = disabled
 		}
 
 		// deal with recent failures.
 		n.lastFails.Range(func(k, v interface{}) bool {
-			endpoint, isEndpoint := k.(backend.Endpoint)
+			path, isEndpoint := k.(linkPathKey)
 			if !isEndpoint {
-				n.lastFails.Delete(endpoint)
+				n.lastFails.Delete(k)
 				return true
 			}
 			peer, isPeer := v.(*MetaPeer)
 			if !isPeer || peer == nil || peer.IsSelf() {
-				n.lastFails.Delete(endpoint)
+				n.lastFails.Delete(k)
 				return true
 			}
 
-			ctx, _ := n.probes[endpoint]
+			ctx, _ := n.probes[path]
 			if ctx == nil {
 				ctx = &endpointProbingContext{
-					endpoint: endpoint,
+					path:     path,
 					tryCount: 0,
 					since:    now,
 					tryAt:    now,
@@ -350,11 +372,11 @@ func (n *MetadataNetwork) goHealthProbe() {
 				newProbeCandidates = append(newProbeCandidates, ctx)
 
 			} else if ctx.peer != peer {
-				delete(n.probes, endpoint)
+				delete(n.probes, path)
 
 				// endpoint changes.
-				setDisable(ctx.peer, endpoint, false)
-				setDisable(peer, endpoint, false)
+				setDisable(ctx.peer, path, false)
+				setDisable(peer, path, false)
 
 				ctx.tryCount = 0
 				ctx.since = now
@@ -365,79 +387,79 @@ func (n *MetadataNetwork) goHealthProbe() {
 				newProbeCandidates = append(newProbeCandidates, ctx)
 			}
 
-			n.lastFails.Delete(endpoint)
+			n.lastFails.Delete(k)
 			return true
 		})
 
 		{
-			owners := make(map[backend.Endpoint]*MetaPeer)
+			owners := make(map[linkPathKey]*MetaPeer)
 			for _, ctx := range n.probes {
 				if ctx.peer.IsSelf() {
 					// myself. should not happen.
 					n.log.Warn("[BUG!] probe self endpoint.")
-					delete(n.probes, ctx.endpoint)
-					setDisable(ctx.peer, ctx.endpoint, false)
+					delete(n.probes, ctx.path)
+					setDisable(ctx.peer, ctx.path, false)
 					continue
 				}
 
 				// drop probes with changed endpoint.
-				peer, found := owners[ctx.endpoint]
+				peer, found := owners[ctx.path]
 				if found {
 					if peer != ctx.peer {
-						delete(n.probes, ctx.endpoint)
-						setDisable(ctx.peer, ctx.endpoint, false)
+						delete(n.probes, ctx.path)
+						setDisable(ctx.peer, ctx.path, false)
 						continue
 					}
 				} else {
-					endpoints := ctx.peer.Endpoints
-					for _, endpoint := range endpoints {
-						owners[endpoint.Endpoint] = ctx.peer
+					paths := ctx.peer.getLinkPaths(n.Publish.Epoch, n.Publish.Backends)
+					for _, path := range paths {
+						owners[path.linkPathKey] = ctx.peer
 					}
-					if _, found = owners[ctx.endpoint]; !found {
-						delete(n.probes, ctx.endpoint)
-						setDisable(ctx.peer, ctx.endpoint, false)
+					if _, found = owners[ctx.path]; !found {
+						delete(n.probes, ctx.path)
+						setDisable(ctx.peer, ctx.path, false)
 						continue
 					}
 				}
 
 				// mark disabled endpoint.
-				if isUnhealthyEndpoint(ctx) {
-					setDisable(ctx.peer, ctx.endpoint, true)
+				if isUnhealthyPath(ctx) {
+					setDisable(ctx.peer, ctx.path, true)
 				}
 			}
 		}
 
 		// republish endpoints.
-		for peer, endpoints := range disablingLog {
-			if len(endpoints) < 1 {
+		for peer, paths := range disablingLog {
+			if len(paths) < 1 {
 				continue
 			}
-			peer.publishInterval(func(interval *MetaPeerStatePublication) (commit bool) {
-				commit = false
 
-				newEndpoints := make([]*MetaPeerEndpoint, 0, len(peer.Endpoints))
-				newEndpoints = append(newEndpoints, peer.Endpoints...)
-				for _, endpoint := range newEndpoints {
-					disabled, changed := endpoints[endpoint.Endpoint]
-					if changed && endpoint.Disabled != disabled {
-						commit = true
-						endpoint.Disabled = disabled
-						if disabled {
-							n.log.Warnf("disabled unhealthy endpoint %v of %v", endpoint.Endpoint, peer)
-						} else {
-							n.log.Infof("enabled healthy endpoint %v of %v", endpoint.Endpoint, peer)
-						}
+			peer.filterLinkPath(func(old []*linkPath) []*linkPath {
+				commit := false
+				if old == nil {
+					return nil
+				}
+				for _, path := range old {
+					disabled, changed := paths[path.linkPathKey]
+					if !changed {
+						continue
 					}
+					if disabled != path.Disabled {
+						if disabled {
+							n.log.Warnf("disabled unhealthy path %v of remote %v", path, peer)
+						} else {
+							n.log.Infof("enabled healthy path %v of %v", path, peer)
+						}
+						path.Disabled = disabled
+					}
+					commit = true
 				}
 
-				if commit {
-					sort.Slice(newEndpoints, func(i, j int) bool {
-						return newEndpoints[i].Higher(*newEndpoints[j])
-					})
-					interval.Endpoints = newEndpoints
+				if !commit {
+					return nil
 				}
-
-				return
+				return old
 			})
 		}
 
@@ -449,11 +471,11 @@ func (n *MetadataNetwork) goHealthProbe() {
 
 		probeTargets, delayedNewCandidates := n._searchForProbeTargets(need, newProbeCandidates)
 		for _, target := range delayedNewCandidates {
-			n.probes[target.endpoint] = target // save context.
+			n.probes[target.path] = target // save context.
 		}
 
 		if len(probeTargets) < 1 {
-			n.log.Debugf("health checking finds no probing endpoint.")
+			n.log.Debugf("health checking finds no probing link path.")
 		} else {
 			// send probes.
 			for _, target := range probeTargets {
@@ -465,11 +487,13 @@ func (n *MetadataNetwork) goHealthProbe() {
 				target.tryAt = now
 				target.tryCount++
 
-				n.probes[target.endpoint] = target // save context.
+				n.probes[target.path] = target // save context.
 
-				n.log.Debugf("send probe to %v. [request ID = %v]", target.endpoint, req.id)
+				n.log.Debugf("probe link %v. [request ID = %v]", &target.path, req.id)
 				payload := req.Encode()
-				n.SendToEndpoints(proto.MsgTypePing, payload, target.endpoint)
+				n.SendViaEndpoint(proto.MsgTypePing, payload, backend.Endpoint{
+					Type: target.path.ty, Endpoint: target.path.local,
+				}, target.path.remote)
 			}
 		}
 
