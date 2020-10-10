@@ -53,6 +53,9 @@ func newNetworkCmd(app *App) *cli.Command {
 				},
 			},
 		},
+		Before: func(ctx *cli.Context) (err error) {
+			return app.loadConfig()
+		},
 	}
 	return cmd
 }

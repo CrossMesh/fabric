@@ -20,6 +20,22 @@ type App struct {
 	Retry int
 }
 
+func (a *App) loadConfig() (err error) {
+	if a.ConfigFile == "" {
+		a.ConfigFile = "/etc/utt.yml"
+	}
+	// config file is a must.
+	if fileInfo, err := os.Stat(a.ConfigFile); err != nil || !fileInfo.Mode().IsRegular() {
+		return cmdError("invalid configuration file: %v", err)
+	}
+	if err = configor.New(&configor.Config{
+		Debug: false,
+	}).Load(a.cfg, a.ConfigFile); err != nil {
+		return cmdError("failed to load configuration: %v", err)
+	}
+	return nil
+}
+
 // NewApp create UTT application instance.
 func NewApp() (a *App) {
 	a = &App{
@@ -31,6 +47,7 @@ func NewApp() (a *App) {
 		Commands: []*cli.Command{
 			newEdgeCmd(a),
 			newNetworkCmd(a),
+			newVersionCmd(a),
 		},
 		Flags: []cli.Flag{
 			&cli.StringFlag{
@@ -40,21 +57,6 @@ func NewApp() (a *App) {
 				Destination: &a.ConfigFile,
 				DefaultText: "/etc/utt.yml",
 			},
-		},
-		Before: func(ctx *cli.Context) (err error) {
-			if a.ConfigFile == "" {
-				a.ConfigFile = "/etc/utt.yml"
-			}
-			// config file is a must.
-			if fileInfo, err := os.Stat(a.ConfigFile); err != nil || !fileInfo.Mode().IsRegular() {
-				return cmdError("invalid configuration file: %v", err)
-			}
-			if err = configor.New(&configor.Config{
-				Debug: false,
-			}).Load(a.cfg, a.ConfigFile); err != nil {
-				return cmdError("failed to load configuration: %v", err)
-			}
-			return nil
 		},
 	}
 	return

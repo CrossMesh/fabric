@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/crossmesh/fabric/cmd/version"
 	"github.com/crossmesh/fabric/control"
 	"github.com/crossmesh/fabric/control/rpc/pb"
 	log "github.com/sirupsen/logrus"
@@ -50,6 +51,8 @@ func newEdgeCmd(app *App) *cli.Command {
 		Name:  "edge",
 		Usage: "run as network peer.",
 		Action: func(ctx *cli.Context) (err error) {
+			version.LogVersion(nil)
+
 			arbiter := arbit.New()
 			arbiter.HookPreStop(func() {
 				log.Info("shutting down...")
@@ -80,6 +83,9 @@ func newEdgeCmd(app *App) *cli.Command {
 		},
 		Subcommands: []*cli.Command{
 			newEdgeReloadCmd(app),
+		},
+		Before: func(ctx *cli.Context) (err error) {
+			return app.loadConfig()
 		},
 	}
 
