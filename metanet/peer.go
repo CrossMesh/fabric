@@ -191,8 +191,8 @@ func (p *MetaPeer) _rebuildLinkPath() {
 	for begin, end := 0, 0; begin < len(localEndpoints); begin = end {
 		ty := localEndpoints[begin].Type
 		end = sort.Search(len(localEndpoints)-begin, func(i int) bool {
-			return localEndpoints[i].Type > ty
-		})
+			return localEndpoints[i+begin].Type > ty
+		}) + begin
 
 		for begin < end {
 			local := localEndpoints[begin]
