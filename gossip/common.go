@@ -2,6 +2,7 @@ package gossip
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 
@@ -17,6 +18,10 @@ type ModelVersionUnmatchedError struct {
 func (e *ModelVersionUnmatchedError) Error() string {
 	return fmt.Sprintf("%v version %v structure contains unmatched version %v", e.Name, e.Expected, e.Actual)
 }
+
+var (
+	ErrBrokenStream = errors.New("broken binary stream")
+)
 
 // IPNetSetEncode trys to marshal IPNetSet to bytes.
 func IPNetSetEncode(s common.IPNetSet) ([]byte, error) {

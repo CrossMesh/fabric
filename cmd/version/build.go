@@ -31,5 +31,5 @@ func LogVersion(p printer) {
 	if p == nil {
 		p = logging.WithField("module", "version")
 	}
-	p.Println("crossmesh", BareVersion+"-"+Revision, BuildDate, runtime.GOOS, runtime.GOARCH)
+	p.Println("crossmesh", BareVersion, Revision, BuildDate, runtime.GOOS, runtime.GOARCH)
 }
