@@ -130,16 +130,14 @@ func (l *TCPLink) Send(frame []byte) (err error) {
 		return ErrOperationCanceled
 	}
 
-	if !l.muxer.Parallel() {
-		l.writeLock.Lock()
-		defer l.writeLock.Unlock()
-	}
-
 	muxer := l.muxer
 	if muxer == nil {
-		// got closed link.
-		err = ErrOperationCanceled
-		return
+		return ErrOperationCanceled
+	}
+
+	if !muxer.Parallel() {
+		l.writeLock.Lock()
+		defer l.writeLock.Unlock()
 	}
 
 	if _, err = muxer.Mux(frame); err != nil {
@@ -213,6 +211,13 @@ func (l *TCPLink) close() (err error) {
 func (l *TCPLink) Close() (err error) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
+
+	l.writeLock.Lock()
+	defer l.writeLock.Unlock()
+
+	l.readLock.Lock()
+	defer l.writeLock.Unlock()
+
 	return l.close()
 }
 
