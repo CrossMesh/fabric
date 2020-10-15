@@ -26,11 +26,13 @@ func TestFestureSet(t *testing.T) {
 	assert.NoError(t, err)
 
 	newFeats := new(FeatureSet)
-	assert.NoError(t, newFeats.Decode(b))
+	_, err = newFeats.Decode(b)
+	assert.NoError(t, err)
 	assert.False(t, feats.Enabled(44))
 	assert.True(t, feats.Enabled(30))
 
-	assert.NoError(t, feats.Decode(b))
+	_, err = newFeats.Decode(b)
+	assert.NoError(t, err)
 	assert.False(t, newFeats.Enabled(44))
 	assert.True(t, newFeats.Enabled(30))
 

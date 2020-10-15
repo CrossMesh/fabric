@@ -1,7 +1,6 @@
 package gossip
 
 import (
-	"bytes"
 	"errors"
 
 	"github.com/crossmesh/fabric/cmd/version"
@@ -9,15 +8,14 @@ import (
 )
 
 var (
-	ErrRevisionTooLong = errors.New("revision is too long")
+	ErrVersionTooLong = errors.New("version is too long")
 )
 
 // VersionInfoV1 contains version publication.
 type VersionInfoV1 struct {
 	MetaVersion uint8
 
-	Major, Minor uint8
-	Revision     []byte
+	Version version.SemVer
 
 	Features version.FeatureSet
 }
@@ -31,33 +29,30 @@ func (v1 *VersionInfoV1) Equal(r *VersionInfoV1) bool {
 		return false
 	}
 	return v1.MetaVersion == r.MetaVersion &&
-		v1.Major == r.Major &&
-		bytes.Compare(v1.Revision, r.Revision) == 0 &&
+		v1.Version.Equal(&r.Version) &&
 		v1.Features.Equal(&r.Features)
-
 }
 
 // Clone makes deep copy.
 func (v1 *VersionInfoV1) Clone() *VersionInfoV1 {
 	new := &VersionInfoV1{
 		MetaVersion: 1,
-		Major:       v1.Major,
-		Minor:       v1.Minor,
+		Version:     v1.Version,
 	}
 	new.Features = v1.Features.Clone()
-	new.Revision = append(new.Revision, v1.Revision...)
+	new.Version = v1.Version
 	return new
 }
 
 // Encode marshals VersionInfoV1.
 func (v1 *VersionInfoV1) Encode() (b []byte, err error) {
-	revLen := len(v1.Revision)
-	if revLen > 0xFF {
-		return nil, ErrRevisionTooLong
+	semver := v1.Version.String()
+	verLen := len(semver)
+	if verLen > 0xFF {
+		return nil, ErrVersionTooLong
 	}
-	b = append(b, 1, v1.Major, v1.Minor)
-	b = append(b, uint8(revLen))
-	b = append(b, v1.Revision...)
+	b = append(b, 1, uint8(verLen))
+	b = append(b, []byte(semver)...)
 	var featsBin []byte
 	if featsBin, err = v1.Features.Encode(); err != nil {
 		return nil, err
@@ -92,7 +87,7 @@ func (v1 *VersionInfoV1) Decode(b []byte) error {
 	if len(b) < 4 {
 		return ErrBrokenStream
 	}
-	metaVersion, major, minor := b[0], b[1], b[2]
+	metaVersion := b[0]
 	if metaVersion != 1 {
 		return &ModelVersionUnmatchedError{
 			Actual:   uint16(v1.MetaVersion),
@@ -100,21 +95,17 @@ func (v1 *VersionInfoV1) Decode(b []byte) error {
 			Name:     "VersionInfoV1",
 		}
 	}
-	revLen := b[3]
-	if int(revLen) > len(b)-4 {
+	verLen := b[1]
+	if int(verLen) > len(b)-2 {
 		return ErrBrokenStream
 	}
-	b = b[4:]
-	rev := b[:revLen]
-	b = b[revLen:]
+	b = b[verLen:]
 	features := new(version.FeatureSet)
-	if err := features.Decode(b[:]); err != nil {
+	if _, err := features.Decode(b[:]); err != nil {
 		return err
 	}
-	v1.Major, v1.Minor = major, minor
 	v1.MetaVersion = metaVersion
 	v1.Features = *features
-	v1.Revision = rev
 	return nil
 }
 
@@ -193,21 +184,31 @@ func (t *VersionInfoV1Txn) Merge(r *VersionInfoV1Txn, isConcurrent bool) (bool, 
 		}
 	}
 	t.new.MetaVersion = 1
-	if v := r.new.Major; v < t.new.Major {
-		t.new.Major = v
-		changed = true
-	}
-	if v := r.new.Minor; v < t.new.Minor {
-		t.new.Minor = v
-		changed = true
-	}
-	if bytes.Compare(t.new.Revision, r.new.Revision) < 0 {
-		if t.new.Revision != nil {
-			t.new.Revision = t.new.Revision[:0]
+
+	// merge semver.
+	remoteAccepted := false
+	if r.new.Version.Equal(&t.new.Version) {
+		l, r := t.new.Version.Matadata, r.new.Version.Matadata
+		if len(l) < len(r) {
+			remoteAccepted = true
+
+		} else if len(l) == len(r) {
+			for i := 0; i < len(l); i++ {
+				if l[i] < r[i] {
+					remoteAccepted = true
+					break
+				}
+			}
 		}
-		t.new.Revision = append(t.new.Revision, r.new.Revision...)
+	} else if t.new.Version.Less(&r.new.Version) {
+		remoteAccepted = true
+	}
+	if remoteAccepted {
+		t.new.Version = *r.new.Version.Clone()
 		changed = true
 	}
+
+	// merge feature set.
 	if t.new.Features.Merge(&t.old.Features, false) {
 		changed = true
 	}
@@ -216,25 +217,15 @@ func (t *VersionInfoV1Txn) Merge(r *VersionInfoV1Txn, isConcurrent bool) (bool, 
 }
 
 // Version returns version.
-func (t *VersionInfoV1Txn) Version() (uint8, uint8) { return t.new.Major, t.new.Minor }
-
-// Revision returns revision.
-func (t *VersionInfoV1Txn) Revision() []byte { return t.new.Revision }
+func (t *VersionInfoV1Txn) Version() *version.SemVer { return t.new.Version.Clone() }
 
 // SetVersion sets major and minor version.
-func (t *VersionInfoV1Txn) SetVersion(major, minor uint8) (uint8, uint8) {
+func (t *VersionInfoV1Txn) SetVersion(v *version.SemVer) {
+	if v == nil {
+		return
+	}
 	t.beforeWrite()
-	oMajor, oMinor := t.new.Major, t.new.Minor
-	t.new.Major, t.new.Minor = major, minor
-	return oMajor, oMinor
-}
-
-// SetRevision sets revision.
-func (t *VersionInfoV1Txn) SetRevision(rev []byte) []byte {
-	t.beforeWrite()
-	old := t.new.Revision
-	t.new.Revision = rev
-	return old
+	t.new.Version = *v.Clone()
 }
 
 // Updated reports whether transaction has updated.
@@ -261,6 +252,32 @@ func (t *VersionInfoV1Txn) SetRawValue(x string) error {
 		return err
 	}
 	return nil
+}
+
+// Enable enables feature.
+func (t *VersionInfoV1Txn) Enable(feature int) bool {
+	t.beforeWrite()
+	return t.new.Features.Enable(feature)
+}
+
+// Disable disables feature.
+func (t *VersionInfoV1Txn) Disable(feature int) bool {
+	t.beforeWrite()
+	return t.new.Features.Disable(feature)
+}
+
+// Enabled reports whether feature with specific ID is enabled.
+func (t *VersionInfoV1Txn) Enabled(feature int) bool {
+	return t.new.Features.Enabled(feature)
+}
+
+// AssignFeatures enables features by update entire FeatureSet.
+func (t *VersionInfoV1Txn) AssignFeatures(features ...int) {
+	t.beforeWrite()
+	t.new.Features = version.FeatureSet{}
+	for _, feat := range features {
+		t.new.Features.Enable(feat)
+	}
 }
 
 func createTxn(kv *sladder.KeyValue) (*VersionInfoV1Txn, error) {

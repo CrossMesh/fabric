@@ -58,20 +58,20 @@ func (s *FeatureSet) Encode() (b []byte, err error) {
 }
 
 // Decode unmarshals contents.
-func (s *FeatureSet) Decode(b []byte) error {
+func (s *FeatureSet) Decode(b []byte) (int, error) {
 	if len(b) < 1 {
-		return nil
+		return 0, nil
 	}
 	length := b[0]
 	if int(length) > len(b)-1 {
-		return ErrBrokenSet
+		return 0, ErrBrokenSet
 	}
 	if *s != nil {
 		*s = (*s)[:0]
 	}
 	b = b[1:]
 	*s = append(*s, b[:length]...)
-	return nil
+	return 1 + int(length), nil
 }
 
 // Merge merges two FeatureSet.

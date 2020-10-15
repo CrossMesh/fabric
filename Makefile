@@ -57,7 +57,7 @@ cover: coverage test
 	go tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html
 
 test: coverage
-	go test -v -bench=. -benchtime=2x -coverprofile=$(COVERAGE_DIR)/coverage.out -cover ./common ./mux/... ./gossip/... ./proto ./route
+	go test -v -bench=. -benchtime=2x -coverprofile=$(COVERAGE_DIR)/coverage.out -cover ./common ./mux/... ./gossip/... ./proto ./route ./cmd/version
 	go tool cover -func=$(COVERAGE_DIR)/coverage.out
 
 build:
