@@ -84,7 +84,7 @@ func (v1 *VersionInfoV1) Validate() error {
 
 // Decode unmarshals VersionInfoV1.
 func (v1 *VersionInfoV1) Decode(b []byte) error {
-	if len(b) < 4 {
+	if len(b) < 2 {
 		return ErrBrokenStream
 	}
 	metaVersion := b[0]
@@ -95,17 +95,26 @@ func (v1 *VersionInfoV1) Decode(b []byte) error {
 			Name:     "VersionInfoV1",
 		}
 	}
+
 	verLen := b[1]
 	if int(verLen) > len(b)-2 {
 		return ErrBrokenStream
 	}
+	b = b[2:]
+	ver := &version.SemVer{}
+	if !ver.Parse(string(b[:verLen])) {
+		return ErrBrokenStream
+	}
 	b = b[verLen:]
+
 	features := new(version.FeatureSet)
 	if _, err := features.Decode(b[:]); err != nil {
 		return err
 	}
+
 	v1.MetaVersion = metaVersion
 	v1.Features = *features
+	v1.Version = *ver
 	return nil
 }
 
@@ -131,7 +140,14 @@ func (v1 *VersionInfoValidatorV1) sync(local, remote *sladder.KeyValue, isConcur
 		local.Value = remote.Value
 		return true, nil
 	}
-	return ntx.Merge(otx, isConcurrent)
+	changed, merr := otx.Merge(ntx, isConcurrent)
+	if merr != nil {
+		return false, merr
+	}
+	if changed {
+		local.Value = otx.After()
+	}
+	return changed, nil
 }
 
 // Sync merges two VersionInfoV1 structures.
@@ -147,7 +163,7 @@ func (v1 *VersionInfoValidatorV1) SyncEx(remote, local *sladder.KeyValue, props 
 // Validate validates VersionInfoV1.
 func (v1 *VersionInfoValidatorV1) Validate(kv sladder.KeyValue) bool {
 	v1s := VersionInfoV1{}
-	return v1s.DecodeString(kv.Value) != nil
+	return v1s.DecodeString(kv.Value) == nil
 }
 
 // VersionInfoV1Txn implements transaction methods of VersionInfoV1.
@@ -170,9 +186,9 @@ func (t *VersionInfoV1Txn) beforeWrite() {
 func (t *VersionInfoV1Txn) Merge(r *VersionInfoV1Txn, isConcurrent bool) (bool, error) {
 	t.beforeWrite()
 	if !isConcurrent {
-		chenged := !r.new.Equal(t.new)
+		changed := !r.new.Equal(t.new)
 		t.new = r.new.Clone()
-		return chenged, nil
+		return changed, nil
 	}
 
 	changed := false
@@ -209,7 +225,7 @@ func (t *VersionInfoV1Txn) Merge(r *VersionInfoV1Txn, isConcurrent bool) (bool, 
 	}
 
 	// merge feature set.
-	if t.new.Features.Merge(&t.old.Features, false) {
+	if t.new.Features.Merge(&r.new.Features, false) {
 		changed = true
 	}
 
@@ -285,6 +301,7 @@ func createTxn(kv *sladder.KeyValue) (*VersionInfoV1Txn, error) {
 	if err := txn.SetRawValue(kv.Value); err != nil {
 		return nil, err
 	}
+	txn.old = txn.new
 	return &txn, nil
 }
 

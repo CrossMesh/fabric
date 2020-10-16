@@ -45,13 +45,16 @@ func TestFestureSet(t *testing.T) {
 	assert.True(t, feats.Enabled(2))
 
 	feats3 := feats2.Clone()
+	assert.True(t, feats3.Equal(feats2))
 	feats3.Merge(feats, false)
 	assert.False(t, feats3.Enabled(2))
 	assert.False(t, feats3.Enabled(30))
 	assert.False(t, feats3.Enabled(44))
+	assert.False(t, feats3.Equal(feats))
 
 	feats2.Merge(feats, true)
 	assert.True(t, feats2.Enabled(2))
 	assert.True(t, feats2.Enabled(30))
 	assert.True(t, feats2.Enabled(44))
+
 }
