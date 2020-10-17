@@ -71,14 +71,14 @@ func (r *EdgeRouter) publishLocalOverlayConfig(peer *metanet.MetaPeer, nets *gos
 }
 
 func (r *EdgeRouter) delayProcessOnPeerJoin(peer *metanet.MetaPeer, d time.Duration) {
-	r.arbiter.Go(func() {
+	r.arbiters.main.Go(func() {
 		if d > 0 {
 			select {
 			case <-time.After(d):
-			case <-r.arbiter.Exit():
+			case <-r.arbiters.main.Exit():
 				return
 			}
-		} else if !r.arbiter.ShouldRun() {
+		} else if !r.arbiters.main.ShouldRun() {
 			return
 		}
 

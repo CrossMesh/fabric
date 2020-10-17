@@ -26,6 +26,11 @@ link:
     # Used for automatically recovering from network partition.
     # minRegionPeer: 2 # (default: 2)
 
+    # Timeout (in second) for gossip quiting process.
+    # Gossip daemon will be forced to quit when quitTimeout is reached despite incompleted spreading of `leave` state.
+    # Specially, 0 means infinite timeout.
+    quitTimeout: 30
+
     # [required] network mode. (could be: ethernet, overlay)
     #   ethernet:
     #     UTT works as a switch, relaying frames according to hardware address (MAC) via tunnels between network router peers.

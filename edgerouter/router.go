@@ -35,14 +35,16 @@ type EdgeRouter struct {
 	cfg      *config.Network
 	log      *logging.Entry
 
-	arbiter        *arbit.Arbiter
-	forwardArbiter *arbit.Arbiter
+	arbiters struct {
+		main    *arbit.Arbiter
+		config  *arbit.Arbiter
+		forward *arbit.Arbiter
+		metanet *arbit.Arbiter
+	}
 }
 
 // New creates a new EdgeRouter.
 func New(arbiter *arbit.Arbiter) (a *EdgeRouter, err error) {
-	arbiter = arbit.NewWithParent(arbiter)
-
 	defer func() {
 		if err != nil {
 			arbiter.Shutdown()
@@ -52,11 +54,14 @@ func New(arbiter *arbit.Arbiter) (a *EdgeRouter, err error) {
 
 	a = &EdgeRouter{
 		log:        logging.WithField("module", "edge_router"),
-		arbiter:    arbiter,
 		vtep:       newVirtualTunnelEndpoint(nil),
 		networkMap: make(map[*metanet.MetaPeer]map[gossip.NetworkID]interface{}),
 	}
-	if a.metaNet, err = metanet.NewMetadataNetwork(arbiter, a.log.WithField("module", "metanet")); err != nil {
+	a.arbiters.main = arbit.NewWithParent(arbiter)
+	a.arbiters.config = arbit.New()
+	a.arbiters.metanet = arbit.NewWithParent(arbiter)
+
+	if a.metaNet, err = metanet.NewMetadataNetwork(a.arbiters.metanet, a.log.WithField("module", "metanet")); err != nil {
 		return nil, err
 	}
 	a.metaNet.RegisterMessageHandler(proto.MsgTypeRawFrame, a.receiveRemote)
@@ -75,13 +80,13 @@ func (r *EdgeRouter) SeedPeer(endpoints ...backend.Endpoint) error {
 }
 
 func (r *EdgeRouter) waitCleanUp() {
-	r.arbiter.Go(func() {
-		<-r.arbiter.Exit() // watch exit signal.
+	r.arbiters.main.Go(func() {
+		<-r.arbiters.main.Exit() // watch exit signal.
 
 		r.lock.Lock()
 		defer r.lock.Unlock()
 
-		fa := r.forwardArbiter
+		fa := r.arbiters.forward
 
 		// terminate forwarding.
 		if fa != nil {
@@ -97,6 +102,14 @@ func (r *EdgeRouter) waitCleanUp() {
 			fa.Join()
 		}
 		r.log.Debug("forwarding stopped.")
+
+		r.arbiters.metanet.Shutdown()
+		r.arbiters.metanet.Join()
+		r.log.Debug("metadata network stopped.")
+
+		r.arbiters.config.Shutdown()
+		r.arbiters.config.Join()
+		r.log.Debug("config stopped.")
 
 		r.log.Debug("edgerouter cleaned up.")
 	})

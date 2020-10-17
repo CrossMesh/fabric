@@ -47,14 +47,14 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 
 	log.Infof("start apply configuration %v", id)
 
-	r.arbiter.Go(func() {
+	r.arbiters.config.Go(func() {
 		var err error
 
 		succeed, rebootForward, forwardRoutines := true, false, cfg.GetMaxConcurrency()
 		r.lock.Lock()
 		defer r.lock.Unlock()
 
-		for r.arbiter.ShouldRun() {
+		for r.arbiters.config.ShouldRun() {
 			if !succeed {
 				log.Info("retry at 15 seconds.")
 				time.Sleep(15 * time.Second)
@@ -66,20 +66,30 @@ func (r *EdgeRouter) goApplyConfig(cfg *config.Network, cidr string) {
 			}
 			updateVTEP := false
 
+			// quiting timeout for gossip.
+			quitTimeout := time.Duration(0)
+			if ref := cfg.QuitTimeout; ref != nil {
+				quitTimeout = time.Duration(*ref) * time.Second
+				r.metaNet.SetGossipQuitTimeout(quitTimeout)
+			} else {
+				quitTimeout = r.metaNet.GetGossipQuitTimeout()
+			}
+			r.log.Info("gossip quit timeout = ", quitTimeout)
+
 			// update peer and route.
 			if current := r.Mode(); current != "unknown" && cfg.Mode != current {
 				r.log.Info("shutting down forwarding...")
-				if arbiter := r.forwardArbiter; arbiter != nil {
+				if arbiter := r.arbiters.forward; arbiter != nil {
 					arbiter.Shutdown()
 					arbiter.Join()
-					r.forwardArbiter = nil
+					r.arbiters.forward = nil
 					r.route = nil
 				}
 				updateVTEP = true
 			}
-			if r.forwardArbiter == nil {
+			if r.arbiters.forward == nil {
 				rebootForward = true
-				r.forwardArbiter = arbit.NewWithParent(r.arbiter)
+				r.arbiters.forward = arbit.NewWithParent(r.arbiters.main)
 			}
 
 			// create route.

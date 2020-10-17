@@ -107,6 +107,7 @@ type Network struct {
 	MaxConcurrency *uint  `json:"maxConcurrency" yaml:"maxConcurrency"`
 	Region         string `json:"region" yaml:"region"`
 	MinRegionPeer  int    `json:"minRegionPeer" yaml:"minRegionPeer"`
+	QuitTimeout    *uint  `json:"quitTimeout" yaml:"quitTimeout"`
 }
 
 func (c *Network) GetMaxConcurrency() uint {

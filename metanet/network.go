@@ -175,6 +175,25 @@ func (n *MetadataNetwork) SetMinRegionPeer(p uint) uint {
 	return engine.SetMinRegionPeer(p)
 }
 
+// SetGossipQuitTimeout sets QuitTimeout of gossip engine.
+func (n *MetadataNetwork) SetGossipQuitTimeout(d time.Duration) {
+	engine := n.gossip.engine
+	if engine == nil {
+		return
+	}
+	engine.QuitTimeout = d
+	return
+}
+
+// GetGossipQuitTimeout reports current QuitTimeout of gossip engine.
+func (n *MetadataNetwork) GetGossipQuitTimeout() time.Duration {
+	engine := n.gossip.engine
+	if engine == nil {
+		return 0
+	}
+	return engine.QuitTimeout
+}
+
 // RegisterDataModel registers new data model to sladder framework.
 func (n *MetadataNetwork) RegisterDataModel(
 	key string,

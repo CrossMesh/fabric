@@ -70,7 +70,7 @@ func (r *EdgeRouter) receiveRemote(msg *metanet.Message) {
 func (r *EdgeRouter) goForwardVTEP() {
 	buf := make([]byte, 2048)
 
-	r.forwardArbiter.Go(func() {
+	r.arbiters.forward.Go(func() {
 		var (
 			lease        *vtepQueueLease
 			err, readErr error
@@ -78,9 +78,9 @@ func (r *EdgeRouter) goForwardVTEP() {
 			peers        []*metanet.MetaPeer
 		)
 
-		for r.forwardArbiter.ShouldRun() {
+		for r.arbiters.forward.ShouldRun() {
 			// acquire queue lease.
-			for r.forwardArbiter.ShouldRun() {
+			for r.arbiters.forward.ShouldRun() {
 				newLease, err := r.vtep.QueueLease()
 				if err != nil {
 					r.log.Error("cannot acquire queue lease: ", err)
@@ -105,20 +105,20 @@ func (r *EdgeRouter) goForwardVTEP() {
 			}
 
 			// forward frames.
-			for r.forwardArbiter.ShouldRun() {
+			for r.arbiters.forward.ShouldRun() {
 				// encode frame.
 				readBuf := buf[:]
 				err = lease.Tx(func(rw *water.Interface) error {
 					read, readErr = rw.Read(readBuf)
 					if readErr != nil {
-						if readErr != io.EOF && readErr != os.ErrClosed && r.forwardArbiter.ShouldRun() {
+						if readErr != io.EOF && readErr != os.ErrClosed && r.arbiters.forward.ShouldRun() {
 							r.log.Error("read link failure: ", readErr)
 						}
 						return readErr
 					}
 					return nil
 				})
-				if readErr != nil && r.forwardArbiter.ShouldRun() {
+				if readErr != nil && r.arbiters.forward.ShouldRun() {
 					// bad lease. force to revoke.
 					if err = lease.Revoke(); err != nil {
 						r.log.Warn("force revoke failure: ", err)
