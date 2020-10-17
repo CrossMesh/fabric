@@ -240,7 +240,7 @@ func (n *MetadataNetwork) _searchForProbeTargets(need int, newProbeCandidates []
 			latestCandidates := latestProbingCandidatesQueue(nil)
 
 			for _, peer := range n.peers {
-				if peer.IsSelf() {
+				if peer.IsSelf() || !peer.healthProbe {
 					continue
 				}
 
@@ -359,6 +359,11 @@ func (n *MetadataNetwork) goHealthProbe() {
 				return true
 			}
 
+			if !peer.healthProbe { // not ready to be probed.
+				n.lastFails.Delete(k)
+				return true
+			}
+
 			ctx, _ := n.probes[path]
 			if ctx == nil {
 				ctx = &endpointProbingContext{
@@ -405,7 +410,8 @@ func (n *MetadataNetwork) goHealthProbe() {
 				// drop probes with changed endpoint.
 				peer, found := owners[ctx.path]
 				if found {
-					if peer != ctx.peer {
+					if peer != ctx.peer ||
+						!peer.healthProbe {
 						delete(n.probes, ctx.path)
 						setDisable(ctx.peer, ctx.path, false)
 						continue
