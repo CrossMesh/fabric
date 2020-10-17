@@ -8,10 +8,10 @@ require (
 	cloud.google.com/go/logging v1.0.0 // indirect
 	cloud.google.com/go/spanner v1.2.1 // indirect
 	github.com/creack/pty v1.1.9 // indirect
-	github.com/crossmesh/sladder v0.0.0-20201017091706-d4d98323cc81
+	github.com/crossmesh/sladder v0.0.0-20201018042605-a601ea2299ee
 	github.com/denisbrodbeck/machineid v1.0.1 // indirect
 	github.com/gogo/protobuf v1.3.1 // indirect
-	github.com/golang/protobuf v1.4.2
+	github.com/golang/protobuf v1.4.3
 	github.com/googleapis/gax-go v2.0.2+incompatible // indirect
 	github.com/grpc-ecosystem/grpc-gateway v1.13.0 // indirect
 	github.com/haya14busa/goplay v1.0.0 // indirect

@@ -4,7 +4,6 @@ import (
 	"container/heap"
 	"encoding/binary"
 	"strconv"
-	"sync/atomic"
 	"time"
 
 	"github.com/crossmesh/fabric/backend"
@@ -486,7 +485,9 @@ func (n *MetadataNetwork) goHealthProbe() {
 			// send probes.
 			for _, target := range probeTargets {
 				req := endpointProbeRequest{}
-				req.id = atomic.AddUint64(&n.probeCounter, 1)
+
+				n.probeCounter++
+				req.id = n.probeCounter
 				req.isResponse = false
 
 				target.id = req.id

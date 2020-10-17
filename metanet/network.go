@@ -110,8 +110,8 @@ type MetadataNetwork struct {
 
 	// health checking fields.
 	lastFails       sync.Map // map[linkPathKey]*MetaPeer
-	probeCounter    uint64
 	probeLock       sync.RWMutex
+	probeCounter    uint64
 	probes          map[linkPathKey]*endpointProbingContext
 	recentSuccesses map[linkPathKey]*lastProbingContext
 }
