@@ -58,19 +58,25 @@ func (e *MetaPeerEndpoint) Clone() MetaPeerEndpoint {
 
 // MetadataNetwork implements simple decentalized communication metadata network.
 type MetadataNetwork struct {
+	// handlers.
 	messageHandlers  sync.Map // map[uint16]MessageHandler
 	peerLeaveWatcher sync.Map // map[uintptr]PeerHandler
 	peerJoinWatcher  sync.Map // map[uintptr]PeerHandler
 
-	lock     sync.RWMutex
+	lock sync.RWMutex
+
+	// goroutine arbiting.
 	arbiters struct {
 		main    *arbit.Arbiter
 		backend *arbit.Arbiter
 	}
+
+	// logging.
 	log *logging.Entry
 
 	quitChan chan struct{}
 
+	// gossip fields.
 	gossip struct {
 		cluster      *sladder.Cluster
 		engine       *gossip.EngineInstance
@@ -82,9 +88,14 @@ type MetadataNetwork struct {
 	peers             map[*sladder.Node]*MetaPeer
 	nameConflictNodes map[*MetaPeer]struct{}
 
+	// version info.
+	versionInfoKey string
+
+	// manage backends.
 	backends map[backend.Endpoint]backend.Backend
 	epoch    uint32
 
+	// copy-on-write network map publication.
 	Publish struct {
 		Name2Peer map[string]*MetaPeer // (COW)
 		Self      *MetaPeer
@@ -128,6 +139,9 @@ func NewMetadataNetwork(arbiter *arbit.Arbiter, log *logging.Entry) (n *Metadata
 		n.log = log
 	}
 	if err = n.initializeMembership(); err != nil {
+		return nil, err
+	}
+	if err = n.initializeVersionInfo(); err != nil {
 		return nil, err
 	}
 	n.arbiters.main.Go(func() {

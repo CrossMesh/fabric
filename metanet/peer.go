@@ -90,9 +90,10 @@ type MetaPeer struct {
 
 	log *logging.Entry
 
-	isSelf bool
-	left   bool
-	names  []string
+	isSelf      bool
+	left        bool
+	healthProbe bool
+	names       []string
 
 	lock         sync.RWMutex
 	customKeyMap map[string]interface{}
@@ -103,6 +104,21 @@ type MetaPeer struct {
 	localEpoch     uint32
 	linkPaths      []*linkPath // (COW)
 	localEndpoints map[backend.Endpoint]backend.Backend
+}
+
+func newMetaPeer(n *sladder.Node, log *logging.Entry, isSelf bool) (p *MetaPeer) {
+	if log == nil {
+		log = logging.WithField("module", "metanet")
+	}
+	p = &MetaPeer{
+		Node:   n,
+		log:    log,
+		isSelf: isSelf,
+
+		// features.
+		healthProbe: isSelf,
+	}
+	return p
 }
 
 func (p *MetaPeer) String() (s string) {

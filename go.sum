@@ -88,6 +88,8 @@ github.com/crossmesh/sladder v0.0.0-20201006171757-8cd1eb645a1a h1:WP1dCyKazwtDH
 github.com/crossmesh/sladder v0.0.0-20201006171757-8cd1eb645a1a/go.mod h1:jnHohIbC4deJJxOInlyqt8A1InSKykswv788vIYGQtM=
 github.com/crossmesh/sladder v0.0.0-20201008090834-519b9d96f071 h1:YfFsDlLIbLl94QFeBHq0oCTIdZ74eXpUUQ9oBjRYSd8=
 github.com/crossmesh/sladder v0.0.0-20201008090834-519b9d96f071/go.mod h1:jnHohIbC4deJJxOInlyqt8A1InSKykswv788vIYGQtM=
+github.com/crossmesh/sladder v0.0.0-20201017045927-e7f5fa15b7bf h1:01D+wIvs6Xrl7abfIZl5HtPpjW//wnH4UiOR0ZF4R5Q=
+github.com/crossmesh/sladder v0.0.0-20201017045927-e7f5fa15b7bf/go.mod h1:jnHohIbC4deJJxOInlyqt8A1InSKykswv788vIYGQtM=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

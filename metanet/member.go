@@ -117,11 +117,7 @@ func (n *MetadataNetwork) initializeMembership() (err error) {
 	n.gossip.cluster.Watch(n.onGossipNodeEvent)
 	n.gossip.cluster.Keys(gossipUtils.DefaultNetworkEndpointKey).Watch(n.onNetworkEndpointEvent)
 
-	n.self = &MetaPeer{
-		Node:   n.gossip.self,
-		isSelf: true,
-		log:    n.log,
-	}
+	n.self = newMetaPeer(n.gossip.self, n.log, true)
 	n.peers[n.gossip.self] = n.self
 
 	n.Publish.Self = n.self
@@ -304,7 +300,7 @@ func (n *MetadataNetwork) onGossipNodeJoined(node *sladder.Node) {
 	n.lock.Lock()
 	peer, hasPeer := n.peers[node]
 	if !hasPeer || peer.left {
-		peer = &MetaPeer{Node: node, log: n.log}
+		peer = newMetaPeer(node, n.log, node == n.gossip.self)
 		n.peers[node] = peer
 	}
 	n.lock.Unlock()
