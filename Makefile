@@ -1,5 +1,4 @@
-.PHONY: test exec bench bin/utt proto cover devtools mock env cloc tarball rpm srpm docker
-
+.PHONY: test exec bench bin/utt proto cover devtools mock env cloc tarball rpm srpm docker release
 GOMOD:=github.com/crossmesh/fabric
 PROJECT_ROOT:=$(shell pwd)
 COVERAGE_DIR:=coverage
@@ -74,8 +73,6 @@ env:
 	@echo "export GOPATH=\"\$${PROJECT_ROOT}/build\""
 	@echo "export PATH=\"\$${PROJECT_ROOT}/bin:\$${PATH}\""
 
-bin:
-	mkdir bin
 
 cloc:
 	cloc . --exclude-dir=build,bin,ci,mocks
@@ -103,22 +100,50 @@ exec:
 	$(CMD)
 
 tarball:
+ifeq ($(BARE_PROJECT),yes)
+	touch ./utt-$(VERSION).tar.gz
+	ln -s "`pwd`" ./utt-$(VERSION)
+	tar -hzvcf ./utt-$(VERSION).tar.gz utt-$(VERSION) \
+	        --exclude='utt-$(VERSION)/utt-$(VERSION).tar.gz' \
+	        --exclude='utt-$(VERSION)/utt-$(VERSION)'
+	rm ./utt-$(VERSION)
+else
 	mkdir -p utt-$(VERSION)
 	echo $(REVISION) > utt-$(VERSION)/REVISION
 	echo $(VERSION) > utt-$(VERSION)/VERSION
 	go list ./... | grep -E '$(GOMOD)' | sed -E 's|$(GOMOD)||g; /^$$/d; s|/(.*)|\1|; s|/.*||g' | sort | uniq \
 		| sed -E 's|(.*)|\1|' | xargs -n 1 -I {} cp -r {} utt-$(VERSION)/{}
 	cp go.mod go.sum main.go README.md utt.yml Dockerfile utt-$(VERSION)/
-	sed -E 's|#\{\{BUILD_EXTRA_OPTS\}\}#|-mod vendor|g' Makefile > utt-$(VERSION)/Makefile
+	cp -rv rpm systemd utt-$(VERSION)/
+	echo 'BARE_PROJECT:=yes' > utt-$(VERSION)/Makefile
+	sed -E 's|#\{\{BUILD_EXTRA_OPTS\}\}#|-mod vendor|g' Makefile >> utt-$(VERSION)/Makefile
 	cd utt-$(VERSION); go mod vendor
 	tar -zvcf ./utt-$(VERSION).tar.gz utt-$(VERSION)
 	rm -rf utt-$(VERSION)
+endif
 
 build/bin: bin build
 	test -d build/bin || ln -s $$(pwd)/bin build/bin
 
 bin/utt: build/bin
 	go build -o bin/utt -v $(GCFLAGS_OPTS) $(LDFLAGS_OPTS) $(ASMFLAGS_OPT) $(BUILD_OPTS) $(GOMOD)
+
+release: $(PROJECT_ROOT)/releases
+	GOOS=linux GOARCH=arm go build -o $(PROJECT_ROOT)/releases/utt-$(VERSION)-linux-arm \
+		-v $(GCFLAGS_OPTS) $(LDFLAGS_OPTS) $(ASMFLAGS_OPT) $(BUILD_OPTS) $(GOMOD)
+	GOOS=linux GOARCH=arm64 go build -o $(PROJECT_ROOT)/releases/utt-$(VERSION)-linux-arm64 \
+		-v $(GCFLAGS_OPTS) $(LDFLAGS_OPTS) $(ASMFLAGS_OPT) $(BUILD_OPTS) $(GOMOD)
+	GOOS=linux GOARCH=386 go build -o $(PROJECT_ROOT)/releases/utt-$(VERSION)-linux-386 \
+		-v $(GCFLAGS_OPTS) $(LDFLAGS_OPTS) $(ASMFLAGS_OPT) $(BUILD_OPTS) $(GOMOD)
+	GOOS=linux GOARCH=amd64 go build -o $(PROJECT_ROOT)/releases/utt-$(VERSION)-linux-amd64 \
+		-v $(GCFLAGS_OPTS) $(LDFLAGS_OPTS) $(ASMFLAGS_OPT) $(BUILD_OPTS) $(GOMOD)
+	GOOS=darwin GOARCH=amd64 go build -o $(PROJECT_ROOT)/releases/utt-$(VERSION)-darwin-amd64 \
+		-v $(GCFLAGS_OPTS) $(LDFLAGS_OPTS) $(ASMFLAGS_OPT) $(BUILD_OPTS) $(GOMOD)
+	GOOS=darwin GOARCH=386 go build -o $(PROJECT_ROOT)/releases/utt-$(VERSION)-darwin-386 \
+		-v $(GCFLAGS_OPTS) $(LDFLAGS_OPTS) $(ASMFLAGS_OPT) $(BUILD_OPTS) $(GOMOD)
+
+$(PROJECT_ROOT)/releases bin:
+	mkdir "$@"
 
 $(GOPATH)/bin/protoc-gen-go: build/bin
 	go get -u github.com/golang/protobuf/protoc-gen-go
