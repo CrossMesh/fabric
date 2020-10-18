@@ -241,15 +241,14 @@ func (n *MetadataNetwork) WatchKeyChanges(watcher KeyChangeWatcher, keys ...stri
 func (n *MetadataNetwork) Close() {
 	n.log.Debug("metanet closing...")
 
-	n.lock.Lock()
-	defer n.lock.Unlock()
-
 	n.gossip.cluster.Quit()
 	n.log.Debug("gossip stopped.")
 
 	// stop backends.
 	n.arbiters.backend.Shutdown()
 	n.arbiters.backend.Join()
+
+	n.lock.Lock()
 
 	for endpoint, backend := range n.backends {
 		backend.Shutdown()
@@ -259,6 +258,8 @@ func (n *MetadataNetwork) Close() {
 	n.Publish.Backends = nil
 
 	close(n.quitChan)
+
+	n.lock.Unlock()
 }
 
 func (n *MetadataNetwork) delayLocalEndpointCreation(epoch uint32, creators ...backend.BackendCreator) {

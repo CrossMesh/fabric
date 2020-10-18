@@ -1,5 +1,14 @@
+control:
+  # RPC network type.
+  type: unix
+  # network endpoint.
+  endpoint: /var/run/utt_control.sock
+
+debug: true
+
 link:
   net1:
+    quitTimeout: 10
     mode: ethernet
     encrypt: true
     iface:
@@ -11,7 +20,23 @@ link:
       type: tcp
       params:
         bind: 0.0.0.0:3880
-        publish: 192.168.0.161:3880
+        publish: 192.168.0.150:3880
+        priority: 1
+        startCode: "123456"
+
+  net3:
+    mode: ethernet
+    encrypt: true
+    iface:
+      name: tap3
+      mac: ea:38:ab:40:00:14
+      address: 10.240.3.3/24
+    backends:
+    - psk: 123456
+      type: tcp
+      params:
+        bind: 0.0.0.0:3881
+        publish: 192.168.0.150:3881
         priority: 1
         startCode: "123456"
 
