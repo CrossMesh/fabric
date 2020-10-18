@@ -2,14 +2,14 @@
 
 Name:              utt
 Epoch:             1
-Version:           ${utt_version}
-Release:           1%{?dist}
+Version:           ${rpm_version}
+Release:           ${rpm_release}
 
 Summary:           Overlay network router, designed for connecting cloud network infrastructure.
 License:           MIT
-URL:               https://github.com/Sunmxt/utt
+URL:               https://github.com/crossmesh/fabric
 
-Source0:           utt-%{version}.tar.gz
+Source0:           utt-%{version}-%{release}.tar.gz
 Source10:          utt.service
 Source11:          utt-vnet@.service
 Source12:          utt.default
@@ -24,7 +24,7 @@ Requires:          iproute
 Overlay network router, designed for connecting cloud network infrastructure.
 
 %prep
-%setup -q -n utt-%{version}
+%setup -q -n utt-%{version}-%{release}
 %{__cp} %{SOURCE10} %{SOURCE11} %{SOURCE12} %{SOURCE20} .
 
 %build

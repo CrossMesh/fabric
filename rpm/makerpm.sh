@@ -25,7 +25,8 @@ check_build_requires() {
 }
 
 generate_rpm_spec() {
-    export utt_version=$VERSION
+    export rpm_version=`echo $VERSION | cut -d- -f1`
+    export rpm_release=`echo $VERSION | cut -d- -f2`
     envsubst <  "$TEMPLATE"
 }
 
