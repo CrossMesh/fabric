@@ -101,7 +101,13 @@ func (c *Welcome) Decode(buf []byte) error {
 		return ErrInvalidPacket
 	}
 	msgLen, identityLength := uint8(buf[1]), uint8(buf[2])
-	c.Welcome = buf[0] > 0
+	if buf[0] == 0 {
+		c.Welcome = false
+	} else if buf[0] == 1 {
+		c.Welcome = true
+	} else {
+		return ErrInvalidPacket
+	}
 	if int(3+msgLen+identityLength) > len(buf) {
 		return ErrInvalidPacket
 	}
