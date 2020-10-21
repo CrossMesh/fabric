@@ -1,13 +1,13 @@
 [Unit]
 Description=Overlay edge router daemon, designed for connecting cloud network infrastructure.
-Documentation=https://github.com/Sunmxt/utt
+Documentation=https://github.com/crossmesh/fabric
 After=network.target
 
 [Service]
 EnvironmentFile=-/etc/default/utt
 User=root
-ExecStart=/usr/bin/utt -c /etc/utt.yml edge $UTT_EDGE_OPTS
-ExecReload=/usr/bin/utt -c /etc/utt.yml edge reload
+ExecStart=/usr/bin/utt -c $CROSSMESH_CONFIG_FILE daemon $CROSSMESH_DAEMON_OPTS
+ExecReload=/usr/bin/utt -c $CROSSMESH_CONFIG_FILE daemon reload
 Restart=on-failure
 
 [Install]

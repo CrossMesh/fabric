@@ -1,54 +1,118 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
-	"os"
+	"io"
+	"net"
+	"reflect"
+	"sync"
+	"time"
 
-	"github.com/crossmesh/fabric/config"
-	"github.com/jinzhu/configor"
+	"github.com/crossmesh/fabric/cmd/pb"
 	log "github.com/sirupsen/logrus"
+	arbit "github.com/sunmxt/arbiter"
 	"github.com/urfave/cli/v2"
+	"google.golang.org/grpc"
 )
 
-// App is UTT application instance.
-type App struct {
-	*cli.App
+var (
+	resultInvalidRequest = &pb.Result{Type: pb.Result_failed, Message: "invalid request"}
+	resultOK             = &pb.Result{Type: pb.Result_succeeded, Message: "ok"}
+
+	ErrInvalidDaemonCommand = errors.New("invalid daemon command")
+)
+
+func cmdError(format string, args ...interface{}) error {
+	err := fmt.Errorf(format, args...)
+	return err
+}
+
+type delegationApplication interface {
+	AppName() string
+}
+
+type localCommandProvider interface {
+	LocalCommands() []*cli.Command
+}
+
+type daemonApplication interface {
+	delegationApplication
+
+	Launch(arbiter *arbit.Arbiter, log *log.Entry, ctx *cli.Context) error
+}
+
+type commandAccepter interface {
+	delegationApplication
+
+	ExecuteCommand(out, err io.Writer, args []string) error
+	WantCommands() []*cli.Command
+}
+
+//type commandCompleter interface {
+//	CompleteCommand(string) []string
+//}
+
+type staticConfigurationAccpeter interface {
+	ReloadStaticConfig(path string)
+}
+
+// ControlRPC contains configuration of control port.
+type controlRPCConfig struct {
+	Type     string `json:"type" yaml:"type" default:"unix"`
+	Endpoint string `json:"endpoint" yaml:"endpoint" default:"/var/run/utt_control.sock"`
+}
+
+type daemonConfig struct {
+	Control *controlRPCConfig `json:"control" yaml:"control" default:"{}"`
+	Debug   *bool             `json:"debug" yaml:"debug"`
+}
+
+func (c *controlRPCConfig) Equal(x *controlRPCConfig) bool { return reflect.DeepEqual(c, x) }
+
+// CrossmeshApplication implements crossmesh application frame.
+type CrossmeshApplication struct {
+	lock sync.RWMutex
+
+	rawArgs []string
+
+	cli *cli.App
+	log *log.Entry
+
+	arbiters struct {
+		main    *arbit.Arbiter
+		control *arbit.Arbiter
+		apps    *arbit.Arbiter
+	}
+
+	apps []delegationApplication
+
+	daemonCmd *cli.Command
+	edgeCmd   *cli.Command // deprecated 'edge' command.
 
 	ConfigFile string
-	cfg        *config.Daemon
+	config     *daemonConfig
+
+	// control RPC.
+	control struct {
+		config    *controlRPCConfig
+		listener  net.Listener
+		rpcServer *grpc.Server
+	}
+	pb.UnimplementedDaemonControlServer // make gRPC happy.
 
 	Retry int
 }
 
-func (a *App) loadConfig() (err error) {
-	if a.ConfigFile == "" {
-		a.ConfigFile = "/etc/utt.yml"
+// NewApp create crossmesh application instance.
+func NewApp() (a *CrossmeshApplication) {
+	a = &CrossmeshApplication{
+		log: log.NewEntry(log.StandardLogger()),
 	}
-	// config file is a must.
-	if fileInfo, err := os.Stat(a.ConfigFile); err != nil || !fileInfo.Mode().IsRegular() {
-		return cmdError("invalid configuration file: %v", err)
-	}
-	if err = configor.New(&configor.Config{
-		Debug: false,
-	}).Load(a.cfg, a.ConfigFile); err != nil {
-		return cmdError("failed to load configuration: %v", err)
-	}
-	return nil
-}
 
-// NewApp create UTT application instance.
-func NewApp() (a *App) {
-	a = &App{
-		cfg: &config.Daemon{},
-	}
-	a.App = &cli.App{
-		Name:  "utt",
-		Usage: "Overlay network router, designed for connecting cloud network infrastructure",
-		Commands: []*cli.Command{
-			newEdgeCmd(a),
-			newNetworkCmd(a),
-			newVersionCmd(a),
-		},
+	// shim app. only for flags early parsing.
+	a.cli = &cli.App{
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:        "config",
@@ -58,12 +122,55 @@ func NewApp() (a *App) {
 				DefaultText: "/etc/utt.yml",
 			},
 		},
+		HideHelp: true,
+		Action:   a.cliRunShimAction,
+	}
+	for _, app := range getDelegationApplications(a, a.log) {
+		if app == nil {
+			continue
+		}
+		a.apps = append(a.apps, app)
+	}
+
+	return
+}
+
+// Run runs application.
+func (a *CrossmeshApplication) Run(args []string) error {
+	// inject raw args to context. so the command action could inspect related raw arguments.
+	ctx := context.WithValue(context.Background(), runContextRawArgsKey, &crossmeshApplicationRunContext{
+		app:  a,
+		args: args,
+	})
+	return a.cli.RunContext(ctx, args)
+}
+
+func createControlClient(cfg *controlRPCConfig) (conn *grpc.ClientConn, err error) {
+	if cfg == nil {
+		return nil, cmdError("empty control RPC configuration. cannot connect to daemon.")
+	}
+	if conn, err = grpc.Dial(cfg.Endpoint, grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
+		return net.DialTimeout(cfg.Type, addr, timeout)
+	}), grpc.WithInsecure()); err != nil {
+		log.Error("connect to control RPC failure: ", err)
+		return nil, err
 	}
 	return
 }
 
-func cmdError(format string, args ...interface{}) error {
-	err := fmt.Errorf(format, args...)
-	log.Error(err)
-	return err
+// GetControlRPCClient creates RPC DaemonControlClient.
+func (a *CrossmeshApplication) GetControlRPCClient() (conn *grpc.ClientConn, client pb.DaemonControlClient, err error) {
+	a.lock.Lock()
+	cfg := a.getStaticDaemonConfig(true)
+	a.lock.Unlock()
+
+	if cfg == nil {
+		return nil, nil, errors.New("cannot load configration")
+	}
+
+	if conn, err = createControlClient(cfg.Control); err != nil {
+		return conn, client, err
+	}
+
+	return conn, pb.NewDaemonControlClient(conn), nil
 }

@@ -1,25 +1,46 @@
 package control
 
 import (
-	"net"
-
+	"github.com/crossmesh/fabric/common"
 	"github.com/crossmesh/fabric/config"
-	"github.com/crossmesh/fabric/control/rpc/pb"
 	"github.com/jinzhu/configor"
 	logging "github.com/sirupsen/logrus"
 	arbit "github.com/sunmxt/arbiter"
-	"google.golang.org/grpc"
 )
+
+type coreDaemonConfig struct {
+	Net   map[string]*config.Network `json:"link" yaml:"link"`
+	Debug *bool                      `json:"debug" yaml:"debug"`
+}
+
+func (c *coreDaemonConfig) Equal(x *coreDaemonConfig) (e bool) {
+	if len(c.Net) != len(x.Net) {
+		return false
+	}
+	for name, net := range c.Net {
+		xnet, has := x.Net[name]
+		if !has {
+			return false
+		}
+		if e = net.Equal(xnet); !e {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *coreDaemonConfig) DebugEnabled() bool {
+	if c.Debug == nil {
+		return false
+	}
+	return *c.Debug
+}
 
 type NetworkManager struct {
 	router map[string]*Network
 
 	log     *logging.Entry
 	arbiter *arbit.Arbiter
-
-	controlConfig    config.ControlRPC
-	controlListener  net.Listener
-	controlRPCServer *grpc.Server
 }
 
 func NewNetworkManager(arbiter *arbit.Arbiter, log *logging.Entry) (m *NetworkManager) {
@@ -34,77 +55,20 @@ func NewNetworkManager(arbiter *arbit.Arbiter, log *logging.Entry) (m *NetworkMa
 	return
 }
 
-func (n *NetworkManager) ApplyControlRPCConfig(cfg *config.ControlRPC) (err error) {
-	// update rpc control here.
-	if !n.controlConfig.Equal(cfg) {
-		if n.controlListener != nil {
-			if err = n.controlListener.Close(); err != nil {
-				n.log.Error("close control RPC failure: ", err)
-				return err
-			} else {
-				n.log.Info("control RPC closed.")
-				n.controlListener = nil
-			}
-		}
-
-		if n.controlListener == nil && cfg != nil {
-			if n.controlListener, err = net.Listen(cfg.Type, cfg.Endpoint); err != nil {
-				n.log.Error("control RPC listen failure: ", err)
-				n.controlListener = nil
-			} else {
-				n.log.Infof("control RPC listening to %v:%v.", cfg.Type, cfg.Endpoint)
-				n.controlConfig = *cfg
-			}
-		}
-
-		// start grpc server.
-		if n.controlListener != nil {
-			rpcServer := &controlRPCServer{
-				NetworkManager: n,
-				log:            n.log.WithField("type", "control_rpc"),
-			}
-			n.controlRPCServer = grpc.NewServer()
-			pb.RegisterNetworkManagmentService(n.controlRPCServer, rpcServer.Svc())
-			n.arbiter.Go(func() {
-				if err := n.controlRPCServer.Serve(n.controlListener); err != nil {
-					n.log.Error("grpc.Server.Serve() failure: ", err)
-				}
-			})
-			// clean up on exit.
-			n.arbiter.Go(func() {
-				<-n.arbiter.Exit()
-				listener, rpcServer := n.controlListener, n.controlRPCServer
-				if rpcServer != nil {
-					rpcServer.Stop()
-				}
-				if listener != nil {
-					listener.Close()
-				}
-			})
-		}
-	}
-
-	return
-}
-
-func (n *NetworkManager) UpdateConfigFromFile(path string) (errs []error) {
-	cfg := &config.Daemon{}
+func (n *NetworkManager) UpdateConfigFromFile(path string) (errs common.Errors) {
+	cfg := &coreDaemonConfig{}
 
 	if err := configor.Load(cfg, path); err != nil {
 		n.log.Error("failed to load configuration file: ", err)
-		return []error{err}
+		return common.Errors{err}
 	}
 
 	return n.UpdateConfig(cfg)
 }
 
-func (n *NetworkManager) UpdateConfig(cfg *config.Daemon) (errs []error) {
+func (n *NetworkManager) UpdateConfig(cfg *coreDaemonConfig) (errs common.Errors) {
 	if cfg == nil {
 		return nil
-	}
-
-	if err := n.ApplyControlRPCConfig(cfg.Control); err != nil {
-		errs = append(errs, err)
 	}
 
 	if cfg.DebugEnabled() {
@@ -133,7 +97,7 @@ func (n *NetworkManager) UpdateConfig(cfg *config.Daemon) (errs []error) {
 		// update
 		if err := net.Reload(netCfg); err != nil {
 			n.log.Error("reload network \"%v\" failure: ", err)
-			errs = append(errs, err)
+			errs.Trace(errs)
 		}
 		delete(networks, name)
 	}
@@ -142,7 +106,7 @@ func (n *NetworkManager) UpdateConfig(cfg *config.Daemon) (errs []error) {
 		net := newNetwork(n)
 		if err := net.Reload(netCfg); err != nil {
 			n.log.Error("start network \"%v\" failure: ", err)
-			errs = append(errs, err)
+			errs.Trace(errs)
 			continue
 		}
 		n.router[name] = net

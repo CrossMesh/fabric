@@ -11,8 +11,12 @@ type versionPrinter struct{}
 
 func (p versionPrinter) Println(args ...interface{}) { fmt.Println(args...) }
 
-func newVersionCmd(app *App) *cli.Command {
-	cmd := &cli.Command{
+type versionPrintApp struct{}
+
+func (a *versionPrintApp) AppName() string { return "version" }
+
+func (a *versionPrintApp) LocalCommands() []*cli.Command {
+	versionCmd := &cli.Command{
 		Name:  "version",
 		Usage: "print version info.",
 		Action: func(ctx *cli.Context) (err error) {
@@ -20,6 +24,5 @@ func newVersionCmd(app *App) *cli.Command {
 			return nil
 		},
 	}
-
-	return cmd
+	return []*cli.Command{versionCmd}
 }

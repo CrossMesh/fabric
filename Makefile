@@ -75,7 +75,7 @@ env:
 
 
 cloc:
-	cloc . --exclude-dir=build,bin,ci,mocks
+	cloc . --exclude-dir=build,bin,ci,mocks --exclude-ext=pb.go
 
 mock: $(GOPATH)/bin/mockery
 
@@ -89,8 +89,8 @@ srpm:
 
 proto: $(GOPATH)/bin/protoc-gen-go $(GOPATH)/bin/protoc-gen-go-grpc
 	protoc -I=$(PROJECT_ROOT) --go_out=module=$(GOMOD):. proto/pb/core.proto
-	protoc -I=$(PROJECT_ROOT) --go_out=. --go-grpc_out=. --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative control/rpc/pb/core.proto
-	find -E . -name '*.pb.go' -type f -not -path './build/*' | xargs sed -i '' "s|\"proto/pb\"|\"$(GOMOD)/proto/pb\"|g; s|\"control/rpc/pb\"|\"$(GOMOD)/control/rpc/pb\"|g"
+	protoc -I=$(PROJECT_ROOT) --go_out=. --go-grpc_out=. --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative cmd/pb/core.proto
+	find -E . -name '*.pb.go' -type f -not -path './build/*' | xargs sed -i '' "s|\"proto/pb\"|\"$(GOMOD)/proto/pb\"|g;"
 
 docker: bin/utt
 	docker build -t utt:$(VERSION) -f ./Dockerfile .

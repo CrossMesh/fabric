@@ -1,6 +1,6 @@
 [Unit]
 Description=Virtual network %I over overlay edge router UTT.
-Documentation=https://github.com/Sunmxt/utt
+Documentation=https://github.com/crossmesh/fabric
 After=network.target utt.service
 Requires=utt.service
 
@@ -8,8 +8,8 @@ Requires=utt.service
 EnvironmentFile=-/etc/default/utt
 User=root
 Type=oneshot
-ExecStart=/usr/bin/utt -c /etc/utt.yml net set --retry -1 %i up
-ExecStop=/usr/bin/utt -c /etc/utt.yml net set --retry 10 %i down
+ExecStart=/usr/bin/utt -c $CROSSMESH_CONFIG_FILE net set --retry -1 %i up
+ExecStop=/usr/bin/utt -c $CROSSMESH_CONFIG_FILE net set --retry 10 %i down
 RemainAfterExit=yes
 
 [Install]

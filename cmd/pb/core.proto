@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package pb;
+
+option go_package = "github.com/crossmesh/fabric/cmd/pb";
+
+message ReloadRequest {
+    string config_file_path = 1;
+}
+
+message Result {
+    enum Type {
+        succeeded = 0;
+        failed = 1;
+    }
+    Type type = 1;
+    string message = 2;
+}
+
+message CommandExecuteRequest {
+    uint32 id = 1;
+    repeated string args = 2;
+}
+
+message CommandExecuteResult {
+    enum Type {
+        succeeded = 0;
+        failed = 1;
+        stdout = 2;
+        stderr = 3;
+    }
+
+    uint32 id = 1;
+    Type type = 2;
+    string payload = 3;
+}
+
+message DaemonCommandListRequest {}
+
+message DaemonCommand {
+    repeated string name = 1;
+    string usage = 2;
+    repeated string aliases = 3;
+    string category = 4;
+}
+
+service DaemonControl {
+    rpc ReloadConfig(ReloadRequest) returns(Result) {}
+    rpc ExecuteCommand(stream CommandExecuteRequest) returns(stream CommandExecuteResult) {}
+    rpc GetDaemonCommands(DaemonCommandListRequest) returns(stream DaemonCommand) {}
+}
