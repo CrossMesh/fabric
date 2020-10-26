@@ -1,6 +1,9 @@
 package gossip
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -75,7 +78,16 @@ const (
 
 // OverlayNetworkV1 contains joined overlay networks of peer.
 type OverlayNetworkV1 struct {
-	Params string `json:"p,omitempty"`
+	Params map[string][]byte
+}
+
+// Clone makes deep copy.
+func (v1 *OverlayNetworkV1) Clone() *OverlayNetworkV1 {
+	new := &OverlayNetworkV1{}
+	for k, d := range v1.Params {
+		new.Params[k] = d
+	}
+	return new
 }
 
 // Equal checks whether fields in two OverlayNetworkV1 are equal.
@@ -86,19 +98,105 @@ func (v1 *OverlayNetworkV1) Equal(x *OverlayNetworkV1) bool {
 	if v1 == nil || x == nil {
 		return false
 	}
-	return v1.Params == x.Params
+	if len(v1.Params) != len(x.Params) {
+		return false
+	}
+	for k, d := range v1.Params {
+		rd, has := x.Params[k]
+		if !has {
+			return false
+		}
+		if bytes.Compare(rd, d) != 0 {
+			return false
+		}
+	}
+	return true
 }
 
-// OverlayNetworkParamValidator implements network parameter data model for specific OverlayDriverType
-type OverlayNetworkParamValidator interface {
-	Sync(local *string, remote string, isConcurrent bool) (bool, error)
-	Validate(string) bool
-	Txn(string) (sladder.KVTransaction, error)
+// Encode marshals OverlayNetworkV1.
+func (v1 *OverlayNetworkV1) Encode() (bin []byte, err error) {
+	numOfOptions := len(v1.Params)
+	if numOfOptions > 0xFF {
+		return nil, errors.New("too many options")
+	}
+	bin = append(bin, uint8(numOfOptions))
+	numOfEncoded := 0
+	for k, d := range v1.Params {
+		numOfEncoded++
+		length := len(k)
+		if length > 0xFF {
+			return nil, fmt.Errorf("key \"%v\" is too long", k)
+		}
+		bin = append(bin, uint8(length))
+		if length = len(d); length > 0x7FFFFFFF {
+			return nil, fmt.Errorf("value with key \"%v\" is of length %v and cannot be encoded", k, length)
+		}
+		bin = append(bin, []byte(k)...)
+		if length < 0x7F {
+			bin = append(bin, uint8(length))
+		} else { // extended
+			encoded := (uint32(length) & 0xFFFFFF80) << 1
+			encoded |= (uint32(length) & 0x7F) | 0x80
+			bin = append(bin, 0x00, 0x00, 0x00, 0x00)
+			binary.LittleEndian.PutUint32(bin[len(bin)-4:], encoded)
+		}
+		bin = append(bin, d...)
+	}
+	if numOfEncoded != numOfOptions {
+		return nil, errors.New("data race in OverlayNetworkV1 Encode()")
+	}
+	return bin, nil
+}
+
+// Decode unmarshals OverlayNetworkV1.
+func (v1 *OverlayNetworkV1) Decode(bin []byte) error {
+	new := make(map[string][]byte)
+	if len(bin) < 1 {
+		v1.Params = new
+		return nil
+	}
+	numOfOptions := bin[0]
+	bin = bin[1:]
+	for ; numOfOptions > 0; numOfOptions-- {
+		if len(bin) < 1 {
+			return ErrBrokenStream
+		}
+		// key
+		length := uint32(bin[0])
+		bin = bin[1:]
+		if len(bin) < int(length) {
+			return ErrBrokenStream
+		}
+		key := string(bin[:length])
+		bin = bin[length:]
+		// data
+		length = uint32(bin[0])
+		if length&0x80 != 0 { // extended length.
+			raw := binary.LittleEndian.Uint32(bin[0:4])
+			length = 0
+			length |= raw & 0x7F
+			length |= (raw & 0xFFFFFF) >> 1
+			bin = bin[4:]
+		} else {
+			bin = bin[1:]
+		}
+		if len(bin) < int(length) {
+			return ErrBrokenStream
+		}
+		d := bin[:length]
+		bin = bin[length:]
+		new[key] = d
+	}
+
+	v1.Params = new
+
+	// consumed length is not exported. export it later in need.
+	return nil
 }
 
 type packOverlayNetworkV1 struct {
-	OverlayNetworkV1
 	NetworkID
+	Params string `json:"p"`
 }
 
 // OverlayNetworksV1 contains joined overlay networks of peer.
@@ -119,9 +217,7 @@ func (v1 *OverlayNetworksV1) Clone() (new *OverlayNetworksV1) {
 	if v1.Networks != nil {
 		new.Networks = map[NetworkID]*OverlayNetworkV1{}
 		for netID, cfg := range v1.Networks {
-			o := &OverlayNetworkV1{}
-			new.Networks[netID] = o
-			*o = *cfg
+			new.Networks[netID] = cfg.Clone()
 		}
 	}
 	return
@@ -161,10 +257,13 @@ func (v1 *OverlayNetworksV1) EncodeToString() (string, error) {
 	pack := packOverlayNetworksV1{Version: VersionOverlayNetworksV1}
 	pack.Networks = make([]packOverlayNetworkV1, 0, len(v1.Networks))
 	for netID, cfg := range v1.Networks {
+		raw, err := cfg.Encode()
+		if err != nil {
+			return "", err
+		}
+		params := base64.StdEncoding.EncodeToString(raw)
 		pack.Networks = append(pack.Networks, packOverlayNetworkV1{
-			OverlayNetworkV1: OverlayNetworkV1{
-				Params: cfg.Params,
-			},
+			Params:    params,
 			NetworkID: netID,
 		})
 	}
@@ -189,9 +288,15 @@ func (v1 *OverlayNetworksV1) DecodeString(s string) (err error) {
 		if _, dup := netMap[net.NetworkID]; dup {
 			return fmt.Errorf("OverlayNetworksV1 has broken integrity. Duplicated network ID %v found", net.NetworkID)
 		}
+		raw, err := base64.StdEncoding.DecodeString(net.Params)
+		if err != nil {
+			return err
+		}
 		o := &OverlayNetworkV1{}
 		netMap[net.NetworkID] = o
-		*o = net.OverlayNetworkV1
+		if err = o.Decode(raw); err != nil {
+			return err
+		}
 	}
 	v1.Version = pack.Version
 	v1.Networks = netMap
@@ -216,43 +321,7 @@ func (v1 *OverlayNetworksV1) DecodeStringAndValidate(s string) error {
 
 // OverlayNetworksValidatorV1 implements OverlayNetworksV1 model.
 type OverlayNetworksValidatorV1 struct {
-	lock            sync.RWMutex
-	paramValidators map[OverlayDriverType]OverlayNetworkParamValidator
-}
-
-// RegisterDriverType registers valid driver type.
-func (v1 *OverlayNetworksValidatorV1) RegisterDriverType(driverType OverlayDriverType,
-	validator OverlayNetworkParamValidator) (old OverlayNetworkParamValidator) {
-	v1.lock.Lock()
-	defer v1.lock.Unlock()
-
-	if v1.paramValidators == nil {
-		if validator == nil {
-			return nil
-		}
-		v1.paramValidators = make(map[OverlayDriverType]OverlayNetworkParamValidator)
-	}
-
-	old, _ = v1.paramValidators[driverType]
-	if validator == nil {
-		delete(v1.paramValidators, driverType)
-	} else {
-		v1.paramValidators[driverType] = validator
-	}
-
-	return
-}
-
-// GetDriverValidator gets validator of given driver type.
-func (v1 *OverlayNetworksValidatorV1) GetDriverValidator(driverType OverlayDriverType) (validator OverlayNetworkParamValidator) {
-	v1.lock.RLock()
-	defer v1.lock.RUnlock()
-
-	if v1.paramValidators == nil {
-		return nil
-	}
-	validator, _ = v1.paramValidators[driverType]
-	return
+	lock sync.RWMutex
 }
 
 // Sync merges state of OverlayNetworksV1 to local.
@@ -264,45 +333,48 @@ func (v1 *OverlayNetworksValidatorV1) sync(local, remote *sladder.KeyValue, isCo
 	if remote == nil { // Deletion.
 		return true, nil
 	}
+	if !isConcurrent {
+		// just copy.
+		local.Value = remote.Value
+		return true, nil
+	}
+
 	lv, rv := OverlayNetworksV1{}, OverlayNetworksV1{}
 	if changed, err = v1.presync(local, remote, &lv, &rv); changed || err != nil {
 		return
 	}
 
+	// Our network model assumes peer only modifies params of itself.
+	// This ensures that no concurrent case will appear, but we deal with concurrent cases for safety.
+	// Concurrent merging is implemented below.
+
 	changed = false
 
-	newNetMap := make(map[NetworkID]*OverlayNetworkV1)
-	if isConcurrent {
-		// merge.
-		for netID, net := range lv.Networks {
-			newNetMap[netID] = &OverlayNetworkV1{
-				Params: net.Params,
-			}
-		}
-	}
 	for netID, net := range rv.Networks { // update.
-		validator := v1.GetDriverValidator(netID.DriverType)
-		if validator == nil {
-			return false, &ParamValidatorMissingError{want: netID.DriverType}
+		origin, exists := lv.Networks[netID]
+		if !exists {
+			lv.Networks[netID] = net
+			changed = true
+			continue
 		}
 
-		oldCfg, hasOld := lv.Networks[netID]
-		localString := ""
-		if hasOld {
-			// existing.
-			newNetMap[netID] = oldCfg
-			localString = oldCfg.Params
-		}
-		if cfgChanged, ierr := validator.Sync(&localString, net.Params, isConcurrent); ierr != nil {
-			return false, ierr
-		} else if cfgChanged || !hasOld {
-			newNetMap[netID] = &OverlayNetworkV1{
-				Params: localString,
+		if len(origin.Params) < 1 {
+			origin.Params = net.Params
+			if len(origin.Params) > 0 {
+				changed = true
 			}
-			changed = true
+			continue
+		}
+
+		for k, d := range net.Params {
+			od, exists := origin.Params[k]
+			if !exists || bytes.Compare(d, od) > 0 {
+				// only for achieving totally ordering.
+				origin.Params[k] = d
+				changed = true
+			}
 		}
 	}
-	lv.Networks = newNetMap
 	{
 		new, err := lv.EncodeToString()
 		if err != nil {
@@ -339,15 +411,6 @@ func (v1 *OverlayNetworksValidatorV1) Validate(kv sladder.KeyValue) bool {
 	if on1.DecodeString(kv.Value) != nil {
 		return false
 	}
-	for netID, net := range on1.Networks {
-		validator := v1.GetDriverValidator(netID.DriverType)
-		if validator == nil {
-			return false
-		}
-		if !validator.Validate(net.Params) {
-			return false
-		}
-	}
 	return true
 }
 
@@ -365,9 +428,8 @@ func (v1 *OverlayNetworksValidatorV1) SyncEx(local, remote *sladder.KeyValue,
 type OverlayNetworksV1Txn struct {
 	validator *OverlayNetworksValidatorV1
 
-	oldRaw    string
-	old, cur  *OverlayNetworksV1
-	paramTxns map[NetworkID]sladder.KVTransaction
+	oldRaw   string
+	old, cur *OverlayNetworksV1
 }
 
 // CloneCurrent makes deepcopy of current OverlayNetworksV1 structure.
@@ -378,7 +440,6 @@ func (v1 *OverlayNetworksValidatorV1) Txn(kv sladder.KeyValue) (sladder.KVTransa
 	txn := &OverlayNetworksV1Txn{
 		oldRaw:    kv.Value,
 		validator: v1,
-		paramTxns: make(map[NetworkID]sladder.KVTransaction),
 	}
 	if err := txn.SetRawValue(kv.Value); err != nil {
 		return nil, err
@@ -400,15 +461,6 @@ func (t *OverlayNetworksV1Txn) SetRawValue(x string) error {
 		return err
 	}
 	t.cur = new
-	for netID, txn := range t.paramTxns { // update txns.
-		packParam := ""
-		cfg, hasCfg := t.cur.Networks[netID]
-		if hasCfg && cfg != nil {
-			packParam = cfg.Params
-		}
-		txn.SetRawValue(packParam)
-	}
-
 	return nil
 }
 
@@ -418,13 +470,6 @@ func (t *OverlayNetworksV1Txn) Before() string { return t.oldRaw }
 // After return current raw value.
 func (t *OverlayNetworksV1Txn) After() string {
 	cur := t.cur.Clone()
-	for netID, cfg := range cur.Networks {
-		txn, hasTxn := t.paramTxns[netID]
-		if !hasTxn {
-			continue
-		}
-		cfg.Params = txn.After()
-	}
 	s, err := cur.EncodeToString()
 	if err != nil {
 		panic(err) // should not happen.
@@ -435,25 +480,9 @@ func (t *OverlayNetworksV1Txn) After() string {
 // Updated checks whether value is updated.
 func (t *OverlayNetworksV1Txn) Updated() bool {
 	if t.old == t.cur {
-		return t.hasParamsUpdated()
+		return false
 	}
-	if !t.old.Equal(t.cur) {
-		return true
-	}
-	return t.hasParamsUpdated()
-}
-
-func (t *OverlayNetworksV1Txn) hasParamsUpdated() bool {
-	for netID := range t.cur.Networks {
-		txn, hasTxn := t.paramTxns[netID]
-		if !hasTxn {
-			continue
-		}
-		if txn.Updated() {
-			return true
-		}
-	}
-	return false
+	return !t.old.Equal(t.cur)
 }
 
 // Version returns current value of version field in OverlayNetworksV1.
@@ -483,12 +512,6 @@ func (t *OverlayNetworksV1Txn) AddNetwork(ids ...NetworkID) (err error) {
 		}
 		new := &OverlayNetworkV1{}
 		t.cur.Networks[netID] = new
-
-		if rtx, hasTransaction := t.paramTxns[netID]; hasTransaction {
-			if err = rtx.SetRawValue(new.Params); err != nil {
-				return
-			}
-		}
 	}
 	return nil
 }
@@ -505,26 +528,4 @@ func (t *OverlayNetworksV1Txn) NetworkList() (ids []NetworkID) {
 func (t *OverlayNetworksV1Txn) NetworkFromID(id NetworkID) *OverlayNetworkV1 {
 	v1, _ := t.cur.Networks[id]
 	return v1
-}
-
-// ParamsTxn creates get KVTransaction for network params.
-func (t *OverlayNetworksV1Txn) ParamsTxn(id NetworkID) (sladder.KVTransaction, error) {
-	cfg, hasNetwork := t.cur.Networks[id]
-	if !hasNetwork {
-		return nil, &NetworkNotFoundError{want: id}
-	}
-	rtx, hasTransaction := t.paramTxns[id]
-	if hasTransaction {
-		return rtx, nil
-	}
-	cfgValidator := t.validator.GetDriverValidator(id.DriverType)
-	if cfgValidator == nil {
-		return nil, &ParamValidatorMissingError{want: id.DriverType}
-	}
-	rtx, err := cfgValidator.Txn(cfg.Params)
-	if err != nil {
-		return nil, err
-	}
-	t.paramTxns[id] = rtx
-	return rtx, nil
 }
