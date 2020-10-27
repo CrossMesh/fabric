@@ -99,7 +99,8 @@ type MetaPeer struct {
 	customKeyMap map[string]interface{}
 	intervalSubs map[*MetaPeerStateWatcher]struct{}
 
-	Endpoints []*MetaPeerEndpoint // (COW. lock-free read)
+	Endpoints         []*MetaPeerEndpoint // (COW. lock-free read)
+	UnderlayNetworkID uint32
 
 	localEpoch     uint32
 	linkPaths      []*linkPath // (COW)

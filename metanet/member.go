@@ -402,34 +402,45 @@ func (n *MetadataNetwork) delayPublishEndpoint(epoch uint32, delay bool) {
 
 		var newEndpoints []*gossipUtils.NetworkEndpointV1
 
-		localPublish := make([]*MetaPeerEndpoint, 0, len(n.backends))
+		localPublish := make([]*MetaPeerEndpoint, 0, len(n.backendManagers))
 		newBackends := map[backend.Endpoint]backend.Backend{}
 
-		for endpoint, backend := range n.backends {
-			oldPublish, hasOldPublish := oldEndpoints[endpoint]
-			if hasOldPublish && oldPublish != nil {
-				localPublish = append(localPublish, &MetaPeerEndpoint{
-					Endpoint: endpoint,
-					Priority: backend.Priority(),
-					Disabled: oldPublish.Disabled,
-				})
-				if oldPublish.Disabled {
-					continue // do not gossip disabled endpoint.
+		for ty, mgr := range n.backendManagers {
+			for _, ep := range mgr.ListActiveEndpoints() {
+				endpoint := backend.Endpoint{
+					Type: ty, Endpoint: ep,
 				}
-			} else {
-				localPublish = append(localPublish, &MetaPeerEndpoint{
-					Endpoint: endpoint,
-					Priority: backend.Priority(),
-					Disabled: false,
-				})
-			}
+				backend := mgr.GetBackend(ep)
+				if backend == nil {
+					n.log.Warn("[BUG!] got nil active backend.")
+					continue
+				}
 
-			newEndpoints = append(newEndpoints, &gossipUtils.NetworkEndpointV1{
-				Type:     endpoint.Type,
-				Endpoint: endpoint.Endpoint,
-				Priority: backend.Priority(),
-			})
-			newBackends[endpoint] = backend
+				oldPublish, hasOldPublish := oldEndpoints[endpoint]
+				if hasOldPublish && oldPublish != nil {
+					localPublish = append(localPublish, &MetaPeerEndpoint{
+						Endpoint: endpoint,
+						Priority: backend.Priority(),
+						Disabled: oldPublish.Disabled,
+					})
+					if oldPublish.Disabled {
+						continue // do not gossip disabled endpoint.
+					}
+				} else {
+					localPublish = append(localPublish, &MetaPeerEndpoint{
+						Endpoint: endpoint,
+						Priority: backend.Priority(),
+						Disabled: false,
+					})
+				}
+
+				newEndpoints = append(newEndpoints, &gossipUtils.NetworkEndpointV1{
+					Type:     endpoint.Type,
+					Endpoint: endpoint.Endpoint,
+					Priority: backend.Priority(),
+				})
+				newBackends[endpoint] = backend
+			}
 		}
 
 		var errs common.Errors

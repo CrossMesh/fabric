@@ -1,6 +1,10 @@
 package metanet
 
 import (
+	"encoding/json"
+	"errors"
+	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -65,6 +69,8 @@ type MetadataNetwork struct {
 
 	lock sync.RWMutex
 
+	store Store
+
 	// goroutine arbiting.
 	arbiters struct {
 		main    *arbit.Arbiter
@@ -92,8 +98,9 @@ type MetadataNetwork struct {
 	versionInfoKey string
 
 	// manage backends.
-	backends map[backend.Endpoint]backend.Backend
-	epoch    uint32
+	backendManagers map[backend.Type]BackendManager
+	//backends        map[backend.Endpoint]backend.Backend
+	epoch uint32
 
 	// copy-on-write network map publication.
 	Publish struct {
@@ -117,10 +124,14 @@ type MetadataNetwork struct {
 }
 
 // NewMetadataNetwork creates a metadata network.
-func NewMetadataNetwork(arbiter *arbit.Arbiter, log *logging.Entry) (n *MetadataNetwork, err error) {
+func NewMetadataNetwork(arbiter *arbit.Arbiter, log *logging.Entry, store Store) (n *MetadataNetwork, err error) {
+	if store == nil {
+		return nil, errors.New("nil store")
+	}
 	n = &MetadataNetwork{
-		peers:             make(map[*sladder.Node]*MetaPeer),
-		backends:          make(map[backend.Endpoint]backend.Backend),
+		peers: make(map[*sladder.Node]*MetaPeer),
+		//backends:          make(map[backend.Endpoint]backend.Backend),
+		backendManagers:   make(map[backend.Type]BackendManager),
 		quitChan:          make(chan struct{}),
 		nameConflictNodes: map[*MetaPeer]struct{}{},
 
@@ -130,8 +141,20 @@ func NewMetadataNetwork(arbiter *arbit.Arbiter, log *logging.Entry) (n *Metadata
 		recentSuccesses: make(map[linkPathKey]*lastProbingContext),
 	}
 
+	n.lock.Lock()
+	defer n.lock.Unlock()
+
 	n.arbiters.main = arbit.NewWithParent(arbiter)
 	n.arbiters.backend = arbit.NewWithParent(nil)
+
+	defer func() {
+		if err != nil {
+			n.arbiters.main.Shutdown()
+			n.arbiters.backend.Shutdown()
+			n.arbiters.main.Join()
+			n.arbiters.backend.Join()
+		}
+	}()
 
 	if log == nil {
 		n.log = logging.WithField("module", "metadata_network")
@@ -144,6 +167,10 @@ func NewMetadataNetwork(arbiter *arbit.Arbiter, log *logging.Entry) (n *Metadata
 	if err = n.initializeVersionInfo(); err != nil {
 		return nil, err
 	}
+	if err = n.populateStore(store); err != nil {
+		return nil, err
+	}
+
 	n.arbiters.main.Go(func() {
 		select {
 		case <-n.arbiters.main.Exit():
@@ -155,6 +182,20 @@ func NewMetadataNetwork(arbiter *arbit.Arbiter, log *logging.Entry) (n *Metadata
 	n.initializeEndpointHealthCheck()
 
 	return n, nil
+}
+
+func (n *MetadataNetwork) populateStore(store Store) error {
+	if n.store != nil {
+		return errors.New("switching store in run time is not supported yet")
+	}
+
+	n.store = store
+
+	// activate endpoints.
+	n.epoch++
+	n.delayReactivateEndpoints(n.epoch, 0)
+
+	return nil
 }
 
 // SetRegion sets region of self.
@@ -250,11 +291,6 @@ func (n *MetadataNetwork) Close() {
 
 	n.lock.Lock()
 
-	for endpoint, backend := range n.backends {
-		backend.Shutdown()
-		n.log.Infof("endpoint %v stopped.", endpoint)
-		delete(n.backends, endpoint)
-	}
 	n.Publish.Backends = nil
 
 	close(n.quitChan)
@@ -262,12 +298,14 @@ func (n *MetadataNetwork) Close() {
 	n.lock.Unlock()
 }
 
-func (n *MetadataNetwork) delayLocalEndpointCreation(epoch uint32, creators ...backend.BackendCreator) {
+func (n *MetadataNetwork) delayReactivateEndpoints(epoch uint32, d time.Duration) {
 	n.arbiters.main.Go(func() {
-		select {
-		case <-time.After(time.Second * 5):
-		case <-n.arbiters.main.Exit():
-			return
+		if d > 0 {
+			select {
+			case <-time.After(d):
+			case <-n.arbiters.main.Exit():
+				return
+			}
 		}
 
 		n.lock.Lock()
@@ -277,22 +315,61 @@ func (n *MetadataNetwork) delayLocalEndpointCreation(epoch uint32, creators ...b
 			return
 		}
 
-		failCreation, changed := []backend.BackendCreator(nil), false
-		for _, creator := range creators {
-			endpoint := backend.Endpoint{
-				Type:     creator.Type(),
-				Endpoint: creator.Publish(),
+		tx, err := n.store.Txn(false)
+		if err != nil {
+			n.log.Error("endpoint reactivation got transaction failure. retry later. (err = \"%v\")", err)
+			n.delayReactivateEndpoints(epoch, time.Second*5)
+			return
+		}
+
+		var basePath []string
+		basePath = append(basePath, backendStorePath...)
+
+		changed, failure := false, false
+
+		for ty, mgr := range n.backendManagers {
+			typeKey := strconv.FormatUint(uint64(ty), 10)
+			path := append(basePath, typeKey, "active")
+			v, err := tx.Get(path)
+			if err != nil {
+				n.log.Error("endpoint reactivation got txn.Get() failure. retry later. (err = \"%v\")", err)
+				n.delayReactivateEndpoints(epoch, time.Second*5)
+				return
 			}
 
-			// new.
-			new, err := creator.New(n.arbiters.backend, nil)
-			if err != nil {
-				n.log.Errorf("failed to create backend %v:%v. (err = \"%v\")", creator.Type().String(), creator.Publish, err)
-				failCreation = append(failCreation, creator)
-			} else {
-				n.backends[endpoint] = new
-				new.Watch(n.receiveRemote)
-				changed = true
+			expected := &storedActiveEndpoints{}
+			if err = json.Unmarshal(v, expected); err != nil {
+				n.log.Warn("cannot decode metadata of active endpoint. store may be corrupted. treat it as no active endpoint. (err = \"%v\")", err)
+			}
+
+			activeEndpointSet := make(map[string]struct{}, len(expected.endpoints))
+			for _, ep := range expected.endpoints {
+				activeEndpointSet[ep] = struct{}{}
+			}
+
+			for _, endpoint := range mgr.ListActiveEndpoints() {
+				_, active := activeEndpointSet[endpoint]
+				if !active {
+					if err = mgr.Deactivate(endpoint); err != nil {
+						n.log.Warn("cannot deactivate %v. retry later. (err = \"%v\")", backend.Endpoint{
+							Type: ty, Endpoint: endpoint,
+						})
+						failure = true
+					}
+					changed = true
+				}
+			}
+
+			for ep := range activeEndpointSet {
+				if mgr.GetBackend(ep) == nil {
+					if err = mgr.Activate(ep); err != nil {
+						n.log.Warn("cannot activate %v. retry later. (err = \"%v\")", backend.Endpoint{
+							Type: ty, Endpoint: ep,
+						})
+						failure = true
+					}
+					changed = true
+				}
 			}
 		}
 
@@ -300,9 +377,9 @@ func (n *MetadataNetwork) delayLocalEndpointCreation(epoch uint32, creators ...b
 			n.delayPublishEndpoint(epoch, false)
 		}
 
-		if len(failCreation) > 0 {
+		if failure {
 			epoch++
-			n.delayLocalEndpointCreation(epoch, failCreation...)
+			n.delayReactivateEndpoints(epoch, d)
 		}
 
 		if epoch > n.epoch {
@@ -311,73 +388,105 @@ func (n *MetadataNetwork) delayLocalEndpointCreation(epoch uint32, creators ...b
 	})
 }
 
-// UpdateLocalEndpoints updates local network endpoint.
-func (n *MetadataNetwork) UpdateLocalEndpoints(creators ...backend.BackendCreator) {
+func (n *MetadataNetwork) ensureEndpointActiveState(activated bool, endpoints ...backend.Endpoint) error {
+	if len(endpoints) < 1 {
+		return nil
+	}
+
 	n.lock.Lock()
 	defer n.lock.Unlock()
 
+	tx, err := n.store.Txn(true)
+	if err != nil {
+		return err
+	}
+
+	sort.Slice(endpoints, func(i, j int) bool { return endpoints[i].Type < endpoints[j].Type })
+
 	changed := false
-
-	indexCreators := make(map[backend.Endpoint]backend.BackendCreator, len(creators))
-	for _, creator := range creators {
-		indexCreators[backend.Endpoint{
-			Type: creator.Type(),
-			// TODO(xutao): support multi-endpoint.
-			Endpoint: creator.Publish(),
-		}] = creator
-	}
-
-	// shutdown.
-	for endpoint, backend := range n.backends {
-		if backend == nil {
-			delete(n.backends, endpoint)
-			changed = true
-			continue
+	defer func() {
+		if err != nil || !changed {
+			if rerr := tx.Rollback(); rerr != nil {
+				panic(rerr)
+			}
 		}
-		if _, hasEndpoint := indexCreators[endpoint]; !hasEndpoint {
-			delete(n.backends, endpoint)
-			backend.Shutdown()
-			n.log.Infof("endpoint %v stopped.", endpoint)
-			changed = true
-		}
-	}
+	}()
 
-	failCreation := []backend.BackendCreator(nil)
-	for endpoint, creator := range indexCreators {
-		rb, hasBackend := n.backends[endpoint]
-		b, isBackend := rb.(backend.Backend)
-		// TODO(xutao): backend support configuration change.
-		if hasBackend && isBackend && b != nil { // update
-			delete(n.backends, endpoint)
-			n.log.Infof("try to restart endpoint %v.", endpoint)
-			b.Shutdown()
-			changed = true
-		}
+	var basePath []string
+	basePath = append(basePath, backendStorePath...)
 
-		// new.
-		new, err := creator.New(n.arbiters.backend, nil)
+	for cur := 0; cur < len(endpoints); {
+		ty := endpoints[0].Type
+		activeSet := make(map[string]struct{})
+		needWriteBack := false
+
+		// read current states.
+		typeKey := strconv.FormatUint(uint64(ty), 10)
+		path := append(basePath, typeKey, "active")
+		v, err := tx.Get(path)
 		if err != nil {
-			n.log.Errorf("failed to create backend %v:%v. (err = \"%v\")", creator.Type().String(), creator.Publish, err)
-			failCreation = append(failCreation, creator)
-		} else {
+			return err
+		}
+		stored := &storedActiveEndpoints{}
+		if err = json.Unmarshal(v, stored); err != nil {
+			n.log.Warn("cannot decode metadata of active endpoints. metadata may be corrupted. treat it as no active endpoint. (err = \"%v\")", err)
+		}
+		activeSet = make(map[string]struct{}, len(stored.endpoints))
+		for _, endpoint := range stored.endpoints {
+			activeSet[endpoint] = struct{}{}
+		}
+
+		// modify
+		for endpoint := endpoints[cur]; endpoint.Type == ty && cur < len(endpoints); cur++ {
+			_, curActivated := activeSet[endpoint.Endpoint]
+			if curActivated == activated {
+				continue
+			}
+			needWriteBack = true
+			if activated {
+				activeSet[endpoint.Endpoint] = struct{}{}
+			} else {
+				delete(activeSet, endpoint.Endpoint)
+			}
+		}
+
+		// store.
+		if needWriteBack {
+			stored := &storedActiveEndpoints{}
+			for endpoint := range activeSet {
+				stored.endpoints = append(stored.endpoints, endpoint)
+			}
+			v, err := json.Marshal(stored)
+			if err != nil {
+				n.log.Error("failed to store metadata of active endpoints. (err = \"%v\")", err)
+				return err
+			}
+			if err = tx.Set(path, v); err != nil {
+				n.log.Error("failed to store encoded metadata. (err = \"%v\")", err)
+				return err
+			}
+
 			changed = true
-			n.log.Infof("endpoint %v started.", endpoint)
-			n.backends[endpoint] = new
-			new.Watch(n.receiveRemote)
 		}
 	}
 
-	epoch := n.epoch + 1
 	if changed {
-		n.delayPublishEndpoint(epoch, false)
-		epoch++
+		epoch := n.epoch + 1
+		tx.OnCommit(func() {
+			n.delayReactivateEndpoints(epoch, 0)
+			n.epoch = epoch
+		})
 	}
 
-	if len(failCreation) > 0 {
-		n.delayLocalEndpointCreation(n.epoch, failCreation...)
-	}
+	return nil
+}
 
-	if epoch > n.epoch {
-		n.epoch = epoch
-	}
+// DeactivateEndpoint deactivates endpoints.
+func (n *MetadataNetwork) DeactivateEndpoint(endpoints ...backend.Endpoint) error {
+	return n.ensureEndpointActiveState(false, endpoints...)
+}
+
+// ActivateEndpoint activates endpoints.
+func (n *MetadataNetwork) ActivateEndpoint(endpoints ...backend.Endpoint) error {
+	return n.ensureEndpointActiveState(true, endpoints...)
 }

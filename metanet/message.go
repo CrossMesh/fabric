@@ -150,9 +150,13 @@ func (n *MetadataNetwork) SendToNames(typeID uint16, payload []byte, names ...st
 // SendViaEndpoint sends a message via given endpoint.
 func (n *MetadataNetwork) SendViaEndpoint(typeID uint16, payload []byte, via backend.Endpoint, to string) {
 	n.lock.RLock()
-	backend, hasBackend := n.backends[via]
+	manager, _ := n.backendManagers[via.Type]
+	if manager == nil {
+		return
+	}
+	backend := manager.GetBackend(via.Endpoint)
 	n.lock.RUnlock()
-	if !hasBackend || backend == nil {
+	if backend == nil {
 		return
 	}
 
