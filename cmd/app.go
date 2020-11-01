@@ -124,6 +124,10 @@ func NewApp() (a *CrossmeshApplication) {
 		},
 		HideHelp: true,
 		Action:   a.cliRunShimAction,
+		OnUsageError: func(ctx *cli.Context, err error, isSubcommand bool) error {
+			// error should be handled by actual app.
+			return a.cliRunShimAction(ctx)
+		},
 	}
 	for _, app := range getDelegationApplications(a, a.log) {
 		if app == nil {
