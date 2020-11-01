@@ -50,7 +50,7 @@ func (a *CrossmeshApplication) loadConfig(path string, noError bool) *daemonConf
 		path = "/etc/utt.yml"
 	}
 	// config file is a must.
-	if fileInfo, err := os.Stat(a.ConfigFile); err != nil {
+	if fileInfo, err := os.Stat(path); err != nil {
 		if !noError {
 			a.log.Errorf("cannot get stat of configuration file. [path = \"%v\"] (err = \"%v\")", a.ConfigFile, err)
 		}
