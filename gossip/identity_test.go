@@ -3,7 +3,7 @@ package gossip
 import (
 	"testing"
 
-	"github.com/crossmesh/fabric/backend"
+	"github.com/crossmesh/fabric/metanet/backend"
 	"github.com/crossmesh/sladder"
 	"github.com/stretchr/testify/assert"
 )

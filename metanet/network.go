@@ -1,19 +1,27 @@
 package metanet
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 	"sync"
 	"time"
 
-	"github.com/crossmesh/fabric/backend"
+	"github.com/crossmesh/fabric/common"
 	gossipUtils "github.com/crossmesh/fabric/gossip"
+	"github.com/crossmesh/fabric/metanet/backend"
 	"github.com/crossmesh/sladder"
 	"github.com/crossmesh/sladder/engine/gossip"
 	logging "github.com/sirupsen/logrus"
 	arbit "github.com/sunmxt/arbiter"
+)
+
+const (
+	lowestEndpointPriority  = uint32(0xFFFE)
+	defaultEndpointPriority = lowestEndpointPriority
 )
 
 // MessageBrokenError indicates message is broken.
@@ -60,6 +68,11 @@ func (e *MetaPeerEndpoint) Clone() MetaPeerEndpoint {
 	return new
 }
 
+type backendPublish struct {
+	backend.Backend
+	Priority uint32
+}
+
 // MetadataNetwork implements simple decentalized communication metadata network.
 type MetadataNetwork struct {
 	// handlers.
@@ -69,7 +82,7 @@ type MetadataNetwork struct {
 
 	lock sync.RWMutex
 
-	store Store
+	store common.Store
 
 	// goroutine arbiting.
 	arbiters struct {
@@ -98,9 +111,9 @@ type MetadataNetwork struct {
 	versionInfoKey string
 
 	// manage backends.
-	backendManagers map[backend.Type]BackendManager
-	//backends        map[backend.Endpoint]backend.Backend
-	epoch uint32
+	backendManagers  map[backend.Type]backend.Manager
+	endpointPriority map[backend.Endpoint]uint32
+	epoch            uint32
 
 	// copy-on-write network map publication.
 	Publish struct {
@@ -108,7 +121,7 @@ type MetadataNetwork struct {
 		Self      *MetaPeer
 
 		Epoch    uint32
-		Backends map[backend.Endpoint]backend.Backend
+		Backends map[backend.Endpoint]*backendPublish
 	}
 
 	// health checking parameters.
@@ -124,14 +137,14 @@ type MetadataNetwork struct {
 }
 
 // NewMetadataNetwork creates a metadata network.
-func NewMetadataNetwork(arbiter *arbit.Arbiter, log *logging.Entry, store Store) (n *MetadataNetwork, err error) {
+func NewMetadataNetwork(arbiter *arbit.Arbiter, log *logging.Entry, store common.Store) (n *MetadataNetwork, err error) {
 	if store == nil {
 		return nil, errors.New("nil store")
 	}
 	n = &MetadataNetwork{
 		peers: make(map[*sladder.Node]*MetaPeer),
 		//backends:          make(map[backend.Endpoint]backend.Backend),
-		backendManagers:   make(map[backend.Type]BackendManager),
+		backendManagers:   make(map[backend.Type]backend.Manager),
 		quitChan:          make(chan struct{}),
 		nameConflictNodes: map[*MetaPeer]struct{}{},
 
@@ -184,7 +197,7 @@ func NewMetadataNetwork(arbiter *arbit.Arbiter, log *logging.Entry, store Store)
 	return n, nil
 }
 
-func (n *MetadataNetwork) populateStore(store Store) error {
+func (n *MetadataNetwork) populateStore(store common.Store) error {
 	if n.store != nil {
 		return errors.New("switching store in run time is not supported yet")
 	}
@@ -196,6 +209,14 @@ func (n *MetadataNetwork) populateStore(store Store) error {
 	n.delayReactivateEndpoints(n.epoch, 0)
 
 	return nil
+}
+
+func (n *MetadataNetwork) getEndpointPriority(endpoint backend.Endpoint) uint32 {
+	priority, hasPriority := n.endpointPriority[endpoint]
+	if hasPriority {
+		priority = defaultEndpointPriority
+	}
+	return priority
 }
 
 // SetRegion sets region of self.
@@ -342,8 +363,8 @@ func (n *MetadataNetwork) delayReactivateEndpoints(epoch uint32, d time.Duration
 				n.log.Warn("cannot decode metadata of active endpoint. store may be corrupted. treat it as no active endpoint. (err = \"%v\")", err)
 			}
 
-			activeEndpointSet := make(map[string]struct{}, len(expected.endpoints))
-			for _, ep := range expected.endpoints {
+			activeEndpointSet := make(map[string]struct{}, len(expected.Endpoints))
+			for _, ep := range expected.Endpoints {
 				activeEndpointSet[ep] = struct{}{}
 			}
 
@@ -361,14 +382,29 @@ func (n *MetadataNetwork) delayReactivateEndpoints(epoch uint32, d time.Duration
 			}
 
 			for ep := range activeEndpointSet {
+				fullEndpoint := backend.Endpoint{
+					Type: ty, Endpoint: ep,
+				}
 				if mgr.GetBackend(ep) == nil {
 					if err = mgr.Activate(ep); err != nil {
-						n.log.Warn("cannot activate %v. retry later. (err = \"%v\")", backend.Endpoint{
-							Type: ty, Endpoint: ep,
-						})
+						n.log.Warn("cannot activate %v. retry later. (err = \"%v\")", fullEndpoint)
 						failure = true
 					}
 					changed = true
+				}
+
+				// refresh pritority.
+				key := fmt.Sprintf("%02x%v", ty, ep)
+				path = append(path, "priorities", key)
+				v, err := tx.Get(path)
+				if err != nil {
+					n.log.Error("endpoint reactivation got txn.Get() failure. retry later. (err = \"%v\")", err)
+					n.delayReactivateEndpoints(epoch, time.Second*5)
+					return
+				}
+				if v != nil && len(v) == 4 {
+					priority := binary.BigEndian.Uint32(v)
+					n.endpointPriority[fullEndpoint] = priority
 				}
 			}
 		}
@@ -431,8 +467,8 @@ func (n *MetadataNetwork) ensureEndpointActiveState(activated bool, endpoints ..
 		if err = json.Unmarshal(v, stored); err != nil {
 			n.log.Warn("cannot decode metadata of active endpoints. metadata may be corrupted. treat it as no active endpoint. (err = \"%v\")", err)
 		}
-		activeSet = make(map[string]struct{}, len(stored.endpoints))
-		for _, endpoint := range stored.endpoints {
+		activeSet = make(map[string]struct{}, len(stored.Endpoints))
+		for _, endpoint := range stored.Endpoints {
 			activeSet[endpoint] = struct{}{}
 		}
 
@@ -454,7 +490,7 @@ func (n *MetadataNetwork) ensureEndpointActiveState(activated bool, endpoints ..
 		if needWriteBack {
 			stored := &storedActiveEndpoints{}
 			for endpoint := range activeSet {
-				stored.endpoints = append(stored.endpoints, endpoint)
+				stored.Endpoints = append(stored.Endpoints, endpoint)
 			}
 			v, err := json.Marshal(stored)
 			if err != nil {

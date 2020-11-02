@@ -1,4 +1,4 @@
-package backend
+package tcp
 
 import (
 	"context"
@@ -8,11 +8,12 @@ import (
 	"net"
 	"time"
 
+	"github.com/crossmesh/fabric/metanet/backend"
 	"github.com/crossmesh/fabric/proto"
 	logging "github.com/sirupsen/logrus"
 )
 
-func (t *TCP) handshakeConnect(log *logging.Entry, connID uint32, adaptedConn net.Conn) (accepted bool, err error) {
+func (e *tcpEndpoint) handshakeConnect(log *logging.Entry, connID uint32, adaptedConn net.Conn) (accepted bool, err error) {
 	buf := make([]byte, defaultBufferSize)
 
 	conn, isTCPConn := adaptedConn.(*net.TCPConn)
@@ -28,12 +29,12 @@ func (t *TCP) handshakeConnect(log *logging.Entry, connID uint32, adaptedConn ne
 
 	// wait for hello.
 	hello := proto.Hello{
-		Lead: t.getStartCode(log),
+		Lead: e.getStartCode(log),
 	}
 
 	var read int
 	// hello message has fixed length.
-	for t.Arbiter.ShouldRun() && read < hello.Len() {
+	for e.Arbiter.ShouldRun() && read < hello.Len() {
 		newRead, err := conn.Read(buf[read:cap(buf)])
 		if err != nil {
 			if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
@@ -48,7 +49,7 @@ func (t *TCP) handshakeConnect(log *logging.Entry, connID uint32, adaptedConn ne
 		}
 		read += newRead
 	}
-	if !t.Arbiter.ShouldRun() {
+	if !e.Arbiter.ShouldRun() {
 		return false, nil
 	}
 	if err := hello.Decode(buf[:read]); err != nil {
@@ -58,8 +59,9 @@ func (t *TCP) handshakeConnect(log *logging.Entry, connID uint32, adaptedConn ne
 		return false, err
 	}
 	buf = buf[:0]
-	if t.psk != nil {
-		accepted = hello.Verify([]byte(*t.psk))
+	psk := e.parameters.Encryption.PSK
+	if psk != "" {
+		accepted = hello.Verify([]byte(psk))
 	} else {
 		accepted = hello.Verify(nil)
 	}
@@ -70,12 +72,12 @@ func (t *TCP) handshakeConnect(log *logging.Entry, connID uint32, adaptedConn ne
 	log.Debug("authentication success.")
 
 	// init cipher.
-	link := newTCPLink(t)
+	link := newTCPLink(e)
 	link.conn = conn
 	buf = buf[:0]
 	buf = append(buf, hello.Lead...)
-	if t.psk != nil {
-		buf = append(buf, []byte(*t.psk)...)
+	if psk != "" {
+		buf = append(buf, []byte(psk)...)
 	}
 	buf = append(buf, hello.HMAC[:]...)
 	key := sha256.Sum256(buf)
@@ -87,7 +89,7 @@ func (t *TCP) handshakeConnect(log *logging.Entry, connID uint32, adaptedConn ne
 	// welcome
 	welcome := proto.Welcome{
 		Welcome:  true,
-		Identity: t.config.Publish,
+		Identity: e.endpoint,
 	}
 	if welcome.Identity == "" {
 		err = fmt.Errorf("empty publish endpoint")
@@ -120,14 +122,14 @@ func (t *TCP) handshakeConnect(log *logging.Entry, connID uint32, adaptedConn ne
 			return false, nil
 		}
 	}
-	if !t.Arbiter.ShouldRun() || err != nil || connectReq == nil {
+	if !e.Arbiter.ShouldRun() || err != nil || connectReq == nil {
 		return false, err
 	}
 
-	return t.acceptTCPLink(log, link, connectReq)
+	return e.acceptTCPLink(log, link, connectReq)
 }
 
-func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TCPLink) (accepted bool, err error) {
+func (e *tcpEndpoint) connectHandshake(ctx context.Context, log *logging.Entry, link *TCPLink) (accepted bool, err error) {
 	buf := make([]byte, defaultBufferSize)
 
 	// deadline.
@@ -142,11 +144,12 @@ func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TC
 	log.Debug("handshaking...")
 	// hello
 	hello := proto.Hello{
-		Lead: t.getStartCode(log),
+		Lead: e.getStartCode(log),
 	}
 	hello.Refresh()
-	if t.psk != nil {
-		hello.Sign([]byte(*t.psk))
+	psk := e.parameters.Encryption.PSK
+	if psk != "" {
+		hello.Sign([]byte(psk))
 	} else {
 		hello.Sign(nil)
 	}
@@ -164,8 +167,8 @@ func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TC
 	log.Debug("initialize cipher.")
 	buf = buf[:0]
 	buf = append(buf, hello.Lead...)
-	if t.psk != nil {
-		buf = append(buf, []byte(*t.psk)...)
+	if psk != "" {
+		buf = append(buf, []byte(psk)...)
 	}
 	buf = append(buf, hello.HMAC[:]...)
 	key := sha256.Sum256(buf)
@@ -186,11 +189,11 @@ func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TC
 	}); rerr != nil {
 		if nerr, ok := rerr.(net.Error); ok && nerr.Timeout() {
 			log.Error("canceled for deadline exceeded.")
-			return false, ErrOperationCanceled
+			return false, backend.ErrOperationCanceled
 		}
 		if rerr == io.EOF {
 			log.Error("connection closed by foreign peer.")
-			return false, ErrConnectionClosed
+			return false, backend.ErrConnectionClosed
 		}
 		log.Error("link read failure: ", rerr)
 		return false, rerr
@@ -201,7 +204,7 @@ func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TC
 	if done := ctx.Done(); done != nil {
 		select {
 		case <-done:
-			return false, ErrOperationCanceled
+			return false, backend.ErrOperationCanceled
 		default:
 		}
 	}
@@ -212,14 +215,14 @@ func (t *TCP) connectHandshake(ctx context.Context, log *logging.Entry, link *TC
 	log.Debug("good authentication. connecting...")
 	// send connect request.
 	connectReq := proto.Connect{
-		Identity: t.config.Publish,
+		Identity: e.endpoint,
 	}
 	if connectReq.Identity == "" {
 		err = fmt.Errorf("empty publish endpoint")
 		log.Error(err)
 		return false, err
 	}
-	if t.config.raw.GetEncrypt() {
+	if e.parameters.Encryption.Enable {
 		connectReq.Version = proto.ConnectAES256GCM
 	} else {
 		connectReq.Version = proto.ConnectNoCrypt

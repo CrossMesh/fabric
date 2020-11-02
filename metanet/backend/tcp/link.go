@@ -1,4 +1,4 @@
-package backend
+package tcp
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/crossmesh/fabric/metanet/backend"
 	"github.com/crossmesh/fabric/mux"
 	logging "github.com/sirupsen/logrus"
 )
@@ -41,10 +42,10 @@ type TCPLink struct {
 	cursor    int
 	maxCursor int
 
-	backend *TCP
+	backend *tcpEndpoint
 }
 
-func newTCPLink(backend *TCP) (r *TCPLink) {
+func newTCPLink(backend *tcpEndpoint) (r *TCPLink) {
 	r = &TCPLink{
 		backend:   backend,
 		buf:       make([]byte, defaultBufferSize),
@@ -96,7 +97,7 @@ func (l *TCPLink) assign(right *TCPLink) bool {
 func (l *TCPLink) read(emit func(frame []byte) bool) (err error) {
 	conn, feed, cont := l.conn, 0, true
 	if conn == nil {
-		return ErrConnectionClosed
+		return backend.ErrConnectionClosed
 	}
 	l.readLock.Lock()
 	defer l.readLock.Unlock()
@@ -127,12 +128,12 @@ func (l *TCPLink) read(emit func(frame []byte) bool) (err error) {
 func (l *TCPLink) Send(frame []byte) (err error) {
 	t := l.backend
 	if t == nil {
-		return ErrOperationCanceled
+		return backend.ErrOperationCanceled
 	}
 
 	muxer := l.muxer
 	if muxer == nil {
-		return ErrOperationCanceled
+		return backend.ErrOperationCanceled
 	}
 
 	if !muxer.Parallel() {
@@ -142,7 +143,7 @@ func (l *TCPLink) Send(frame []byte) (err error) {
 
 	if _, err = muxer.Mux(frame); err != nil {
 		if nerr, ok := err.(net.Error); err == io.EOF || (ok && nerr.Timeout()) {
-			err = ErrOperationCanceled
+			err = backend.ErrOperationCanceled
 		} else {
 			// close corrupted link.
 			t.log.Error("mux error: ", err)
@@ -168,8 +169,9 @@ func (l *TCPLink) InitializeAESGCM(key []byte, nonce []byte) (err error) {
 }
 
 func (l *TCPLink) initializeWriter() {
-	if l.backend.config.EnableDrainer {
-		bufferSize, latency, statisticWindow, threshold := l.backend.config.MaxDrainBuffer, l.backend.config.MaxDrainLatancy, l.backend.config.DrainStatisticWindow, l.backend.config.BulkThreshold
+	if l.backend.parameters.Driner.EnableDrainer {
+		bufferSize, latency, statisticWindow, threshold := l.backend.parameters.Driner.MaxDrainBuffer,
+			l.backend.parameters.Driner.MaxDrainLatancy, l.backend.parameters.Driner.DrainStatisticWindow, l.backend.parameters.Driner.BulkThreshold
 		if bufferSize < 1 {
 			bufferSize = DefaultDrainBufferSize
 		}
@@ -221,14 +223,14 @@ func (l *TCPLink) Close() (err error) {
 	return l.close()
 }
 
-func (t *TCP) connect(addr *net.TCPAddr, publish string) (l *TCPLink, err error) {
-	if !t.Arbiter.ShouldRun() {
-		return nil, ErrOperationCanceled
+func (e *tcpEndpoint) connect(addr *net.TCPAddr, publish string) (l *TCPLink, err error) {
+	if !e.Arbiter.ShouldRun() {
+		return nil, backend.ErrOperationCanceled
 	}
 
 	// get link.
 	key := publish
-	link := t.getLink(key)
+	link := e.getLink(key)
 	if link.conn != nil {
 		// fast path: link is valid.
 		return link, nil
@@ -242,20 +244,20 @@ func (t *TCP) connect(addr *net.TCPAddr, publish string) (l *TCPLink, err error)
 	}
 
 	defer link.lock.Unlock()
-	ctx, cancel := context.WithTimeout(t.Arbiter.Context(), t.getConnectTimeout())
+	ctx, cancel := context.WithTimeout(e.Arbiter.Context(), e.getConnectTimeout())
 	defer cancel()
 
-	t.log.Infof("connecting to %v(%v)", publish, addr.String())
+	e.log.Infof("connecting to %v(%v)", publish, addr.String())
 	// dial
 	dialer := net.Dialer{}
 	if conn, ierr := dialer.DialContext(ctx, "tcp", addr.String()); ierr != nil {
-		if t.Arbiter.ShouldRun() {
-			t.log.Error(ierr)
+		if e.Arbiter.ShouldRun() {
+			e.log.Error(ierr)
 		}
 		return nil, ierr
 
 	} else if tcpConn, isTCP := conn.(*net.TCPConn); !isTCP {
-		t.log.Error("got non-tcp connection")
+		e.log.Error("got non-tcp connection")
 		return nil, ErrNonTCPConnection
 
 	} else {
@@ -263,11 +265,11 @@ func (t *TCP) connect(addr *net.TCPAddr, publish string) (l *TCPLink, err error)
 		link.publish = addr.String()
 	}
 
-	connID := atomic.AddUint32(&t.connID, 1)
-	log := t.log.WithField("conn_id", connID)
+	connID := atomic.AddUint32(&e.connID, 1)
+	log := e.log.WithField("conn_id", connID)
 	// handshake
 	var accepted bool
-	if accepted, err = t.connectHandshake(ctx, log, link); err != nil {
+	if accepted, err = e.connectHandshake(ctx, log, link); err != nil {
 		log.Error("handshake failure: ", err)
 		link.close()
 		return nil, err
@@ -278,30 +280,30 @@ func (t *TCP) connect(addr *net.TCPAddr, publish string) (l *TCPLink, err error)
 		return nil, err
 	}
 
-	t.goTCPLinkDaemon(log, key, link)
+	e.goTCPLinkDaemon(log, key, link)
 
 	return link, nil
 }
 
 // Connect trys to establish data path to peer.
-func (t *TCP) Connect(endpoint string) (l Link, err error) {
+func (e *tcpEndpoint) Connect(endpoint string) (l backend.Link, err error) {
 	var (
 		addr *net.TCPAddr
 		link *TCPLink
 	)
-	if addr, err = t.resolve(endpoint); err != nil {
+	if addr, err = e.resolve(endpoint); err != nil {
 		return nil, err
 	}
-	if link, err = t.connect(addr, endpoint); err != nil {
+	if link, err = e.connect(addr, endpoint); err != nil {
 		return nil, err
 	}
 	return link, err
 }
 
-func (t *TCP) forwardProc(log *logging.Entry, key string, link *TCPLink) {
+func (e *tcpEndpoint) forwardProc(log *logging.Entry, key string, link *TCPLink) {
 	var err error
 
-	for t.Arbiter.ShouldRun() {
+	for e.Arbiter.ShouldRun() {
 		conn := link.conn
 		if conn == nil {
 			break
@@ -312,9 +314,9 @@ func (t *TCP) forwardProc(log *logging.Entry, key string, link *TCPLink) {
 		}
 		if err = link.read(func(frame []byte) bool {
 			// deliver frame to all watchers.
-			t.watch.Range(func(k, v interface{}) bool {
-				if emit, ok := v.(func(Backend, []byte, string)); ok {
-					emit(t, frame, link.publish)
+			e.watch.Range(func(k, v interface{}) bool {
+				if emit, ok := v.(func(backend.Backend, []byte, string)); ok {
+					emit(e, frame, link.publish)
 				}
 				return true
 			})
@@ -331,7 +333,7 @@ func (t *TCP) forwardProc(log *logging.Entry, key string, link *TCPLink) {
 	}
 }
 
-func (t *TCP) goTCPLinkDaemon(log *logging.Entry, key string, link *TCPLink) {
+func (e *tcpEndpoint) goTCPLinkDaemon(log *logging.Entry, key string, link *TCPLink) {
 	var (
 		routines uint32
 		err      error
@@ -352,7 +354,7 @@ func (t *TCP) goTCPLinkDaemon(log *logging.Entry, key string, link *TCPLink) {
 		return
 	}
 	// TCP options.
-	if bufSize := t.config.SendBufferSize; bufSize > 0 {
+	if bufSize := e.parameters.SendBufferSize; bufSize > 0 {
 		if err = link.conn.SetWriteBuffer(bufSize); err != nil {
 			log.Error("conn.SetWriteBuffer error: ", err)
 			return
@@ -367,7 +369,7 @@ func (t *TCP) goTCPLinkDaemon(log *logging.Entry, key string, link *TCPLink) {
 		return
 	}
 
-	if keepalivePeriod := t.config.KeepalivePeriod; keepalivePeriod > 0 {
+	if keepalivePeriod := e.parameters.KeepalivePeriod; keepalivePeriod > 0 {
 		if err = link.conn.SetKeepAlivePeriod(time.Second * time.Duration(keepalivePeriod)); err != nil {
 			log.Error("conn.SetKeepalivePeriod error: ", err)
 			return
@@ -375,15 +377,15 @@ func (t *TCP) goTCPLinkDaemon(log *logging.Entry, key string, link *TCPLink) {
 	}
 
 	// spwan.
-	for n := t.getRoutinesCount(); n > 0; n-- {
-		t.Arbiter.Go(func() {
+	for n := e.getRoutinesCount(); n > 0; n-- {
+		e.Arbiter.Go(func() {
 			atomic.AddUint32(&routines, 1)
 			defer func() {
 				if last := atomic.AddUint32(&routines, 0xFFFFFFFF); last == 0 {
 					link.Close()
 				}
 			}()
-			t.forwardProc(log, key, link)
+			e.forwardProc(log, key, link)
 		})
 	}
 }

@@ -3,7 +3,7 @@ package gossip
 import (
 	"sort"
 
-	"github.com/crossmesh/fabric/backend"
+	"github.com/crossmesh/fabric/metanet/backend"
 	"github.com/crossmesh/sladder"
 )
 

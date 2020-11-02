@@ -9,7 +9,7 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/crossmesh/fabric/backend"
+	"github.com/crossmesh/fabric/metanet/backend"
 	"github.com/crossmesh/sladder"
 	logging "github.com/sirupsen/logrus"
 )
@@ -104,7 +104,7 @@ type MetaPeer struct {
 
 	localEpoch     uint32
 	linkPaths      []*linkPath // (COW)
-	localEndpoints map[backend.Endpoint]backend.Backend
+	localEndpoints map[backend.Endpoint]*backendPublish
 }
 
 func newMetaPeer(n *sladder.Node, log *logging.Entry, isSelf bool) (p *MetaPeer) {
@@ -227,7 +227,7 @@ func (p *MetaPeer) _rebuildLinkPath() {
 				} else {
 					new.Disabled = false
 				}
-				new.cost = (backend.Priority() + 1) * (remote.Priority + 1)
+				new.cost = (backend.Priority + 1) * (remote.Priority + 1)
 				newLinkPaths = append(newLinkPaths, new)
 			}
 			begin++
@@ -268,7 +268,7 @@ func (p *MetaPeer) publishInterval(prepare func(interval *MetaPeerStatePublicati
 	}
 }
 
-func (p *MetaPeer) getLinkPaths(epoch uint32, localEndpoints map[backend.Endpoint]backend.Backend) []*linkPath {
+func (p *MetaPeer) getLinkPaths(epoch uint32, localEndpoints map[backend.Endpoint]*backendPublish) []*linkPath {
 	cacheEpoch, paths := p.localEpoch, p.linkPaths
 	if epoch > cacheEpoch && localEndpoints != nil {
 		p.lock.Lock()
@@ -283,7 +283,7 @@ func (p *MetaPeer) getLinkPaths(epoch uint32, localEndpoints map[backend.Endpoin
 	return paths
 }
 
-func (p *MetaPeer) chooseLinkPath(epoch uint32, localEndpoints map[backend.Endpoint]backend.Backend) *linkPath {
+func (p *MetaPeer) chooseLinkPath(epoch uint32, localEndpoints map[backend.Endpoint]*backendPublish) *linkPath {
 	paths := p.getLinkPaths(epoch, localEndpoints)
 
 	if len(paths) < 1 {

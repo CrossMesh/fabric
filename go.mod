@@ -40,6 +40,7 @@ require (
 	gitlab.com/golang-commonmark/mdurl v0.0.0-20191124015652-932350d1cb84 // indirect
 	gitlab.com/golang-commonmark/puny v0.0.0-20191124015043-9f83538fa04f // indirect
 	gitlab.com/opennota/wd v0.0.0-20191124020556-236695b0ea63 // indirect
+	go.etcd.io/bbolt v1.3.5
 	golang.org/x/build v0.0.0-20200226193612-7ece5dab5e4e // indirect
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1 // indirect
 	golang.org/x/mobile v0.0.0-20200212152714-2b26a4705d24 // indirect

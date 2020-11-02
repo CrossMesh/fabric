@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/crossmesh/fabric/backend"
+	"github.com/crossmesh/fabric/metanet/backend"
 	"github.com/crossmesh/fabric/proto"
 )
 

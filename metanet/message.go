@@ -4,8 +4,8 @@ import (
 	"context"
 	"sync"
 
-	"github.com/crossmesh/fabric/backend"
 	gossipUtils "github.com/crossmesh/fabric/gossip"
+	"github.com/crossmesh/fabric/metanet/backend"
 	"github.com/crossmesh/fabric/proto"
 )
 

@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/crossmesh/fabric/backend"
 	"github.com/crossmesh/fabric/common"
 	gossipUtils "github.com/crossmesh/fabric/gossip"
+	"github.com/crossmesh/fabric/metanet/backend"
 	"github.com/crossmesh/sladder"
 	"github.com/crossmesh/sladder/engine/gossip"
 )
@@ -403,7 +403,7 @@ func (n *MetadataNetwork) delayPublishEndpoint(epoch uint32, delay bool) {
 		var newEndpoints []*gossipUtils.NetworkEndpointV1
 
 		localPublish := make([]*MetaPeerEndpoint, 0, len(n.backendManagers))
-		newBackends := map[backend.Endpoint]backend.Backend{}
+		newBackends := map[backend.Endpoint]*backendPublish{}
 
 		for ty, mgr := range n.backendManagers {
 			for _, ep := range mgr.ListActiveEndpoints() {
@@ -416,11 +416,12 @@ func (n *MetadataNetwork) delayPublishEndpoint(epoch uint32, delay bool) {
 					continue
 				}
 
+				priority := n.getEndpointPriority(endpoint)
 				oldPublish, hasOldPublish := oldEndpoints[endpoint]
 				if hasOldPublish && oldPublish != nil {
 					localPublish = append(localPublish, &MetaPeerEndpoint{
 						Endpoint: endpoint,
-						Priority: backend.Priority(),
+						Priority: priority,
 						Disabled: oldPublish.Disabled,
 					})
 					if oldPublish.Disabled {
@@ -429,7 +430,7 @@ func (n *MetadataNetwork) delayPublishEndpoint(epoch uint32, delay bool) {
 				} else {
 					localPublish = append(localPublish, &MetaPeerEndpoint{
 						Endpoint: endpoint,
-						Priority: backend.Priority(),
+						Priority: priority,
 						Disabled: false,
 					})
 				}
@@ -437,9 +438,12 @@ func (n *MetadataNetwork) delayPublishEndpoint(epoch uint32, delay bool) {
 				newEndpoints = append(newEndpoints, &gossipUtils.NetworkEndpointV1{
 					Type:     endpoint.Type,
 					Endpoint: endpoint.Endpoint,
-					Priority: backend.Priority(),
+					Priority: priority,
 				})
-				newBackends[endpoint] = backend
+				newBackends[endpoint] = &backendPublish{
+					Backend:  backend,
+					Priority: priority,
+				}
 			}
 		}
 

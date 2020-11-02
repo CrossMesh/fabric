@@ -1,8 +1,6 @@
 package metanet
 
-import (
-	"github.com/crossmesh/fabric/backend"
-)
+import "github.com/crossmesh/fabric/metanet/backend"
 
 // KeyReservedError indicates a invalid key for reservation reason.
 type KeyReservedError struct {

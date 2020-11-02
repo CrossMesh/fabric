@@ -2,12 +2,13 @@ package gossip
 
 import (
 	"encoding/json"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
 
-	"github.com/crossmesh/fabric/backend"
 	"github.com/crossmesh/fabric/common"
+	"github.com/crossmesh/fabric/metanet/backend"
 	"github.com/crossmesh/sladder"
 )
 
@@ -246,6 +247,9 @@ func (l *NetworkEndpointSetV1) Build() {
 type NetworkEndpointsV1 struct {
 	Version   uint16               `json:"v"`
 	Endpoints NetworkEndpointSetV1 `json:"eps"`
+
+	UnderlayID uint32   `json:"u"`
+	IPs        []net.IP `json:"ips"`
 }
 
 // Clone makes a deep copy.
