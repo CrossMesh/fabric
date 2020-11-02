@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/crossmesh/fabric/metanet/backend"
-	"github.com/crossmesh/fabric/mux"
+	"github.com/crossmesh/fabric/metanet/mux"
 	logging "github.com/sirupsen/logrus"
 )
 
