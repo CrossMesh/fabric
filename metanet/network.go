@@ -13,6 +13,7 @@ import (
 	"github.com/crossmesh/fabric/common"
 	gossipUtils "github.com/crossmesh/fabric/gossip"
 	"github.com/crossmesh/fabric/metanet/backend"
+	"github.com/crossmesh/fabric/metanet/backend/tcp"
 	"github.com/crossmesh/sladder"
 	"github.com/crossmesh/sladder/engine/gossip"
 	logging "github.com/sirupsen/logrus"
@@ -174,15 +175,20 @@ func NewMetadataNetwork(arbiter *arbit.Arbiter, log *logging.Entry, store common
 	} else {
 		n.log = log
 	}
+	if err = n.populateStore(store); err != nil {
+		return nil, err
+	}
+	if err = n.initialzeBackendManager(); err != nil {
+		return nil, err
+	}
 	if err = n.initializeMembership(); err != nil {
 		return nil, err
 	}
 	if err = n.initializeVersionInfo(); err != nil {
 		return nil, err
 	}
-	if err = n.populateStore(store); err != nil {
-		return nil, err
-	}
+
+	n.activate()
 
 	n.arbiters.main.Go(func() {
 		select {
@@ -197,16 +203,53 @@ func NewMetadataNetwork(arbiter *arbit.Arbiter, log *logging.Entry, store common
 	return n, nil
 }
 
+func (n *MetadataNetwork) registerBackendManager(mgr backend.Manager) error {
+	ty := mgr.Type()
+	// store.
+	store := &common.SubpathStore{Store: n.store}
+	store.Prefix = append(store.Prefix, backendStorePath...)
+	typeKey := strconv.FormatUint(uint64(ty), 10)
+	store.Prefix = append(store.Prefix, typeKey, "store")
+
+	// init
+	res := &managerResourceCollection{
+		log:     n.log.WithField("backend", ty),
+		arbiter: n.arbiters.backend,
+		store:   store,
+	}
+	if err := mgr.Init(res); err != nil {
+		n.log.Errorf("failed to initialize backend manager. [type = %v] (err = \"%v\")", mgr.Type(), err)
+		return err
+	}
+	old, _ := n.backendManagers[ty]
+	if old != nil {
+		err := fmt.Errorf("too many managers with type %v are registered", ty)
+		n.log.Error(err)
+		return err
+	}
+
+	return nil
+}
+
+func (n *MetadataNetwork) initialzeBackendManager() error {
+	// TCP.
+	if err := n.registerBackendManager(&tcp.BackendManager{}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (n *MetadataNetwork) activate() {
+	n.epoch++
+	n.delayReactivateEndpoints(n.epoch, 0)
+}
+
 func (n *MetadataNetwork) populateStore(store common.Store) error {
 	if n.store != nil {
 		return errors.New("switching store in run time is not supported yet")
 	}
 
 	n.store = store
-
-	// activate endpoints.
-	n.epoch++
-	n.delayReactivateEndpoints(n.epoch, 0)
 
 	return nil
 }
@@ -525,4 +568,21 @@ func (n *MetadataNetwork) DeactivateEndpoint(endpoints ...backend.Endpoint) erro
 // ActivateEndpoint activates endpoints.
 func (n *MetadataNetwork) ActivateEndpoint(endpoints ...backend.Endpoint) error {
 	return n.ensureEndpointActiveState(true, endpoints...)
+}
+
+// SetEndpointParameters sets parameters of endpoint
+func (n *MetadataNetwork) SetEndpointParameters(endpoint backend.Endpoint, argList []string) error {
+	n.lock.Lock()
+	defer n.lock.Unlock()
+
+	mgr, _ := n.backendManagers[endpoint.Type]
+	if mgr == nil {
+		return fmt.Errorf("invalid endpoint type %v(%v)", uint8(endpoint.Type), endpoint.Type)
+	}
+
+	pmgr, parameterized := mgr.(backend.ParameterizedManager)
+	if !parameterized {
+		return fmt.Errorf("endpoint %v:%v accept no parameter", endpoint.Type, endpoint.Endpoint)
+	}
+	return pmgr.SetParams(endpoint.Endpoint, argList)
 }
