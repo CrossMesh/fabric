@@ -4,6 +4,7 @@ Documentation=https://github.com/crossmesh/fabric
 After=network.target
 
 [Service]
+Type=notify
 EnvironmentFile=-/etc/default/utt
 User=root
 ExecStart=/usr/bin/utt -c $CROSSMESH_CONFIG_FILE daemon $CROSSMESH_DAEMON_OPTS

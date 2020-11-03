@@ -7,9 +7,12 @@ require (
 	cloud.google.com/go/firestore v1.1.1 // indirect
 	cloud.google.com/go/logging v1.0.0 // indirect
 	cloud.google.com/go/spanner v1.2.1 // indirect
+	github.com/coreos/go-systemd v0.0.0-20181012123002-c6f51f82210d
+	github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f // indirect
 	github.com/creack/pty v1.1.9 // indirect
 	github.com/crossmesh/sladder v0.0.0-20201018042605-a601ea2299ee
 	github.com/denisbrodbeck/machineid v1.0.1 // indirect
+	github.com/godbus/dbus v4.1.0+incompatible // indirect
 	github.com/gogo/protobuf v1.3.1 // indirect
 	github.com/golang/protobuf v1.4.3
 	github.com/googleapis/gax-go v2.0.2+incompatible // indirect
@@ -47,5 +50,6 @@ require (
 	google.golang.org/grpc/cmd/protoc-gen-go-grpc v0.0.0-20200917190803-0f7e218c2cf4 // indirect
 	google.golang.org/grpc/examples v0.0.0-20200930182750-2e2833c718b5 // indirect
 	google.golang.org/protobuf v1.25.0
+	gopkg.in/yaml.v1 v1.0.0-20140924161607-9f9df34309c0 // indirect
 	gopkg.in/yaml.v2 v2.2.8 // indirect
 )

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/coreos/go-systemd/daemon"
 	"github.com/crossmesh/fabric/cmd/pb"
 	"github.com/jinzhu/configor"
 )
@@ -21,6 +22,9 @@ func (a *CrossmeshApplication) ReloadConfig(ctx context.Context, req *pb.ReloadR
 	a.lock.Lock()
 	defer a.lock.Unlock()
 
+	daemon.SdNotify(false, daemon.SdNotifyReloading)
+	defer daemon.SdNotify(false, daemon.SdNotifyReady)
+
 	a.log.Infof("try to reload config \"%v\"", req.ConfigFilePath)
 	newCfg := a.loadConfig(req.ConfigFilePath, false)
 	if newCfg == nil {
@@ -31,7 +35,7 @@ func (a *CrossmeshApplication) ReloadConfig(ctx context.Context, req *pb.ReloadR
 		return &pb.Result{Type: pb.Result_failed, Message: msg}, nil
 	}
 	a.reconfigurateApps()
-	return &pb.Result{Type: pb.Result_failed, Message: "successfully preload static config. please check daemon logs for more details."}, nil
+	return &pb.Result{Type: pb.Result_succeeded, Message: "successfully preload static config. please check daemon logs for more details."}, nil
 }
 
 // GetLegacyConfigration returns configuration by file.

@@ -5,17 +5,24 @@ import (
 	"errors"
 	"time"
 
+	"github.com/coreos/go-systemd/daemon"
 	"github.com/crossmesh/fabric/cmd/pb"
 	"github.com/crossmesh/fabric/cmd/version"
+	logging "github.com/sirupsen/logrus"
 	arbit "github.com/sunmxt/arbiter"
 	"github.com/urfave/cli/v2"
 )
 
 // implementation of command "daemon reload"
-func (a *CrossmeshApplication) cliReloadCmdAction(ctx *cli.Context) error {
-	conn, client, err := a.GetControlRPCClient()
-	if err != nil {
-		return err
+func (a *CrossmeshApplication) cliReloadCmdAction(ctx *cli.Context) (err error) {
+	defer func() {
+		if err != nil {
+			logging.Error(err)
+		}
+	}()
+	conn, client, ierr := a.GetControlRPCClient()
+	if ierr != nil {
+		return ierr
 	}
 	defer conn.Close()
 
@@ -25,6 +32,7 @@ func (a *CrossmeshApplication) cliReloadCmdAction(ctx *cli.Context) error {
 	var result *pb.Result
 	cctx, canceled := context.WithTimeout(context.TODO(), time.Second*30)
 	defer canceled()
+
 	if result, err = client.ReloadConfig(cctx, &req); err != nil {
 		return cmdError("control rpc got error: %v", err)
 	}
@@ -74,6 +82,7 @@ func (a *CrossmeshApplication) cliRunDaemonAction(ctx *cli.Context) (err error) 
 	a.arbiters.main = arbit.New()
 	a.arbiters.main.HookPreStop(func() {
 		a.log.Info("shutting down...")
+		daemon.SdNotify(false, daemon.SdNotifyStopping)
 	})
 	a.arbiters.main.HookStopped(func() {
 		a.log.Info("exiting...")
@@ -111,6 +120,8 @@ func (a *CrossmeshApplication) cliRunDaemonAction(ctx *cli.Context) (err error) 
 	}
 
 	a.lock.Unlock()
+
+	daemon.SdNotify(false, daemon.SdNotifyReady)
 
 	// join
 	return a.arbiters.main.Arbit()
