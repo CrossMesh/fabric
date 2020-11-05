@@ -13,44 +13,6 @@ var (
 	defaultRawParameterStream = []byte("{}")
 )
 
-type parameters struct {
-	Bind string `json:"ep"`
-	// Publish string `json:"pub"`
-	// TODO(xutao): should be handled by metanet instead of manager.
-	//Priority  uint32 `json:"priority"`
-	StartCode string `json:"start_code"`
-
-	SendTimeout     uint32 `json:"send_timeout" default:"50"`
-	SendBufferSize  int    `json:"send_buffer" default:"0"`
-	KeepalivePeriod int    `json:"keepalive" default:"60"`
-	ConnectTimeout  uint32 `json:"connect_timeout" default:"15"`
-	MaxConcurrency  uint   `json:"max_concurrency" default:"1"`
-
-	Encryption struct {
-		// pre-shared key.
-		PSK    string `json:"psk"`
-		Enable bool   `json:"enable" default:"false"`
-	} `json:"encrypt"`
-
-	// drain options.
-	Driner struct {
-		EnableDrainer        bool   `json:"enable" default:"false"`
-		MaxDrainBuffer       uint32 `json:"max_buffer" default:"8388608"`     // maximum drain buffer in byte.
-		MaxDrainLatancy      uint32 `json:"max_latency" default:"5"`          // maximum latency tolerance in microsecond.
-		DrainStatisticWindow uint32 `json:"window" default:"1000"`            // statistic window in millisecond
-		BulkThreshold        uint32 `json:"bulk_threshold" default:"2097152"` // rate threshold (Bps) to trigger bulk mode.
-	} `json:"drainer"`
-}
-
-func (p *parameters) Unmarshal(x []byte) error {
-	if len(x) < 1 {
-		x = []byte("{}")
-	}
-	return json.Unmarshal(x, p)
-}
-
-func (p *parameters) Marshal() ([]byte, error) { return json.Marshal(p) }
-
 // BackendManager provides TCP backend.
 type BackendManager struct {
 	// lock is not required by manager and handled by metanet framework.
@@ -206,18 +168,48 @@ func (m *BackendManager) createEndpoint(ep string) (*tcpEndpoint, error) {
 	return endpoint, nil
 }
 
+func (m *BackendManager) getEndpoint(ep string, create bool) (endpoint *tcpEndpoint, err error) {
+	if endpoint, _ = m.endpoints[ep]; endpoint != nil {
+		return endpoint, nil
+	}
+
+	if !create {
+		return nil, &backend.EndpointNotFoundError{
+			Endpoint: backend.Endpoint{
+				Endpoint: ep,
+				Type:     backend.TCPBackend,
+			},
+		}
+	}
+
+	if endpoint, err = m.createEndpoint(ep); err != nil {
+		return nil, err
+	}
+	m.endpoints[ep] = endpoint
+
+	return endpoint, nil
+}
+
 // Activate activates specific endpoint.
 // If parameters the endpoint aren't configurated, default parameters will be used.
 func (m *BackendManager) Activate(ep string) (err error) {
-	endpoint, _ := m.endpoints[ep]
-	if endpoint == nil {
-		endpoint, err = m.createEndpoint(ep)
+	endpoint, err := m.getEndpoint(ep, true)
+	if err != nil {
+		return err
 	}
-	return nil
+	return endpoint.Activate(
+		m.resources.Arbiter(),
+		m.resources.Log().WithField("endpoint", ep),
+	)
 }
 
 // Deactivate deactivates specific endpoint.
 func (m *BackendManager) Deactivate(ep string) error {
+	endpoint, err := m.getEndpoint(ep, false)
+	if err != nil {
+		return err
+	}
+	endpoint.Deactivate()
 	return nil
 }
 

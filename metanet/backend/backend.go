@@ -1,17 +1,8 @@
 package backend
 
 import (
-	"errors"
+	"fmt"
 	"net"
-)
-
-var (
-	ErrUnknownDestinationType = errors.New("Unknown destination type")
-	ErrOperationCanceled      = errors.New("operation canceled")
-	ErrConnectionDeined       = errors.New("connection deined")
-	ErrConnectionClosed       = errors.New("connection closed")
-	ErrBackendTypeUnknown     = errors.New("Unknown backend type")
-	ErrInvalidBackendConfig   = errors.New("Unknown backend config")
 )
 
 type Endpoint struct {
@@ -60,6 +51,6 @@ func (b Type) String() string {
 	case TCPBackend:
 		return "tcp"
 	default:
-		return "unknown"
+		return fmt.Sprintf("unknown(%v)", uint8(b))
 	}
 }

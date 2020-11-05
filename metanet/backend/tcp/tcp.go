@@ -36,6 +36,8 @@ var (
 )
 
 type tcpEndpoint struct {
+	shouldActive bool
+
 	endpoint   string
 	parameters parameters
 
@@ -54,6 +56,12 @@ type tcpEndpoint struct {
 	connID uint32
 }
 
+func newTCPEndpoint() *tcpEndpoint {
+	endpoint := &tcpEndpoint{}
+	endpoint.parameters.ResetDefault()
+	return endpoint
+}
+
 func (e *tcpEndpoint) Active() bool {
 	return e.listener != nil
 }
@@ -67,6 +75,8 @@ func (e *tcpEndpoint) Activate(arbiter *arbit.Arbiter, log *logging.Entry) error
 	}
 	e.lock.Lock()
 	defer e.lock.Unlock()
+
+	e.shouldActive = true
 
 	e.Arbiter = arbit.NewWithParent(arbiter)
 	e.log = log
@@ -108,13 +118,15 @@ func (e *tcpEndpoint) Activate(arbiter *arbit.Arbiter, log *logging.Entry) error
 	return nil
 }
 
-func (e *tcpEndpoint) Deactivate() error {
+func (e *tcpEndpoint) Deactivate() {
+	e.shouldActive = false
+
 	arbiter := e.Arbiter
 	if arbiter != nil {
 		arbiter.Shutdown()
 		arbiter.Join()
 	}
-	return nil
+	return
 }
 
 func (e *tcpEndpoint) serve() (err error) {
@@ -218,8 +230,7 @@ func (e *tcpEndpoint) getStartCode(log *logging.Entry) (lead []byte) {
 		return
 	}
 	lead = make([]byte, hex.DecodedLen(len(e.parameters.StartCode)))
-	_, err := hex.Decode(lead, []byte(e.parameters.StartCode))
-	if err != nil {
+	if _, err := hex.Decode(lead, []byte(e.parameters.StartCode)); err != nil {
 		log.Warnf("invalid startcode config: %v. (parse get error \"%v\")", e.parameters.StartCode, err)
 		return nil
 	}

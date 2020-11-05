@@ -1,8 +1,6 @@
 package backend
 
 import (
-	"io"
-
 	"github.com/crossmesh/fabric/common"
 	logging "github.com/sirupsen/logrus"
 	arbit "github.com/sunmxt/arbiter"
@@ -34,8 +32,8 @@ type Manager interface {
 	ListActiveEndpoints() []string
 }
 
-// ParameterizedBackendManager accepts parameter configuration.
-type ParameterizedBackendManager interface {
-	SetParams(string, args []string) error
-	ShowParams(io.Writer, ...string) error
+// ParameterizedManager accepts parameter configuration.
+type ParameterizedManager interface {
+	SetParams(endpoint string, args []string) error
+	ShowParams(...string) ([]map[string]string, error)
 }
