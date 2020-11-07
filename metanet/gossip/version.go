@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/crossmesh/fabric/cmd/version"
+	"github.com/crossmesh/fabric/common"
 	"github.com/crossmesh/sladder"
 )
 
@@ -73,7 +74,7 @@ func (v1 *VersionInfoV1) EncodeToString() (string, error) {
 // Validate validates VersionInfoV1.
 func (v1 *VersionInfoV1) Validate() error {
 	if v1.MetaVersion != 1 {
-		return &ModelVersionUnmatchedError{
+		return &common.ModelVersionUnmatchedError{
 			Actual:   uint16(v1.MetaVersion),
 			Expected: 1,
 			Name:     "VersionInfoV1",
@@ -92,11 +93,11 @@ func (v1 *VersionInfoV1) Decode(b []byte) error {
 		return nil
 	}
 	if len(b) < 2 {
-		return ErrBrokenStream
+		return common.ErrBrokenStream
 	}
 	metaVersion := b[0]
 	if metaVersion != 1 {
-		return &ModelVersionUnmatchedError{
+		return &common.ModelVersionUnmatchedError{
 			Actual:   uint16(v1.MetaVersion),
 			Expected: 1,
 			Name:     "VersionInfoV1",
@@ -105,12 +106,12 @@ func (v1 *VersionInfoV1) Decode(b []byte) error {
 
 	verLen := b[1]
 	if int(verLen) > len(b)-2 {
-		return ErrBrokenStream
+		return common.ErrBrokenStream
 	}
 	b = b[2:]
 	ver := &version.SemVer{}
 	if !ver.Parse(string(b[:verLen])) {
-		return ErrBrokenStream
+		return common.ErrBrokenStream
 	}
 	b = b[verLen:]
 
@@ -200,7 +201,7 @@ func (t *VersionInfoV1Txn) Merge(r *VersionInfoV1Txn, isConcurrent bool) (bool, 
 
 	changed := false
 	if r.new.MetaVersion != 1 {
-		return false, &ModelVersionUnmatchedError{
+		return false, &common.ModelVersionUnmatchedError{
 			Actual:   uint16(r.new.MetaVersion),
 			Expected: 1,
 			Name:     "VersionInfoV1",

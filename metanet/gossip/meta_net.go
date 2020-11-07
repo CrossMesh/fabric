@@ -309,7 +309,7 @@ func (v1 *NetworkEndpointsV1) DecodeStringAndValidate(x string) (err error) {
 // Validate validates fields.
 func (v1 *NetworkEndpointsV1) Validate() error {
 	if actual := v1.Version; actual != NetworkEndpointsV1Version {
-		return &ModelVersionUnmatchedError{Name: "NetworkEndpointsV1", Actual: actual, Expected: NetworkEndpointsV1Version}
+		return &common.ModelVersionUnmatchedError{Name: "NetworkEndpointsV1", Actual: actual, Expected: NetworkEndpointsV1Version}
 	}
 	return nil
 }

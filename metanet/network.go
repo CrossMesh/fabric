@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/crossmesh/fabric/common"
-	gossipUtils "github.com/crossmesh/fabric/gossip"
 	"github.com/crossmesh/fabric/metanet/backend"
 	"github.com/crossmesh/fabric/metanet/backend/tcp"
+	gmodel "github.com/crossmesh/fabric/metanet/gossip"
 	"github.com/crossmesh/sladder"
 	"github.com/crossmesh/sladder/engine/gossip"
 	logging "github.com/sirupsen/logrus"
@@ -101,7 +101,7 @@ type MetadataNetwork struct {
 		cluster      *sladder.Cluster
 		engine       *gossip.EngineInstance
 		transport    *gossipEngineTransport
-		nameResolver *gossipUtils.PeerNameResolver
+		nameResolver *gmodel.PeerNameResolver
 		self         *sladder.Node
 	}
 	self              *MetaPeer
@@ -305,7 +305,7 @@ func (n *MetadataNetwork) RegisterDataModel(
 	validator sladder.KVValidator,
 	versionWrap bool, forceReplace bool,
 	flags uint32) error {
-	if key == gossipUtils.DefaultNetworkEndpointKey {
+	if key == gmodel.DefaultNetworkEndpointKey {
 		return &KeyReservedError{key: key}
 	}
 	if versionWrap {

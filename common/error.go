@@ -1,5 +1,10 @@
 package common
 
+import (
+	"errors"
+	"fmt"
+)
+
 // Errors contains a set of errors.
 type Errors []error
 
@@ -34,3 +39,15 @@ func (e Errors) AsError() error {
 	}
 	return e
 }
+
+// ModelVersionUnmatchedError indicates that the version is invalid for current model structures.
+type ModelVersionUnmatchedError struct {
+	Actual, Expected uint16
+	Name             string
+}
+
+func (e *ModelVersionUnmatchedError) Error() string {
+	return fmt.Sprintf("%v version %v structure contains unmatched version %v", e.Name, e.Expected, e.Actual)
+}
+
+var ErrBrokenStream = errors.New("broken binary stream")

@@ -3,9 +3,17 @@ package gossip
 import (
 	"testing"
 
+	"github.com/crossmesh/fabric/edgerouter/driver"
 	"github.com/crossmesh/sladder"
 	"github.com/stretchr/testify/assert"
 )
+
+type MockMergingProps struct {
+	concurrent bool
+}
+
+func (p *MockMergingProps) Concurrent() bool         { return p.concurrent }
+func (p *MockMergingProps) Get(x string) interface{} { return nil }
 
 func TestOverlay(t *testing.T) {
 	t.Run("types", func(t *testing.T) {
@@ -47,23 +55,23 @@ func TestOverlay(t *testing.T) {
 			// compare
 			v11.Networks[NetworkID{
 				ID:         1,
-				DriverType: CrossmeshSymmetryEthernet,
+				DriverType: driver.CrossmeshSymmetryEthernet,
 			}] = &OverlayNetworkV1{}
 			v12.Networks[NetworkID{
 				ID:         1,
-				DriverType: CrossmeshSymmetryEthernet,
+				DriverType: driver.CrossmeshSymmetryEthernet,
 			}] = &OverlayNetworkV1{}
 			assert.True(t, v11.Equal(&v12))
 
 			v12.Networks[NetworkID{
 				ID:         2,
-				DriverType: CrossmeshSymmetryRoute,
+				DriverType: driver.CrossmeshSymmetryRoute,
 			}] = &OverlayNetworkV1{}
 			assert.False(t, v11.Equal(&v12))
 
 			v11.Networks[NetworkID{
 				ID:         2,
-				DriverType: CrossmeshSymmetryRoute,
+				DriverType: driver.CrossmeshSymmetryRoute,
 			}] = &OverlayNetworkV1{}
 			assert.True(t, v11.Equal(&v12))
 
@@ -73,7 +81,7 @@ func TestOverlay(t *testing.T) {
 			{
 				ov, has := v13.Networks[NetworkID{
 					ID:         1,
-					DriverType: CrossmeshSymmetryEthernet,
+					DriverType: driver.CrossmeshSymmetryEthernet,
 				}]
 				assert.True(t, has)
 				ov.Params = map[string][]byte{
@@ -84,7 +92,7 @@ func TestOverlay(t *testing.T) {
 			v13 = v11.Clone()
 			v13.Networks[NetworkID{
 				ID:         3,
-				DriverType: VxLAN,
+				DriverType: driver.VxLAN,
 			}] = &OverlayNetworkV1{}
 			assert.False(t, v13.Equal(&v11)) // is it really a deep copy?
 
@@ -93,7 +101,7 @@ func TestOverlay(t *testing.T) {
 			assert.Error(t, v14.Validate())
 
 			// encoding.
-			t.Log(v11.Networks[NetworkID{ID: 1, DriverType: CrossmeshSymmetryEthernet}])
+			t.Log(v11.Networks[NetworkID{ID: 1, DriverType: driver.CrossmeshSymmetryEthernet}])
 			s, err := v11.EncodeToString()
 			assert.NoError(t, err)
 			v15 := OverlayNetworksV1{}
@@ -109,11 +117,11 @@ func TestOverlay(t *testing.T) {
 			v11 := OverlayNetworksV1{Version: 1, Networks: make(map[NetworkID]*OverlayNetworkV1)}
 			v11.Networks[NetworkID{
 				ID:         1,
-				DriverType: CrossmeshSymmetryEthernet,
+				DriverType: driver.CrossmeshSymmetryEthernet,
 			}] = &OverlayNetworkV1{Params: p1}
 			v11.Networks[NetworkID{
 				ID:         2,
-				DriverType: CrossmeshSymmetryRoute,
+				DriverType: driver.CrossmeshSymmetryRoute,
 			}] = &OverlayNetworkV1{Params: p2}
 			pack, err := v11.EncodeToString()
 			assert.NoError(t, err)
@@ -130,8 +138,8 @@ func TestOverlay(t *testing.T) {
 				err = res.DecodeStringAndValidate(local.Value)
 				assert.NoError(t, err)
 				if assert.Equal(t, 2, len(res.Networks)) {
-					assert.Equal(t, p1, res.Networks[NetworkID{ID: 1, DriverType: CrossmeshSymmetryEthernet}].Params)
-					assert.Equal(t, p2, res.Networks[NetworkID{ID: 2, DriverType: CrossmeshSymmetryRoute}].Params)
+					assert.Equal(t, p1, res.Networks[NetworkID{ID: 1, DriverType: driver.CrossmeshSymmetryEthernet}].Params)
+					assert.Equal(t, p2, res.Networks[NetworkID{ID: 2, DriverType: driver.CrossmeshSymmetryRoute}].Params)
 				}
 			}
 			// concurrent
@@ -141,11 +149,11 @@ func TestOverlay(t *testing.T) {
 			}
 			v11.Networks[NetworkID{
 				ID:         3,
-				DriverType: CrossmeshSymmetryRoute,
+				DriverType: driver.CrossmeshSymmetryRoute,
 			}] = &OverlayNetworkV1{Params: p3}
 			delete(v11.Networks, NetworkID{
 				ID:         2,
-				DriverType: CrossmeshSymmetryRoute,
+				DriverType: driver.CrossmeshSymmetryRoute,
 			})
 			pack, err = v11.EncodeToString()
 			assert.NoError(t, err)
@@ -158,9 +166,9 @@ func TestOverlay(t *testing.T) {
 				err = res.DecodeStringAndValidate(local.Value)
 				assert.NoError(t, err)
 				if assert.Equal(t, 3, len(res.Networks)) {
-					assert.Equal(t, p1, res.Networks[NetworkID{ID: 1, DriverType: CrossmeshSymmetryEthernet}].Params)
-					assert.Equal(t, p2, res.Networks[NetworkID{ID: 2, DriverType: CrossmeshSymmetryRoute}].Params)
-					assert.Equal(t, p3, res.Networks[NetworkID{ID: 3, DriverType: CrossmeshSymmetryRoute}].Params)
+					assert.Equal(t, p1, res.Networks[NetworkID{ID: 1, DriverType: driver.CrossmeshSymmetryEthernet}].Params)
+					assert.Equal(t, p2, res.Networks[NetworkID{ID: 2, DriverType: driver.CrossmeshSymmetryRoute}].Params)
+					assert.Equal(t, p3, res.Networks[NetworkID{ID: 3, DriverType: driver.CrossmeshSymmetryRoute}].Params)
 				}
 			}
 			changed, err = v.SyncEx(local, nil, &MockMergingProps{concurrent: true})
@@ -179,8 +187,8 @@ func TestOverlay(t *testing.T) {
 				err = res.DecodeStringAndValidate(local.Value)
 				assert.NoError(t, err)
 				if assert.Equal(t, 2, len(res.Networks)) {
-					assert.Equal(t, p1, res.Networks[NetworkID{ID: 1, DriverType: CrossmeshSymmetryEthernet}].Params)
-					assert.Equal(t, p2, res.Networks[NetworkID{ID: 3, DriverType: CrossmeshSymmetryRoute}].Params)
+					assert.Equal(t, p1, res.Networks[NetworkID{ID: 1, DriverType: driver.CrossmeshSymmetryEthernet}].Params)
+					assert.Equal(t, p2, res.Networks[NetworkID{ID: 3, DriverType: driver.CrossmeshSymmetryRoute}].Params)
 				}
 			}
 		})

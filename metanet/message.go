@@ -4,8 +4,8 @@ import (
 	"context"
 	"sync"
 
-	gossipUtils "github.com/crossmesh/fabric/gossip"
 	"github.com/crossmesh/fabric/metanet/backend"
+	gmodel "github.com/crossmesh/fabric/metanet/gossip"
 	"github.com/crossmesh/fabric/proto"
 )
 
@@ -27,7 +27,7 @@ type Message struct {
 
 // GetPeerName calculates name of sender.
 func (m *Message) GetPeerName() string {
-	return gossipUtils.BuildNodeName(m.Endpoint)
+	return gmodel.BuildNodeName(m.Endpoint)
 }
 
 // Peer reports the message sender.
@@ -35,7 +35,7 @@ func (m *Message) Peer() (peer *MetaPeer) {
 	if peer = m.peer; peer != nil {
 		return peer
 	}
-	name := gossipUtils.BuildNodeName(m.Endpoint)
+	name := gmodel.BuildNodeName(m.Endpoint)
 	name2Peer := m.n.Publish.Name2Peer
 	peer, _ = name2Peer[name]
 	m.peer = peer

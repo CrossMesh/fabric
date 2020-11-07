@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/crossmesh/fabric/common"
-	gossipUtils "github.com/crossmesh/fabric/gossip"
 	"github.com/crossmesh/fabric/metanet/backend"
+	gmodel "github.com/crossmesh/fabric/metanet/gossip"
 	"github.com/crossmesh/sladder"
 	"github.com/crossmesh/sladder/engine/gossip"
 )
@@ -19,7 +19,7 @@ func (n *MetadataNetwork) SeedEndpoints(endpoints ...backend.Endpoint) (err erro
 	errs.Trace(n.gossip.cluster.Txn(func(t *sladder.Transaction) (changed bool) {
 		changed = false
 		for _, endpoint := range endpoints {
-			name := gossipUtils.BuildNodeName(endpoint)
+			name := gmodel.BuildNodeName(endpoint)
 			node := t.MostPossibleNode([]string{name})
 			if node != nil {
 				continue
@@ -28,13 +28,13 @@ func (n *MetadataNetwork) SeedEndpoints(endpoints ...backend.Endpoint) (err erro
 				errs.Trace(err)
 				return false
 			}
-			rtx, ierr := t.KV(node, gossipUtils.DefaultNetworkEndpointKey)
+			rtx, ierr := t.KV(node, gmodel.DefaultNetworkEndpointKey)
 			if ierr != nil {
 				errs.Trace(ierr)
 				return false
 			}
-			eps := rtx.(*gossipUtils.NetworkEndpointsV1Txn)
-			if eps.AddEndpoints(gossipUtils.NetworkEndpointV1{
+			eps := rtx.(*gmodel.NetworkEndpointsV1Txn)
+			if eps.AddEndpoints(gmodel.NetworkEndpointV1{
 				Type:     endpoint.Type,
 				Endpoint: endpoint.Endpoint,
 				Priority: 0,
@@ -98,7 +98,7 @@ func (n *MetadataNetwork) initializeMembership() (err error) {
 	n.gossip.engine = gossip.New(n.gossip.transport,
 		gossip.WithLogger(engineLogger),
 		gossip.WithGossipPeriod(time.Second*3)).(*gossip.EngineInstance)
-	n.gossip.nameResolver = gossipUtils.NewPeerNameResolver()
+	n.gossip.nameResolver = gmodel.NewPeerNameResolver()
 	if n.gossip.cluster, n.gossip.self, err =
 		sladder.NewClusterWithNameResolver(n.gossip.engine, n.gossip.nameResolver, sladder.Logger(logger)); err != nil {
 		n.log.Fatalf("failed to initialize gossip memebership. (err = \"%v\")", err)
@@ -106,16 +106,16 @@ func (n *MetadataNetwork) initializeMembership() (err error) {
 	}
 
 	// register basic model.
-	if err = n.gossip.cluster.RegisterKey(gossipUtils.DefaultNetworkEndpointKey,
-		n.gossip.engine.WrapVersionKVValidator(gossipUtils.NetworkEndpointsValidatorV1{}), true, 0); err != nil {
+	if err = n.gossip.cluster.RegisterKey(gmodel.DefaultNetworkEndpointKey,
+		n.gossip.engine.WrapVersionKVValidator(gmodel.NetworkEndpointsValidatorV1{}), true, 0); err != nil {
 		n.log.Fatalf("failed to register gossip model NetworkEndpointsValidatorV1. [gossip key = \"%v\"] (err = \"%v\")",
-			gossipUtils.DefaultNetworkEndpointKey, err.Error())
+			gmodel.DefaultNetworkEndpointKey, err.Error())
 		return
 	}
 
 	// watch for membership.
 	n.gossip.cluster.Watch(n.onGossipNodeEvent)
-	n.gossip.cluster.Keys(gossipUtils.DefaultNetworkEndpointKey).Watch(n.onNetworkEndpointEvent)
+	n.gossip.cluster.Keys(gmodel.DefaultNetworkEndpointKey).Watch(n.onNetworkEndpointEvent)
 
 	n.self = newMetaPeer(n.gossip.self, n.log, true)
 	n.peers[n.gossip.self] = n.self
@@ -143,26 +143,26 @@ func stringsEqual(n1s, n2s []string) bool {
 }
 
 func (n *MetadataNetwork) updateNetworkEndpointFromRaw(peer *MetaPeer, v string) {
-	v1 := gossipUtils.NetworkEndpointsV1{}
+	v1 := gmodel.NetworkEndpointsV1{}
 	if err := v1.DecodeString(v); err != nil {
 		n.log.Errorf("failed to decode NetworkEndpointsV1. (err = \"%v\")", err)
 		return
 	}
 	if v1.Endpoints == nil {
-		v1.Endpoints = gossipUtils.NetworkEndpointSetV1{}
+		v1.Endpoints = gmodel.NetworkEndpointSetV1{}
 	}
 	n.updateNetworkEndpoint(peer, v1.Endpoints)
 }
 
-func (n *MetadataNetwork) updateNetworkEndpoint(peer *MetaPeer, endpointSet gossipUtils.NetworkEndpointSetV1) {
+func (n *MetadataNetwork) updateNetworkEndpoint(peer *MetaPeer, endpointSet gmodel.NetworkEndpointSetV1) {
 	if endpointSet == nil { // endpoint not given. get latest one.
 		if err := n.gossip.cluster.Txn(func(t *sladder.Transaction) bool {
-			rtx, err := t.KV(peer.Node, gossipUtils.DefaultNetworkEndpointKey)
+			rtx, err := t.KV(peer.Node, gmodel.DefaultNetworkEndpointKey)
 			if err != nil {
 				n.log.Errorf("cannot load gossip network endpoint. network endpoint fails to be updated. (err = \"%v\")", err)
 				return false
 			}
-			eps := rtx.(*gossipUtils.NetworkEndpointsV1Txn)
+			eps := rtx.(*gmodel.NetworkEndpointsV1Txn)
 			endpointSet = eps.GetEndpoints()
 
 			return false
@@ -190,7 +190,7 @@ func (n *MetadataNetwork) updateNetworkEndpoint(peer *MetaPeer, endpointSet goss
 			Type:     ep.Type,
 			Endpoint: ep.Endpoint,
 		}
-		names = append(names, gossipUtils.BuildNodeName(endpoint))
+		names = append(names, gmodel.BuildNodeName(endpoint))
 		newEndpoints = append(newEndpoints, &MetaPeerEndpoint{
 			Endpoint: endpoint,
 			Priority: ep.Priority,
@@ -354,7 +354,7 @@ func (n *MetadataNetwork) onNetworkEndpointEvent(ctx *sladder.WatchEventContext,
 		if peer == nil {
 			break
 		}
-		n.updateNetworkEndpoint(peer, gossipUtils.NetworkEndpointSetV1{})
+		n.updateNetworkEndpoint(peer, gmodel.NetworkEndpointSetV1{})
 
 	case sladder.ValueChanged:
 		n.lock.RLock()
@@ -400,7 +400,7 @@ func (n *MetadataNetwork) delayPublishEndpoint(epoch uint32, delay bool) {
 			oldEndpoints[endpoint.Endpoint] = endpoint
 		}
 
-		var newEndpoints []*gossipUtils.NetworkEndpointV1
+		var newEndpoints []*gmodel.NetworkEndpointV1
 
 		localPublish := make([]*MetaPeerEndpoint, 0, len(n.backendManagers))
 		newBackends := map[backend.Endpoint]*backendPublish{}
@@ -435,7 +435,7 @@ func (n *MetadataNetwork) delayPublishEndpoint(epoch uint32, delay bool) {
 					})
 				}
 
-				newEndpoints = append(newEndpoints, &gossipUtils.NetworkEndpointV1{
+				newEndpoints = append(newEndpoints, &gmodel.NetworkEndpointV1{
 					Type:     endpoint.Type,
 					Endpoint: endpoint.Endpoint,
 					Priority: priority,
@@ -450,12 +450,12 @@ func (n *MetadataNetwork) delayPublishEndpoint(epoch uint32, delay bool) {
 		var errs common.Errors
 
 		errs.Trace(n.gossip.cluster.Txn(func(t *sladder.Transaction) bool {
-			rtx, err := t.KV(n.gossip.cluster.Self(), gossipUtils.DefaultNetworkEndpointKey)
+			rtx, err := t.KV(n.gossip.cluster.Self(), gmodel.DefaultNetworkEndpointKey)
 			if err != nil {
 				errs.Trace(err)
 				return false
 			}
-			eps := rtx.(*gossipUtils.NetworkEndpointsV1Txn)
+			eps := rtx.(*gmodel.NetworkEndpointsV1Txn)
 			eps.UpdateEndpoints(newEndpoints...)
 			return true
 		}))

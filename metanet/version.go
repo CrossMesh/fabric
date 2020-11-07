@@ -5,8 +5,7 @@ import (
 
 	"github.com/crossmesh/fabric/cmd/version"
 	"github.com/crossmesh/fabric/common"
-	"github.com/crossmesh/fabric/gossip"
-	gossipUtils "github.com/crossmesh/fabric/gossip"
+	gmodel "github.com/crossmesh/fabric/metanet/gossip"
 	"github.com/crossmesh/sladder"
 )
 
@@ -24,7 +23,7 @@ func (n *MetadataNetwork) getFeatures() []int {
 }
 
 func (n *MetadataNetwork) initializeVersionInfo() error {
-	versionModel := n.gossip.engine.WrapVersionKVValidator(&gossipUtils.VersionInfoValidatorV1{})
+	versionModel := n.gossip.engine.WrapVersionKVValidator(&gmodel.VersionInfoValidatorV1{})
 	modelKey := DefaultVersionInfoKey
 	if err := n.gossip.cluster.RegisterKey(DefaultVersionInfoKey, versionModel, false, 0); err != nil {
 		n.log.Errorf("failed to register version info model VersionInfoV1. [gossip key = \"%v\"] (err = \"%v\")", modelKey, err)
@@ -56,7 +55,7 @@ func (n *MetadataNetwork) delayProcessVersionInfoForPeer(peer *MetaPeer, d time.
 				errs.Trace(err)
 				return false
 			}
-			vi := rtx.(*gossipUtils.VersionInfoV1Txn)
+			vi := rtx.(*gmodel.VersionInfoV1Txn)
 
 			n.updateFromVersionInfo(peer, vi.VersionInfoV1())
 
@@ -82,7 +81,7 @@ func (n *MetadataNetwork) updatePeerFeatures(node *MetaPeer, set version.Feature
 	node.healthProbe = set.Enabled(version.HealthProbing)
 }
 
-func (n *MetadataNetwork) updateFromVersionInfo(peer *MetaPeer, vi *gossip.VersionInfoV1) {
+func (n *MetadataNetwork) updateFromVersionInfo(peer *MetaPeer, vi *gmodel.VersionInfoV1) {
 	n.updatePeerFeatures(peer, vi.Features)
 }
 
@@ -102,7 +101,7 @@ func (n *MetadataNetwork) updateFromRawVersionInfo(node *sladder.Node, newValue 
 		return
 	}
 
-	vi := gossipUtils.VersionInfoV1{}
+	vi := gmodel.VersionInfoV1{}
 	if err := vi.DecodeString(newValue); err != nil {
 		n.log.Warn("cannot decode VersionInfoV1. (err = \"%v\")", err)
 		return
@@ -111,7 +110,7 @@ func (n *MetadataNetwork) updateFromRawVersionInfo(node *sladder.Node, newValue 
 	n.updateFromVersionInfo(peer, &vi)
 }
 
-func (n *MetadataNetwork) enforceSelfVersionInfo(v1 *gossipUtils.VersionInfoV1) {
+func (n *MetadataNetwork) enforceSelfVersionInfo(v1 *gmodel.VersionInfoV1) {
 	if v1 == nil {
 		n.delayPublishVersionInfo(0)
 		return
@@ -137,7 +136,7 @@ func (n *MetadataNetwork) enforceSelfVersionInfo(v1 *gossipUtils.VersionInfoV1) 
 }
 
 func (n *MetadataNetwork) enforceSelfVersionInfoRaw(raw string) {
-	v1 := &gossipUtils.VersionInfoV1{}
+	v1 := &gmodel.VersionInfoV1{}
 	err := v1.DecodeString(raw)
 	if err != nil {
 		n.delayPublishVersionInfo(0)
@@ -187,7 +186,7 @@ func (n *MetadataNetwork) delayPublishVersionInfo(d time.Duration) {
 				errs.Trace(err)
 				return false
 			}
-			vi := rtx.(*gossipUtils.VersionInfoV1Txn)
+			vi := rtx.(*gmodel.VersionInfoV1Txn)
 
 			// build info.
 			ver := version.BuildSemVer

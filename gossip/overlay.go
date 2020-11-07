@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/crossmesh/fabric/common"
+	"github.com/crossmesh/fabric/edgerouter/driver"
 	"github.com/crossmesh/sladder"
 )
 
@@ -22,15 +24,6 @@ var (
 	ErrParamValidatorMissing = errors.New("parameter validator of overlay network ")
 )
 
-// ParamValidatorMissingError will be raised when no related parameter validator is found for a overlay network.
-type ParamValidatorMissingError struct {
-	want OverlayDriverType
-}
-
-func (e *ParamValidatorMissingError) Error() string {
-	return fmt.Sprintf("wants parameter validator for overlay network type %s", e.want)
-}
-
 type NetworkNotFoundError struct {
 	want NetworkID
 }
@@ -39,32 +32,10 @@ func (e *NetworkNotFoundError) Error() string {
 	return fmt.Sprintf("network %v not found", e.want.String())
 }
 
-// OverlayDriverType is global ovaley network driver ID.
-type OverlayDriverType uint16
-
-const (
-	UnknownOverlayDriver      = OverlayDriverType(0)
-	CrossmeshSymmetryEthernet = OverlayDriverType(1)
-	CrossmeshSymmetryRoute    = OverlayDriverType(2)
-	VxLAN                     = OverlayDriverType(3)
-)
-
-func (t OverlayDriverType) String() string {
-	switch t {
-	case CrossmeshSymmetryEthernet:
-		return "crossmesh_sym_eth"
-	case CrossmeshSymmetryRoute:
-		return "crossmesh_sym_route"
-	case VxLAN:
-		return "vxlan"
-	}
-	return "unknown"
-}
-
 // NetworkID is overlay network identifier.
 type NetworkID struct {
-	ID         int32             `json:"id,omitempty"`
-	DriverType OverlayDriverType `json:"drv,omitempty"`
+	ID         int32                    `json:"id,omitempty"`
+	DriverType driver.OverlayDriverType `json:"drv,omitempty"`
 }
 
 func (id NetworkID) String() string {
@@ -159,13 +130,13 @@ func (v1 *OverlayNetworkV1) Decode(bin []byte) error {
 	bin = bin[1:]
 	for ; numOfOptions > 0; numOfOptions-- {
 		if len(bin) < 1 {
-			return ErrBrokenStream
+			return common.ErrBrokenStream
 		}
 		// key
 		length := uint32(bin[0])
 		bin = bin[1:]
 		if len(bin) < int(length) {
-			return ErrBrokenStream
+			return common.ErrBrokenStream
 		}
 		key := string(bin[:length])
 		bin = bin[length:]
@@ -181,7 +152,7 @@ func (v1 *OverlayNetworkV1) Decode(bin []byte) error {
 			bin = bin[1:]
 		}
 		if len(bin) < int(length) {
-			return ErrBrokenStream
+			return common.ErrBrokenStream
 		}
 		d := bin[:length]
 		bin = bin[length:]
@@ -201,8 +172,10 @@ type packOverlayNetworkV1 struct {
 
 // OverlayNetworksV1 contains joined overlay networks of peer.
 type OverlayNetworksV1 struct {
-	Version  uint16                          `json:"v,omitempty"`
-	Networks map[NetworkID]*OverlayNetworkV1 `json:"nets,omitempty"`
+	Version     uint16 `json:"v,omitempty"`
+	UnderlayID  int32  `json:"u,omitempty"`
+	UnderlayIPs common.IPNetSet
+	Networks    map[NetworkID]*OverlayNetworkV1 `json:"nets,omitempty"`
 }
 
 const (
@@ -248,8 +221,10 @@ func (v1 *OverlayNetworksV1) Equal(x *OverlayNetworksV1) bool {
 }
 
 type packOverlayNetworksV1 struct {
-	Version  uint16                 `json:"v,omitempty"`
-	Networks []packOverlayNetworkV1 `json:"nets,omitempty"`
+	Version     uint16                 `json:"v,omitempty"`
+	Networks    []packOverlayNetworkV1 `json:"nets,omitempty"`
+	UnderlayID  int32                  `json:"uid,omitempty"`
+	UnderlayIPs common.IPNetSet
 }
 
 // EncodeToString trys to marshal structure to string.
@@ -306,7 +281,7 @@ func (v1 *OverlayNetworksV1) DecodeString(s string) (err error) {
 // Validate validates fields.
 func (v1 *OverlayNetworksV1) Validate() error {
 	if actual := v1.Version; actual != VersionOverlayNetworksV1 {
-		return &ModelVersionUnmatchedError{Name: "OverlayNetworksV1", Actual: actual, Expected: VersionOverlayNetworksV1}
+		return &common.ModelVersionUnmatchedError{Name: "OverlayNetworksV1", Actual: actual, Expected: VersionOverlayNetworksV1}
 	}
 	return nil
 }
