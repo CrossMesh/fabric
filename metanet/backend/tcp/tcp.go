@@ -36,7 +36,7 @@ var (
 )
 
 type tcpEndpoint struct {
-	shouldActive bool
+	manager *BackendManager
 
 	endpoint   string
 	parameters parameters
@@ -52,12 +52,11 @@ type tcpEndpoint struct {
 	link         sync.Map
 	resolveCache sync.Map
 
-	watch  sync.Map
 	connID uint32
 }
 
-func newTCPEndpoint() *tcpEndpoint {
-	endpoint := &tcpEndpoint{}
+func newTCPEndpoint(m *BackendManager) *tcpEndpoint {
+	endpoint := &tcpEndpoint{manager: m}
 	endpoint.parameters.ResetDefault()
 	return endpoint
 }
@@ -66,17 +65,16 @@ func (e *tcpEndpoint) Active() bool {
 	return e.listener != nil
 }
 
-func (e *tcpEndpoint) Activate(arbiter *arbit.Arbiter, log *logging.Entry) error {
+func (e *tcpEndpoint) Activate(arbiter *arbit.Arbiter, log *logging.Entry) {
 	if e.listener != nil {
-		return nil
+		return
 	}
 	if log == nil {
 		log = logging.WithField("module", "endpoint_tcp")
 	}
+
 	e.lock.Lock()
 	defer e.lock.Unlock()
-
-	e.shouldActive = true
 
 	e.Arbiter = arbit.NewWithParent(arbiter)
 	e.log = log
@@ -110,17 +108,10 @@ func (e *tcpEndpoint) Activate(arbiter *arbit.Arbiter, log *logging.Entry) error
 			e.resolveCache.Delete(k)
 			return true
 		})
-		e.watch.Range(func(k, v interface{}) bool {
-			e.watch.Delete(k)
-			return true
-		})
 	})
-	return nil
 }
 
 func (e *tcpEndpoint) Deactivate() {
-	e.shouldActive = false
-
 	arbiter := e.Arbiter
 	if arbiter != nil {
 		arbiter.Shutdown()
@@ -144,12 +135,16 @@ func (e *tcpEndpoint) serve() (err error) {
 		e.log.Infof("listening to %v", e.bind.String())
 		e.lock.Unlock()
 
+		e.manager.publishAddr(e.bind)
+
 		err = e.acceptConnection()
 
 		e.lock.Lock()
 		e.listener.Close()
 		e.listener = nil
 		e.lock.Unlock()
+
+		e.manager.unpublishAddr(e.bind)
 	}
 	return
 }
@@ -334,14 +329,6 @@ func (e *tcpEndpoint) resolve(endpoint string) (addr *net.TCPAddr, err error) {
 		addr = v.(*net.TCPAddr)
 	}
 	return
-}
-
-// Watch registers callback to receive packet.
-func (e *tcpEndpoint) Watch(proc func(backend.Backend, []byte, string)) error {
-	if proc != nil {
-		e.watch.Store(&proc, proc)
-	}
-	return nil
 }
 
 // IP returns bind IP.

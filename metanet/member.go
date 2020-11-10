@@ -406,7 +406,7 @@ func (n *MetadataNetwork) delayPublishEndpoint(epoch uint32, delay bool) {
 		newBackends := map[backend.Endpoint]*backendPublish{}
 
 		for ty, mgr := range n.backendManagers {
-			for _, ep := range mgr.ListActiveEndpoints() {
+			for _, ep := range mgr.publishEndpoints {
 				endpoint := backend.Endpoint{
 					Type: ty, Endpoint: ep,
 				}

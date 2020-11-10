@@ -4,7 +4,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"net"
 	"strconv"
 
 	"github.com/crossmesh/fabric/common"
@@ -12,6 +11,8 @@ import (
 )
 
 type parameters struct {
+	autoBind bool `json:"auto_bind" default:"false"`
+
 	Bind      string `json:"ep"`
 	StartCode string `json:"start_code"`
 
@@ -28,7 +29,7 @@ type parameters struct {
 	} `json:"encrypt"`
 
 	// drain options.
-	Driner struct {
+	Drainer struct {
 		EnableDrainer        bool   `json:"enable" default:"false"`
 		MaxDrainBuffer       uint32 `json:"max_buffer" default:"8388608"`     // maximum drain buffer in byte.
 		MaxDrainLatancy      uint32 `json:"max_latency" default:"5"`          // maximum latency tolerance in microsecond.
@@ -53,49 +54,52 @@ func (p *parameters) Unmarshal(x []byte) error {
 }
 
 func (p *parameters) ResetDefault() {
-	if err := json.Unmarshal([]byte("{}"), p); err != nil {
-		panic(err)
-	}
+	p.autoBind = false
+	p.StartCode = ""
+	p.SendTimeout = 50
+	p.SendBufferSize = 0
+	p.KeepalivePeriod = 60
+	p.ConnectTimeout = 15
+	p.MaxConcurrency = 1
+
+	p.Encryption.Enable = false
+	p.Encryption.PSK = ""
+
+	p.Drainer.EnableDrainer = false
+	p.Drainer.MaxDrainBuffer = 8388608
+	p.Drainer.MaxDrainLatancy = 5
+	p.Drainer.DrainStatisticWindow = 1000
+	p.Drainer.BulkThreshold = 2097152
 }
 
 func (p *parameters) Marshal() ([]byte, error) { return json.Marshal(p) }
 
 // SetParams sets parameters for endpoint.
 func (m *BackendManager) SetParams(ep string, args []string) error {
-	endpoint, err := m.getEndpoint(ep, true)
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	tx, err := m.resources.StoreTxn(true)
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if err != nil {
+			if rerr := tx.Rollback(); rerr != nil {
+				panic(rerr)
+			}
+		}
+	}()
 
-	reactivate := false
+	endpoint, isNew, err := m.getEndpointOrCreate(tx, ep, true)
+	if err != nil {
+		return err
+	}
 
 	newParams := endpoint.parameters.Clone()
 
 	paramList := common.ParamList{
 		Item: []*common.ParamItem{
-			{
-				Name: "bind",
-				Args: []*common.ParamArgument{
-					{
-						Name:        "bind address",
-						Destination: &newParams.Bind,
-						Validator: func(a *common.ParamArgument, bind string) (changed bool, err error) {
-							if _, err = net.ResolveTCPAddr("tcp", bind); err != nil {
-								return false, &common.ParamError{
-									Msg: fmt.Sprintf("cannot resolve bind address \"%v\". the address may be invalid. (resolve err = \"%v\")", bind, err),
-								}
-							}
-							if changed, err = common.ParamArgumentWriteDestinationString(a, bind); err != nil {
-								return false, err
-							}
-							if changed {
-								reactivate = true
-							}
-							return changed, nil
-						},
-					},
-				},
-			},
 			{
 				Name: "start_code",
 				Args: []*common.ParamArgument{
@@ -210,7 +214,7 @@ func (m *BackendManager) SetParams(ep string, args []string) error {
 				Args: []*common.ParamArgument{
 					{
 						Name:        "size (bytes)",
-						Destination: &newParams.Driner.MaxDrainBuffer,
+						Destination: &newParams.Drainer.MaxDrainBuffer,
 						Validator: common.Uint32ParamValidation(func(size uint32) error {
 							if size < 128 {
 								return &common.ParamError{
@@ -227,7 +231,7 @@ func (m *BackendManager) SetParams(ep string, args []string) error {
 				Args: []*common.ParamArgument{
 					{
 						Name:        "duration (ms)",
-						Destination: &newParams.Driner.MaxDrainLatancy,
+						Destination: &newParams.Drainer.MaxDrainLatancy,
 						Validator: common.Uint32ParamValidation(func(latency uint32) error {
 							if latency < 1 {
 								return &common.ParamError{
@@ -244,7 +248,7 @@ func (m *BackendManager) SetParams(ep string, args []string) error {
 				Args: []*common.ParamArgument{
 					{
 						Name:        "window (ms)",
-						Destination: &newParams.Driner.DrainStatisticWindow,
+						Destination: &newParams.Drainer.DrainStatisticWindow,
 						Validator: common.Uint32ParamValidation(func(latency uint32) error {
 							if latency < 10 {
 								return &common.ParamError{
@@ -261,7 +265,7 @@ func (m *BackendManager) SetParams(ep string, args []string) error {
 				Args: []*common.ParamArgument{
 					{
 						Name:        "threshold (bytes)",
-						Destination: &newParams.Driner.DrainStatisticWindow,
+						Destination: &newParams.Drainer.DrainStatisticWindow,
 						Validator: common.Uint32ParamValidation(func(latency uint32) error {
 							if latency < 4096 {
 								return &common.ParamError{
@@ -288,7 +292,7 @@ func (m *BackendManager) SetParams(ep string, args []string) error {
 				Args: []*common.ParamArgument{
 					{
 						Name:        "enabled (bool)",
-						Destination: &newParams.Driner.EnableDrainer,
+						Destination: &newParams.Drainer.EnableDrainer,
 						Validator:   common.BoolParamValidation(nil),
 					},
 				},
@@ -306,23 +310,10 @@ func (m *BackendManager) SetParams(ep string, args []string) error {
 		return err
 	}
 
-	if changedCount < 0 {
+	if changedCount < 0 && isNew {
 		// nothing changed.
 		return nil
 	}
-
-	// save param.
-	tx, err := m.resources.StoreTxn(true)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			if rerr := tx.Rollback(); rerr != nil {
-				panic(rerr)
-			}
-		}
-	}()
 
 	var data []byte
 	if data, err = newParams.Marshal(); err != nil {
@@ -338,25 +329,19 @@ func (m *BackendManager) SetParams(ep string, args []string) error {
 
 	tx.OnCommit(func() {
 		endpoint.parameters = *newParams
-		if reactivate && endpoint != nil && endpoint.shouldActive {
-			endpoint.Deactivate()
-			if ierr := endpoint.Activate(
-				m.resources.Arbiter(),
-				m.resources.Log().WithField("endpoint", ep),
-			); ierr != nil {
-				m.resources.Log().Error("cannot reactivate endpoint \"%v\". (err = \"%v\")", m.Type(), ep, err)
-			}
-		}
 	})
 	return tx.Commit()
 }
 
 // ShowParams builds parameter map for endpoint.
 func (m *BackendManager) ShowParams(eps ...string) ([]map[string]string, error) {
+	m.lock.RLock()
+	defer m.lock.RUnlock()
+
 	params := make([]map[string]string, 0)
 	for i := 0; i < len(eps); i++ {
 		ep := eps[i]
-		endpoint, err := m.getEndpoint(ep, false)
+		endpoint, err := m.getEndpoint(ep)
 		if err != nil {
 			if _, isNotFound := err.(*backend.EndpointNotFoundError); !isNotFound {
 				return nil, err
@@ -381,11 +366,11 @@ func (m *BackendManager) ShowParams(eps ...string) ([]map[string]string, error) 
 			paramMap["psk"] = "<none>"
 		}
 		paramMap["encrypt"] = strconv.FormatBool(endpoint.parameters.Encryption.Enable)
-		paramMap["drainer"] = strconv.FormatBool(endpoint.parameters.Driner.EnableDrainer)
-		paramMap["max_drain_buffer"] = strconv.FormatUint(uint64(endpoint.parameters.Driner.MaxDrainBuffer), 10)
-		paramMap["max_drain_latency"] = strconv.FormatUint(uint64(endpoint.parameters.Driner.MaxDrainBuffer), 10)
-		paramMap["drain_stat_win"] = strconv.FormatUint(uint64(endpoint.parameters.Driner.DrainStatisticWindow), 10)
-		paramMap["drain_bulk_thre"] = strconv.FormatUint(uint64(endpoint.parameters.Driner.BulkThreshold), 10)
+		paramMap["drainer"] = strconv.FormatBool(endpoint.parameters.Drainer.EnableDrainer)
+		paramMap["max_drain_buffer"] = strconv.FormatUint(uint64(endpoint.parameters.Drainer.MaxDrainBuffer), 10)
+		paramMap["max_drain_latency"] = strconv.FormatUint(uint64(endpoint.parameters.Drainer.MaxDrainBuffer), 10)
+		paramMap["drain_stat_win"] = strconv.FormatUint(uint64(endpoint.parameters.Drainer.DrainStatisticWindow), 10)
+		paramMap["drain_bulk_thre"] = strconv.FormatUint(uint64(endpoint.parameters.Drainer.BulkThreshold), 10)
 
 		params = append(params, paramMap)
 	}

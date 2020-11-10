@@ -169,9 +169,9 @@ func (l *TCPLink) InitializeAESGCM(key []byte, nonce []byte) (err error) {
 }
 
 func (l *TCPLink) initializeWriter() {
-	if l.backend.parameters.Driner.EnableDrainer {
-		bufferSize, latency, statisticWindow, threshold := l.backend.parameters.Driner.MaxDrainBuffer,
-			l.backend.parameters.Driner.MaxDrainLatancy, l.backend.parameters.Driner.DrainStatisticWindow, l.backend.parameters.Driner.BulkThreshold
+	if l.backend.parameters.Drainer.EnableDrainer {
+		bufferSize, latency, statisticWindow, threshold := l.backend.parameters.Drainer.MaxDrainBuffer,
+			l.backend.parameters.Drainer.MaxDrainLatancy, l.backend.parameters.Drainer.DrainStatisticWindow, l.backend.parameters.Drainer.BulkThreshold
 		if bufferSize < 1 {
 			bufferSize = DefaultDrainBufferSize
 		}
@@ -314,7 +314,7 @@ func (e *tcpEndpoint) forwardProc(log *logging.Entry, key string, link *TCPLink)
 		}
 		if err = link.read(func(frame []byte) bool {
 			// deliver frame to all watchers.
-			e.watch.Range(func(k, v interface{}) bool {
+			e.manager.watchers.Range(func(k, v interface{}) bool {
 				if emit, ok := v.(func(backend.Backend, []byte, string)); ok {
 					emit(e, frame, link.publish)
 				}

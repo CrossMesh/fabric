@@ -29,7 +29,6 @@ type Backend interface {
 	Type() Type
 
 	Connect(string) (Link, error)
-	Watch(func(Backend, []byte, string)) error
 	Shutdown()
 
 	Publish() string

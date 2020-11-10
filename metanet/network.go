@@ -2,17 +2,14 @@ package metanet
 
 import (
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/crossmesh/fabric/common"
 	"github.com/crossmesh/fabric/metanet/backend"
-	"github.com/crossmesh/fabric/metanet/backend/tcp"
 	gmodel "github.com/crossmesh/fabric/metanet/gossip"
 	"github.com/crossmesh/sladder"
 	"github.com/crossmesh/sladder/engine/gossip"
@@ -74,6 +71,24 @@ type backendPublish struct {
 	Priority uint32
 }
 
+type managerRuntime struct {
+	backend.Manager
+
+	n *MetadataNetwork
+
+	publishEndpoints []string
+}
+
+func (r *managerRuntime) UpdatePublish(eps ...string) {
+	if r.publishEndpoints != nil {
+		r.publishEndpoints = r.publishEndpoints[:0]
+	}
+
+	r.publishEndpoints = append(r.publishEndpoints, eps...)
+
+	r.n.RepublishEndpoint()
+}
+
 // MetadataNetwork implements simple decentalized communication metadata network.
 type MetadataNetwork struct {
 	// handlers.
@@ -112,7 +127,7 @@ type MetadataNetwork struct {
 	versionInfoKey string
 
 	// manage backends.
-	backendManagers  map[backend.Type]backend.Manager
+	backendManagers  map[backend.Type]*managerRuntime
 	endpointPriority map[backend.Endpoint]uint32
 	epoch            uint32
 
@@ -145,7 +160,7 @@ func NewMetadataNetwork(arbiter *arbit.Arbiter, log *logging.Entry, store common
 	n = &MetadataNetwork{
 		peers: make(map[*sladder.Node]*MetaPeer),
 		//backends:          make(map[backend.Endpoint]backend.Backend),
-		backendManagers:   make(map[backend.Type]backend.Manager),
+		backendManagers:   make(map[backend.Type]*managerRuntime),
 		quitChan:          make(chan struct{}),
 		nameConflictNodes: map[*MetaPeer]struct{}{},
 
@@ -178,17 +193,15 @@ func NewMetadataNetwork(arbiter *arbit.Arbiter, log *logging.Entry, store common
 	if err = n.populateStore(store); err != nil {
 		return nil, err
 	}
-	if err = n.initialzeBackendManager(); err != nil {
-		return nil, err
-	}
 	if err = n.initializeMembership(); err != nil {
 		return nil, err
 	}
 	if err = n.initializeVersionInfo(); err != nil {
 		return nil, err
 	}
-
-	n.activate()
+	if err = n.reloadEndpointPriorities(); err != nil {
+		return nil, err
+	}
 
 	n.arbiters.main.Go(func() {
 		select {
@@ -203,24 +216,14 @@ func NewMetadataNetwork(arbiter *arbit.Arbiter, log *logging.Entry, store common
 	return n, nil
 }
 
-func (n *MetadataNetwork) registerBackendManager(mgr backend.Manager) error {
-	ty := mgr.Type()
-	// store.
-	store := &common.SubpathStore{Store: n.store}
-	store.Prefix = append(store.Prefix, backendStorePath...)
-	typeKey := strconv.FormatUint(uint64(ty), 10)
-	store.Prefix = append(store.Prefix, typeKey, "store")
+// RegisterBackendManager registers backend manager.
+func (n *MetadataNetwork) RegisterBackendManager(mgr backend.Manager) error {
+	if mgr == nil {
+		return nil
+	}
 
-	// init
-	res := &managerResourceCollection{
-		log:     n.log.WithField("backend", ty),
-		arbiter: n.arbiters.backend,
-		store:   store,
-	}
-	if err := mgr.Init(res); err != nil {
-		n.log.Errorf("failed to initialize backend manager. [type = %v] (err = \"%v\")", mgr.Type(), err)
-		return err
-	}
+	ty := mgr.Type()
+
 	old, _ := n.backendManagers[ty]
 	if old != nil {
 		err := fmt.Errorf("too many managers with type %v are registered", ty)
@@ -228,20 +231,37 @@ func (n *MetadataNetwork) registerBackendManager(mgr backend.Manager) error {
 		return err
 	}
 
-	return nil
-}
+	// store.
+	store := &common.SubpathStore{Store: n.store}
+	store.Prefix = append(store.Prefix, backendStorePath...)
+	typeKey := strconv.FormatUint(uint64(ty), 10)
+	store.Prefix = append(store.Prefix, typeKey, "store")
 
-func (n *MetadataNetwork) initialzeBackendManager() error {
-	// TCP.
-	if err := n.registerBackendManager(&tcp.BackendManager{}); err != nil {
+	// init
+	runtime := &managerRuntime{
+		Manager: mgr,
+		n:       n,
+	}
+	res := &managerResourceCollection{
+		log:     n.log.WithField("backend", ty),
+		arbiter: arbit.NewWithParent(n.arbiters.backend),
+		store:   store,
+		runtime: runtime,
+	}
+	if err := mgr.Init(res); err != nil {
+		n.log.Errorf("failed to initialize backend manager. [type = %v] (err = \"%v\")", mgr.Type(), err)
 		return err
 	}
-	return nil
-}
+	if err := mgr.Watch(n.receiveRemote); err != nil {
+		err = fmt.Errorf("failed to watch message. [type = %v] (err = \"%v\")", mgr.Type(), err)
+		n.log.Error(err)
+		res.arbiter.Shutdown()
+		return err
+	}
 
-func (n *MetadataNetwork) activate() {
-	n.epoch++
-	n.delayReactivateEndpoints(n.epoch, 0)
+	n.backendManagers[ty] = runtime
+
+	return nil
 }
 
 func (n *MetadataNetwork) populateStore(store common.Store) error {
@@ -254,12 +274,121 @@ func (n *MetadataNetwork) populateStore(store common.Store) error {
 	return nil
 }
 
+func (n *MetadataNetwork) reloadEndpointPriorities() error {
+	path := []string{"priorities"}
+	tx, err := n.store.Txn(true)
+	if err != nil {
+		n.log.Errorf("cannot start store transaction to load priorities setting. (err = \"%v\")", err)
+		return err
+	}
+
+	var purgeKeys []string
+	var ty backend.Type
+	var ep string
+	tx.Range(path, func(path []string, data []byte) bool {
+		key := path[len(path)-1]
+		if len(key) < 3 {
+			n.log.Warn("invalid priority setting key \"%q\" found. this key will be purged.")
+			purgeKeys = append(purgeKeys, key)
+			return true
+		}
+		rty, err := strconv.ParseUint(key[:2], 16, 8)
+		if err != nil {
+			n.log.Warn("invalid priority setting key \"%q\" found. this key will be purged. (err = \"%v\")", err)
+			purgeKeys = append(purgeKeys, key)
+		}
+		ty = backend.Type(rty)
+		ep = key[2:]
+		endpoint := backend.Endpoint{
+			Type: ty, Endpoint: ep,
+		}
+		if len(data) != 4 {
+			n.log.Warn("invalid priority setting data for \"%v\". ignored.", endpoint)
+			return true
+		}
+
+		// load
+		priority := binary.BigEndian.Uint32(data)
+		n.endpointPriority[endpoint] = priority
+
+		return true
+	})
+
+	commit := len(purgeKeys) > 0
+	for _, key := range purgeKeys {
+		if err := tx.Delete(append(path, key)); err != nil {
+			n.log.Warn("cannot remove invalid key \"%q\". skip removal process. (err = \"%v\")", err)
+			commit = false
+			break
+		}
+	}
+
+	if commit {
+		if err = tx.Commit(); err != nil {
+			n.log.Warn("failed to commit transaction. skip cleaning invalid priority key. (err = \"%v\")", err)
+			commit = false
+		}
+	}
+
+	if !commit {
+		if err = tx.Rollback(); err != nil {
+			n.log.Errorf("failed to rollback transaction. (err = \"%v\")", err)
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (n *MetadataNetwork) getEndpointPriority(endpoint backend.Endpoint) uint32 {
 	priority, hasPriority := n.endpointPriority[endpoint]
 	if hasPriority {
 		priority = defaultEndpointPriority
 	}
 	return priority
+}
+
+// SetEndpointPriority sets endpoint priority.
+func (n *MetadataNetwork) SetEndpointPriority(endpoint backend.Endpoint, priority uint32) error {
+	if priority > lowestEndpointPriority {
+		return fmt.Errorf("priority cannot be lower than %v", lowestEndpointPriority)
+	}
+
+	n.lock.Lock()
+	defer n.lock.Unlock()
+
+	path := []string{"priorities"}
+
+	tx, err := n.store.Txn(true)
+	if err != nil {
+		n.log.Errorf("cannot start store transaction to set endpoint priority. (err = \"%v\")", err)
+		return err
+	}
+	defer func() {
+		if err != nil {
+			if rerr := tx.Rollback(); rerr != nil {
+				panic(rerr)
+			}
+		}
+	}()
+
+	key := fmt.Sprintf("%02x%v", endpoint.Type, endpoint.Endpoint)
+	path = append(path, "priorities", key)
+
+	var buf [4]byte
+
+	binary.BigEndian.PutUint32(buf[:], priority)
+	if err = tx.Set(path, buf[:]); err != nil {
+		n.log.Errorf("failed to write endpoint priority. (err = \"%v\")", err)
+		return err
+	}
+
+	tx.OnCommit(func() {
+		n.endpointPriority[endpoint] = priority
+	})
+	err = tx.Commit()
+
+	return err
 }
 
 // SetRegion sets region of self.
@@ -360,229 +489,4 @@ func (n *MetadataNetwork) Close() {
 	close(n.quitChan)
 
 	n.lock.Unlock()
-}
-
-func (n *MetadataNetwork) delayReactivateEndpoints(epoch uint32, d time.Duration) {
-	n.arbiters.main.Go(func() {
-		if d > 0 {
-			select {
-			case <-time.After(d):
-			case <-n.arbiters.main.Exit():
-				return
-			}
-		}
-
-		n.lock.Lock()
-		defer n.lock.Unlock()
-
-		if epoch < n.Publish.Epoch {
-			return
-		}
-
-		tx, err := n.store.Txn(false)
-		if err != nil {
-			n.log.Error("endpoint reactivation got transaction failure. retry later. (err = \"%v\")", err)
-			n.delayReactivateEndpoints(epoch, time.Second*5)
-			return
-		}
-
-		var basePath []string
-		basePath = append(basePath, backendStorePath...)
-
-		changed, failure := false, false
-
-		for ty, mgr := range n.backendManagers {
-			typeKey := strconv.FormatUint(uint64(ty), 10)
-			path := append(basePath, typeKey, "active")
-			v, err := tx.Get(path)
-			if err != nil {
-				n.log.Error("endpoint reactivation got txn.Get() failure. retry later. (err = \"%v\")", err)
-				n.delayReactivateEndpoints(epoch, time.Second*5)
-				return
-			}
-
-			expected := &storedActiveEndpoints{}
-			if err = json.Unmarshal(v, expected); err != nil {
-				n.log.Warn("cannot decode metadata of active endpoint. store may be corrupted. treat it as no active endpoint. (err = \"%v\")", err)
-			}
-
-			activeEndpointSet := make(map[string]struct{}, len(expected.Endpoints))
-			for _, ep := range expected.Endpoints {
-				activeEndpointSet[ep] = struct{}{}
-			}
-
-			for _, endpoint := range mgr.ListActiveEndpoints() {
-				_, active := activeEndpointSet[endpoint]
-				if !active {
-					if err = mgr.Deactivate(endpoint); err != nil {
-						n.log.Warn("cannot deactivate %v. retry later. (err = \"%v\")", backend.Endpoint{
-							Type: ty, Endpoint: endpoint,
-						})
-						failure = true
-					}
-					changed = true
-				}
-			}
-
-			for ep := range activeEndpointSet {
-				fullEndpoint := backend.Endpoint{
-					Type: ty, Endpoint: ep,
-				}
-				if mgr.GetBackend(ep) == nil {
-					if err = mgr.Activate(ep); err != nil {
-						n.log.Warn("cannot activate %v. retry later. (err = \"%v\")", fullEndpoint)
-						failure = true
-					}
-					changed = true
-				}
-
-				// refresh pritority.
-				key := fmt.Sprintf("%02x%v", ty, ep)
-				path = append(path, "priorities", key)
-				v, err := tx.Get(path)
-				if err != nil {
-					n.log.Error("endpoint reactivation got txn.Get() failure. retry later. (err = \"%v\")", err)
-					n.delayReactivateEndpoints(epoch, time.Second*5)
-					return
-				}
-				if v != nil && len(v) == 4 {
-					priority := binary.BigEndian.Uint32(v)
-					n.endpointPriority[fullEndpoint] = priority
-				}
-			}
-		}
-
-		if changed {
-			n.delayPublishEndpoint(epoch, false)
-		}
-
-		if failure {
-			epoch++
-			n.delayReactivateEndpoints(epoch, d)
-		}
-
-		if epoch > n.epoch {
-			n.epoch = epoch
-		}
-	})
-}
-
-func (n *MetadataNetwork) ensureEndpointActiveState(activated bool, endpoints ...backend.Endpoint) error {
-	if len(endpoints) < 1 {
-		return nil
-	}
-
-	n.lock.Lock()
-	defer n.lock.Unlock()
-
-	tx, err := n.store.Txn(true)
-	if err != nil {
-		return err
-	}
-
-	sort.Slice(endpoints, func(i, j int) bool { return endpoints[i].Type < endpoints[j].Type })
-
-	changed := false
-	defer func() {
-		if err != nil || !changed {
-			if rerr := tx.Rollback(); rerr != nil {
-				panic(rerr)
-			}
-		}
-	}()
-
-	var basePath []string
-	basePath = append(basePath, backendStorePath...)
-
-	for cur := 0; cur < len(endpoints); {
-		ty := endpoints[0].Type
-		activeSet := make(map[string]struct{})
-		needWriteBack := false
-
-		// read current states.
-		typeKey := strconv.FormatUint(uint64(ty), 10)
-		path := append(basePath, typeKey, "active")
-		v, err := tx.Get(path)
-		if err != nil {
-			return err
-		}
-		stored := &storedActiveEndpoints{}
-		if err = json.Unmarshal(v, stored); err != nil {
-			n.log.Warn("cannot decode metadata of active endpoints. metadata may be corrupted. treat it as no active endpoint. (err = \"%v\")", err)
-		}
-		activeSet = make(map[string]struct{}, len(stored.Endpoints))
-		for _, endpoint := range stored.Endpoints {
-			activeSet[endpoint] = struct{}{}
-		}
-
-		// modify
-		for endpoint := endpoints[cur]; endpoint.Type == ty && cur < len(endpoints); cur++ {
-			_, curActivated := activeSet[endpoint.Endpoint]
-			if curActivated == activated {
-				continue
-			}
-			needWriteBack = true
-			if activated {
-				activeSet[endpoint.Endpoint] = struct{}{}
-			} else {
-				delete(activeSet, endpoint.Endpoint)
-			}
-		}
-
-		// store.
-		if needWriteBack {
-			stored := &storedActiveEndpoints{}
-			for endpoint := range activeSet {
-				stored.Endpoints = append(stored.Endpoints, endpoint)
-			}
-			v, err := json.Marshal(stored)
-			if err != nil {
-				n.log.Error("failed to store metadata of active endpoints. (err = \"%v\")", err)
-				return err
-			}
-			if err = tx.Set(path, v); err != nil {
-				n.log.Error("failed to store encoded metadata. (err = \"%v\")", err)
-				return err
-			}
-
-			changed = true
-		}
-	}
-
-	if changed {
-		epoch := n.epoch + 1
-		tx.OnCommit(func() {
-			n.delayReactivateEndpoints(epoch, 0)
-			n.epoch = epoch
-		})
-	}
-
-	return nil
-}
-
-// DeactivateEndpoint deactivates endpoints.
-func (n *MetadataNetwork) DeactivateEndpoint(endpoints ...backend.Endpoint) error {
-	return n.ensureEndpointActiveState(false, endpoints...)
-}
-
-// ActivateEndpoint activates endpoints.
-func (n *MetadataNetwork) ActivateEndpoint(endpoints ...backend.Endpoint) error {
-	return n.ensureEndpointActiveState(true, endpoints...)
-}
-
-// SetEndpointParameters sets parameters of endpoint
-func (n *MetadataNetwork) SetEndpointParameters(endpoint backend.Endpoint, argList []string) error {
-	n.lock.Lock()
-	defer n.lock.Unlock()
-
-	mgr, _ := n.backendManagers[endpoint.Type]
-	if mgr == nil {
-		return fmt.Errorf("invalid endpoint type %v(%v)", uint8(endpoint.Type), endpoint.Type)
-	}
-
-	pmgr, parameterized := mgr.(backend.ParameterizedManager)
-	if !parameterized {
-		return fmt.Errorf("endpoint %v:%v accept no parameter", endpoint.Type, endpoint.Endpoint)
-	}
-	return pmgr.SetParams(endpoint.Endpoint, argList)
 }
