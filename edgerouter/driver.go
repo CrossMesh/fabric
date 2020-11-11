@@ -1,6 +1,8 @@
 package edgerouter
 
 import (
+	"io"
+
 	"github.com/crossmesh/fabric/gossip"
 	arbit "github.com/sunmxt/arbiter"
 )
@@ -16,7 +18,6 @@ type OverlayDriver interface {
 	Type() gossip.OverlayDriverType
 
 	Init(*arbit.Arbiter, ResourceFactory) error
-
 	HandleEvent(overlayEvent)
-	BeginUserOptionTxn(writable bool) (UserOptionTxn, error)
+	UserCommand(info, err io.Writer, args []string) error
 }
