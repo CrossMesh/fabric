@@ -186,4 +186,25 @@ func TestIPNetSet(t *testing.T) {
 		assert.Equal(t, net.IPMask{0xFF, 0xFF, 0x80, 0x00}, IPMaskFromPrefixLen(17, 4))
 		assert.Equal(t, net.IPMask{0xFF, 0xFF, 0xFE, 0x00}, IPMaskFromPrefixLen(23, 4))
 	})
+
+	t.Run("ipset_coding", func(t *testing.T) {
+		nets := ipSetFromCIDRList(
+			"10.0.0.0/8",
+			"10.1.0.0/8",
+			"10.0.0.0/8",
+			"192.168.16.0/20",
+			"192.168.16.0/24",
+			"192.168.0.0/24",
+			"192.168.16.0/20")
+
+		var decoded IPNetSet
+		t.Log("origin =", nets)
+		bins, err := IPNetSetEncode(nets)
+		assert.NoError(t, err)
+		t.Log("encoded =", bins)
+		decoded, err = IPNetSetDecode(bins)
+		assert.NoError(t, err)
+		t.Log("decoded =", decoded)
+		assert.True(t, decoded.Equal(&nets))
+	})
 }

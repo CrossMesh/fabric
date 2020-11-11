@@ -50,4 +50,12 @@ func (e *ModelVersionUnmatchedError) Error() string {
 	return fmt.Sprintf("%v version %v structure contains unmatched version %v", e.Name, e.Expected, e.Actual)
 }
 
-var ErrBrokenStream = errors.New("broken binary stream")
+var (
+	ErrBrokenStream      = errors.New("broken binary stream")
+	ErrIPTooLong         = errors.New("IP is too long")
+	ErrIPMaskTooLong     = errors.New("IPMask is too long")
+	ErrBrokenIPNet       = errors.New("IPNet structure is broken")
+	ErrBrokenIPNetBinary = errors.New("IPNet binary stream is broken")
+
+	ErrParamValidatorMissing = errors.New("parameter validator of overlay network ")
+)

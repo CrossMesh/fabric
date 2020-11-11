@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"sync"
 
 	"github.com/crossmesh/fabric/common"
@@ -15,31 +14,12 @@ import (
 	"github.com/crossmesh/sladder"
 )
 
-var (
-	ErrIPTooLong         = errors.New("IP is too long")
-	ErrIPMaskTooLong     = errors.New("IPMask is too long")
-	ErrBrokenIPNet       = errors.New("IPNet structure is broken")
-	ErrBrokenIPNetBinary = errors.New("IPNet binary stream is broken")
-
-	ErrParamValidatorMissing = errors.New("parameter validator of overlay network ")
-)
-
 type NetworkNotFoundError struct {
-	want NetworkID
+	want driver.NetworkID
 }
 
 func (e *NetworkNotFoundError) Error() string {
 	return fmt.Sprintf("network %v not found", e.want.String())
-}
-
-// NetworkID is overlay network identifier.
-type NetworkID struct {
-	ID         int32                    `json:"id,omitempty"`
-	DriverType driver.OverlayDriverType `json:"drv,omitempty"`
-}
-
-func (id NetworkID) String() string {
-	return id.DriverType.String() + "/" + strconv.FormatInt(int64(id.ID), 10)
 }
 
 const (
@@ -166,7 +146,7 @@ func (v1 *OverlayNetworkV1) Decode(bin []byte) error {
 }
 
 type packOverlayNetworkV1 struct {
-	NetworkID
+	driver.NetworkID
 	Params string `json:"p"`
 }
 
@@ -175,7 +155,7 @@ type OverlayNetworksV1 struct {
 	Version     uint16 `json:"v,omitempty"`
 	UnderlayID  int32  `json:"u,omitempty"`
 	UnderlayIPs common.IPNetSet
-	Networks    map[NetworkID]*OverlayNetworkV1 `json:"nets,omitempty"`
+	Networks    map[driver.NetworkID]*OverlayNetworkV1 `json:"nets,omitempty"`
 }
 
 const (
@@ -188,7 +168,7 @@ func (v1 *OverlayNetworksV1) Clone() (new *OverlayNetworksV1) {
 	new = &OverlayNetworksV1{}
 	new.Version = v1.Version
 	if v1.Networks != nil {
-		new.Networks = map[NetworkID]*OverlayNetworkV1{}
+		new.Networks = map[driver.NetworkID]*OverlayNetworkV1{}
 		for netID, cfg := range v1.Networks {
 			new.Networks[netID] = cfg.Clone()
 		}
@@ -221,10 +201,9 @@ func (v1 *OverlayNetworksV1) Equal(x *OverlayNetworksV1) bool {
 }
 
 type packOverlayNetworksV1 struct {
-	Version     uint16                 `json:"v,omitempty"`
-	Networks    []packOverlayNetworkV1 `json:"nets,omitempty"`
-	UnderlayID  int32                  `json:"uid,omitempty"`
-	UnderlayIPs common.IPNetSet
+	Version    uint16                 `json:"v,omitempty"`
+	Networks   []packOverlayNetworkV1 `json:"nets,omitempty"`
+	UnderlayID int32                  `json:"uid,omitempty"`
 }
 
 // EncodeToString trys to marshal structure to string.
@@ -258,7 +237,7 @@ func (v1 *OverlayNetworksV1) DecodeString(s string) (err error) {
 	if err = json.Unmarshal([]byte(s), &pack); err != nil {
 		return err
 	}
-	netMap := make(map[NetworkID]*OverlayNetworkV1, len(pack.Networks))
+	netMap := make(map[driver.NetworkID]*OverlayNetworkV1, len(pack.Networks))
 	for _, net := range pack.Networks {
 		if _, dup := netMap[net.NetworkID]; dup {
 			return fmt.Errorf("OverlayNetworksV1 has broken integrity. Duplicated network ID %v found", net.NetworkID)
@@ -464,7 +443,7 @@ func (t *OverlayNetworksV1Txn) Updated() bool {
 func (t *OverlayNetworksV1Txn) Version() uint16 { return t.cur.Version }
 
 // RemoveNetwork removes networks according to a set of NetworkID.
-func (t *OverlayNetworksV1Txn) RemoveNetwork(ids ...NetworkID) {
+func (t *OverlayNetworksV1Txn) RemoveNetwork(ids ...driver.NetworkID) {
 	if len(ids) < 1 {
 		return
 	}
@@ -475,7 +454,7 @@ func (t *OverlayNetworksV1Txn) RemoveNetwork(ids ...NetworkID) {
 }
 
 // AddNetwork adds networks according to a set of NetworkID.
-func (t *OverlayNetworksV1Txn) AddNetwork(ids ...NetworkID) (err error) {
+func (t *OverlayNetworksV1Txn) AddNetwork(ids ...driver.NetworkID) (err error) {
 	if len(ids) < 1 {
 		return nil
 	}
@@ -492,7 +471,7 @@ func (t *OverlayNetworksV1Txn) AddNetwork(ids ...NetworkID) (err error) {
 }
 
 // NetworkList returns NetworkID list of existing network.
-func (t *OverlayNetworksV1Txn) NetworkList() (ids []NetworkID) {
+func (t *OverlayNetworksV1Txn) NetworkList() (ids []driver.NetworkID) {
 	for netID := range t.cur.Networks {
 		ids = append(ids, netID)
 	}
@@ -500,7 +479,7 @@ func (t *OverlayNetworksV1Txn) NetworkList() (ids []NetworkID) {
 }
 
 // NetworkFromID returns network with specific NetworkID.
-func (t *OverlayNetworksV1Txn) NetworkFromID(id NetworkID) *OverlayNetworkV1 {
+func (t *OverlayNetworksV1Txn) NetworkFromID(id driver.NetworkID) *OverlayNetworkV1 {
 	v1, _ := t.cur.Networks[id]
 	return v1
 }
