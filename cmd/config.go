@@ -3,10 +3,9 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/crossmesh/fabric/cmd/pb"
-	"github.com/jinzhu/configor"
+	"github.com/crossmesh/fabric/common"
 )
 
 // ReloadConfig implements gRPC method "ReloadConfig".
@@ -49,24 +48,12 @@ func (a *CrossmeshApplication) loadConfig(path string, noError bool) *daemonConf
 	if path == "" {
 		path = "/etc/utt.yml"
 	}
-	// config file is a must.
-	if fileInfo, err := os.Stat(a.ConfigFile); err != nil {
-		if !noError {
-			a.log.Errorf("cannot get stat of configuration file. [path = \"%v\"] (err = \"%v\")", a.ConfigFile, err)
-		}
-		return nil
-	} else if !fileInfo.Mode().IsRegular() {
-		if !noError {
-			a.log.Errorf("invalid irregular configuration file. [path = \"%v\"]", a.ConfigFile)
-		}
-		return nil
-	}
 
 	cfg := &daemonConfig{}
-	if err := configor.New(&configor.Config{
-		Debug: false,
-	}).Load(cfg, a.ConfigFile); err != nil {
-		a.log.Errorf("failed to load configuration. (err = \"%v\")", err)
+	if err := common.LoadConfigFromFile(path, cfg); err != nil {
+		if !noError {
+			a.log.Error(err)
+		}
 		return nil
 	}
 	a.config = cfg
