@@ -185,7 +185,9 @@ func (v1 *OverlayNetworksV1) Equal(x *OverlayNetworksV1) bool {
 		return false
 	}
 	if v1.Version != x.Version ||
-		len(v1.Networks) != len(x.Networks) {
+		len(v1.Networks) != len(x.Networks) ||
+		v1.UnderlayID != x.UnderlayID ||
+		!v1.UnderlayIPs.Equal(&x.UnderlayIPs) {
 		return false
 	}
 	for netID, cfg := range v1.Networks {
@@ -201,9 +203,10 @@ func (v1 *OverlayNetworksV1) Equal(x *OverlayNetworksV1) bool {
 }
 
 type packOverlayNetworksV1 struct {
-	Version    uint16                 `json:"v,omitempty"`
-	Networks   []packOverlayNetworkV1 `json:"nets,omitempty"`
-	UnderlayID int32                  `json:"uid,omitempty"`
+	Version     uint16                 `json:"v,omitempty"`
+	Networks    []packOverlayNetworkV1 `json:"nets,omitempty"`
+	UnderlayID  int32                  `json:"uid,omitempty"`
+	UnderlayIPs string                 `json:"uip"`
 }
 
 // EncodeToString trys to marshal structure to string.
@@ -221,6 +224,12 @@ func (v1 *OverlayNetworksV1) EncodeToString() (string, error) {
 			NetworkID: netID,
 		})
 	}
+	pack.UnderlayID = v1.UnderlayID
+	raw, err := common.IPNetSetEncode(v1.UnderlayIPs)
+	if err != nil {
+		return "", err
+	}
+	pack.UnderlayIPs = base64.StdEncoding.EncodeToString(raw)
 	b, err := json.Marshal(&pack)
 	if err != nil {
 		return "", err
@@ -252,7 +261,17 @@ func (v1 *OverlayNetworksV1) DecodeString(s string) (err error) {
 			return err
 		}
 	}
+	var raw []byte
+	if raw, err = base64.StdEncoding.DecodeString(pack.UnderlayIPs); err != nil {
+		return err
+	}
+	var set common.IPNetSet
+	if set, err = common.IPNetSetDecode(raw); err != nil {
+		return err
+	}
+	v1.UnderlayIPs = set
 	v1.Version = pack.Version
+	v1.UnderlayID = pack.UnderlayID
 	v1.Networks = netMap
 	return nil
 }
@@ -441,6 +460,24 @@ func (t *OverlayNetworksV1Txn) Updated() bool {
 
 // Version returns current value of version field in OverlayNetworksV1.
 func (t *OverlayNetworksV1Txn) Version() uint16 { return t.cur.Version }
+
+// UnderlayID reports current underlay network ID.
+func (t *OverlayNetworksV1Txn) UnderlayID() int32 {
+	return t.cur.UnderlayID
+}
+
+// SetUnderlayID sets underlay network ID.
+func (t *OverlayNetworksV1Txn) SetUnderlayID(id int32) {
+	t.cur.UnderlayID = id
+}
+
+// UnderlayIPs reports current underlay network IPs.
+func (t *OverlayNetworksV1Txn) UnderlayIPs() common.IPNetSet { return t.cur.UnderlayIPs.Clone() }
+
+// SetUnderlayIPs sets underlay network IPs.
+func (t *OverlayNetworksV1Txn) SetUnderlayIPs(new common.IPNetSet) {
+	t.cur.UnderlayIPs = new.Clone()
+}
 
 // RemoveNetwork removes networks according to a set of NetworkID.
 func (t *OverlayNetworksV1Txn) RemoveNetwork(ids ...driver.NetworkID) {

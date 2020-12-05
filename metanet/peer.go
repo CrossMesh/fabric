@@ -99,8 +99,7 @@ type MetaPeer struct {
 	customKeyMap map[string]interface{}
 	intervalSubs map[*MetaPeerStateWatcher]struct{}
 
-	Endpoints         []*MetaPeerEndpoint // (COW. lock-free read)
-	UnderlayNetworkID uint32
+	Endpoints []*MetaPeerEndpoint // (COW. lock-free read)
 
 	localEpoch     uint32
 	linkPaths      []*linkPath // (COW)
@@ -156,8 +155,11 @@ func (p *MetaPeer) HashID() string {
 	}
 }
 
-// IsSelf reports the peer is myself.
+// IsSelf reports whether peer is myself.
 func (p *MetaPeer) IsSelf() bool { return p.isSelf }
+
+// IsLeft reports whether peer was left.
+func (p *MetaPeer) IsLeft() bool { return p.IsLeft() }
 
 // Names reports node names.
 func (p *MetaPeer) Names() (names []string) {

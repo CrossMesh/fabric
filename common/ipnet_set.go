@@ -6,6 +6,28 @@ import (
 	"sort"
 )
 
+// PrivateUnicastIPNets contains private unicast CIDRs.
+var PrivateUnicastIPNets IPNetSet = func() (set IPNetSet) {
+	cidrs := []string{
+		"0.0.0.0/8",
+		"10.0.0.0/8",
+		"127.0.0.0/8",
+		"169.254.0.0/16",
+		"172.16.0.0/12",
+		"192.168.0.0/16",
+	}
+	for _, cidr := range cidrs {
+		_, net, err := net.ParseCIDR(cidr)
+		if err != nil {
+			panic(err)
+		}
+		set = append(set, net)
+	}
+	set.Build()
+
+	return
+}()
+
 // IPNetLess is less comparator for net.IPNet.
 func IPNetLess(n1, n2 *net.IPNet) bool {
 	if n1 == n2 {

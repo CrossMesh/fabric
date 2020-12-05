@@ -1,78 +1,328 @@
 package edgerouter
 
 import (
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"net"
+	"strconv"
 	"sync"
+	"time"
 
-	"github.com/crossmesh/fabric/backend"
-	"github.com/crossmesh/fabric/config"
-	"github.com/crossmesh/fabric/gossip"
+	"github.com/crossmesh/fabric/common"
+	"github.com/crossmesh/fabric/edgerouter/driver"
+	"github.com/crossmesh/fabric/edgerouter/gossip"
 	"github.com/crossmesh/fabric/metanet"
-	"github.com/crossmesh/fabric/proto"
-	"github.com/crossmesh/fabric/route"
+	"github.com/crossmesh/fabric/metanet/backend"
 	logging "github.com/sirupsen/logrus"
 	arbit "github.com/sunmxt/arbiter"
 )
 
-const defaultGossiperTransportBufferSize = uint(1024)
+const (
+	defaultGossiperTransportBufferSize = uint(1024)
+	defaultRepublishInterval           = time.Second * 5
+	republishAll                       = uint32(0xFFFFFFFF)
+	republishNone                      = uint32(0)
+)
 
 // EdgeRouter builds overlay network.
 type EdgeRouter struct {
+	RepublishInterval time.Duration
+
+	republishC      chan uint32
+	pendingAppendC  chan *pendingOverlayMetadataUpdation
+	pendingProcessC chan *pendingOverlayMetadataUpdation
+
 	lock sync.RWMutex
 
-	route           route.MeshDataNetworkRouter
 	metaNet         *metanet.MetadataNetwork
 	overlayModel    *gossip.OverlayNetworksValidatorV1
 	overlayModelKey string
+	epoch           uint32
 
-	// viewpoint of global overlay networks.
-	networkMap map[*metanet.MetaPeer]map[gossip.NetworkID]interface{}
+	store common.Store
 
-	vtep *virtualTunnelEndpoint
+	drivers map[driver.OverlayDriverType]*driverContext
 
-	endpointFailures sync.Map // map[backend.Endpoint]time.Time
+	underlay struct {
+		ID int32
 
-	configID uint32
-	cfg      *config.Network
-	log      *logging.Entry
+		staticIPs common.IPNetSet
+		autoIPs   common.IPNetSet
+
+		ids map[*metanet.MetaPeer]int32
+		ips map[*metanet.MetaPeer]common.IPNetSet
+	}
+
+	networks     map[int32]*networkInfo // active networks.
+	idleNetworks map[driver.NetworkID]*networkInfo
+
+	log *logging.Entry
 
 	arbiters struct {
-		main    *arbit.Arbiter
-		config  *arbit.Arbiter
-		forward *arbit.Arbiter
-		metanet *arbit.Arbiter
+		main   *arbit.Arbiter
+		driver *arbit.Arbiter
 	}
 }
 
 // New creates a new EdgeRouter.
-func New(arbiter *arbit.Arbiter) (a *EdgeRouter, err error) {
+func New(arbiter *arbit.Arbiter,
+	net *metanet.MetadataNetwork,
+	log *logging.Entry,
+	store common.Store) (a *EdgeRouter, err error) {
 	defer func() {
 		if err != nil {
 			arbiter.Shutdown()
 			arbiter.Join()
 		}
 	}()
-
-	a = &EdgeRouter{
-		log:        logging.WithField("module", "edge_router"),
-		vtep:       newVirtualTunnelEndpoint(nil),
-		networkMap: make(map[*metanet.MetaPeer]map[gossip.NetworkID]interface{}),
-	}
-	a.arbiters.main = arbit.NewWithParent(arbiter)
-	a.arbiters.config = arbit.New()
-	a.arbiters.metanet = arbit.NewWithParent(arbiter)
-
-	if a.metaNet, err = metanet.NewMetadataNetwork(a.arbiters.metanet, a.log.WithField("module", "metanet")); err != nil {
+	if net == nil {
+		err = errors.New("metanet network is needed")
 		return nil, err
 	}
-	a.metaNet.RegisterMessageHandler(proto.MsgTypeRawFrame, a.receiveRemote)
+	if store == nil {
+		err = errors.New("store is needed")
+		return nil, err
+	}
+	if log == nil {
+		log = logging.WithField("module", "manager")
+	}
+
+	a = &EdgeRouter{
+		log:               log,
+		metaNet:           net,
+		epoch:             1,
+		RepublishInterval: defaultRepublishInterval,
+
+		republishC:      make(chan uint32),
+		pendingProcessC: make(chan *pendingOverlayMetadataUpdation),
+		pendingAppendC:  make(chan *pendingOverlayMetadataUpdation),
+
+		networks:     map[int32]*networkInfo{},
+		idleNetworks: make(map[driver.NetworkID]*networkInfo),
+	}
+	a.arbiters.main = arbit.NewWithParent(arbiter)
+	a.underlay.ids = make(map[*metanet.MetaPeer]int32)
+	a.underlay.ips = make(map[*metanet.MetaPeer]common.IPNetSet)
+
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
+	if err = a.populateStore(store); err != nil {
+		return nil, err
+	}
+
+	a.startRepublishLocalStates()
+	a.startProcessPendingUpdates(a.pendingProcessC)
+	a.startAcceptPendingUpdates(a.pendingAppendC, a.pendingProcessC)
 
 	if err = a.initializeNetworkMap(); err != nil {
 		return nil, err
 	}
 
+	a.startCollectUnderlayAutoIPs()
 	a.waitCleanUp()
 	return a, nil
 }
+
+func (r *EdgeRouter) startCollectUnderlayAutoIPs() {
+}
+
+func (r *EdgeRouter) doStoreWriteTxn(proc func(tx common.StoreTxn) (bool, error)) error {
+	tx, err := r.store.Txn(true)
+	if err != nil {
+		r.log.Error("failed to start transaction. (err = \"%v\")", err)
+		return err
+	}
+
+	var shouldCommit bool
+
+	shouldCommit, err = proc(tx)
+	if shouldCommit {
+		shouldCommit = err == nil
+	}
+
+	if shouldCommit {
+		if err = tx.Commit(); err == nil {
+			return nil
+		}
+		r.log.Error("failed to commit transaction. (err = \"%v\")", err)
+	}
+
+	if rerr := tx.Rollback(); rerr != nil {
+		panic(rerr)
+	}
+
+	return nil
+}
+
+func (r *EdgeRouter) filterUnderlayIPs(filter func(*net.IPNet) bool) (ips common.IPNetSet) {
+	set := r.underlay.autoIPs.Clone()
+	set = append(set, r.underlay.staticIPs...)
+
+	for _, ip := range set {
+		if !ip.IP.IsGlobalUnicast() {
+			continue
+		}
+		if !filter(ip) {
+			continue
+		}
+		ips = append(ips, ip)
+	}
+	ips.Build()
+	return
+}
+
+func (r *EdgeRouter) commitNewUnderlayIPs(set common.IPNetSet) error {
+	return r.doStoreWriteTxn(func(tx common.StoreTxn) (bool, error) {
+		data, err := common.IPNetSetEncode(set)
+		if err != nil {
+			err = fmt.Errorf("failed to encode ipnet set. (err = \"%v\")", err)
+			return false, err
+		}
+		path := []string{"static_ips"}
+		if err = tx.Set(path, data); err != nil {
+			return false, err
+		}
+		tx.OnCommit(func() { r.underlay.staticIPs = set })
+		return true, nil
+	})
+}
+
+func (r *EdgeRouter) populateStore(store common.Store) error {
+	tx, err := store.Txn(true)
+	if err != nil {
+		r.log.Error("failed to start transaction for store initialization. (err = \"%v\")", err)
+		return err
+	}
+
+	defer func() {
+		if err != nil {
+			if rerr := tx.Rollback(); rerr != nil {
+				panic(rerr)
+			}
+		}
+	}()
+
+	var data []byte
+
+	// load underlay ID.
+	path := []string{"underlay_id"}
+	if data, err = tx.Get(path); err != nil {
+		r.log.Error("failed to load underlay ID. (err = \"%v\")", err)
+		return err
+	}
+	underlayID := int32(-1)
+	if len(data) != 4 { // corrupted
+		var buf [4]byte
+		binary.BigEndian.PutUint32(buf[:], uint32(underlayID))
+		data = buf[:]
+
+		if data != nil {
+			// TODO(xutao): may pause service until user reset underlay ID for security reason.
+			r.log.Warn("corrupted underlay ID in store. reset to -1.")
+		}
+		if err = tx.Set(path, data); err != nil {
+			r.log.Error("failed to reset underlay ID. (err = \"%v\")", err)
+			return err
+		}
+
+	} else {
+		underlayID = int32(binary.BigEndian.Uint32(data[:]))
+	}
+	r.underlay.ID = underlayID
+
+	// static IPs.
+	path = []string{"static_ips"}
+	if data, err = tx.Get(path); err != nil {
+		r.log.Error("failed to load static underlay IPs. (err = \"%v\")", err)
+		return err
+	}
+	var ipSet common.IPNetSet
+	if data != nil {
+		if ipSet, err = common.IPNetSetDecode(data); err != nil {
+			r.log.Warn("corrupted static underlay IPs. reseting... (err = \"%v\")", err)
+
+			if data, err = common.IPNetSetEncode(ipSet); err != nil {
+				r.log.Error("failed to encode static underlay IPs. (err = \"%v\")", err)
+				return err
+			}
+			if err = tx.Set(path, data); err != nil {
+				r.log.Error("failed to reset static underlay IPs. (err = \"%v\")", err)
+				return err
+			}
+		}
+		r.underlay.staticIPs = ipSet
+	}
+
+	// load networks.
+	path = []string{"networks"}
+
+	var purgeNetIDKey []string
+
+	tx.Range(path, func(path []string, data []byte) bool {
+		var netID int32
+
+		rawID := path[len(path)-1]
+		{
+			rid, perr := strconv.ParseInt(rawID, 10, 32)
+			if data != nil {
+				if perr == nil {
+					err = fmt.Errorf("inconsistent network store. %v should not has data", path)
+					r.log.Error(err)
+					return false
+				}
+				return true
+			}
+			netID = int32(rid)
+		}
+
+		info := &networkInfo{}
+		if data, err = tx.Get(append(path, "driver")); err != nil {
+			err = fmt.Errorf("cannot read driver for network %v. (err = \"%v\")", netID, err)
+			r.log.Error(err)
+			return false
+		}
+		if data == nil {
+			r.log.Warn("driver ID missing for network %v. network %v will be purged.", netID, netID)
+			purgeNetIDKey = append(purgeNetIDKey, rawID)
+			return true
+		}
+
+		var driverType driver.OverlayDriverType
+		{
+			rid, perr := strconv.ParseUint(string(data), 10, 16)
+			if perr != nil {
+				r.log.Warn("driver ID currupted for network %v. network %v will be purged.", netID, netID)
+				purgeNetIDKey = append(purgeNetIDKey, rawID)
+				return true
+			}
+			driverType = driver.OverlayDriverType(rid)
+		}
+		info.driverType = driverType
+
+		r.networks[netID] = info
+		return true
+	})
+
+	for _, key := range purgeNetIDKey {
+		if err = tx.Delete(append(path, key)); err != nil {
+			r.log.Warn("cannot remove corrupted network %v. (err = \"%v\")", key, err)
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		r.log.Errorf("failed to commit transaction. (err = \"%v\")", err)
+		return err
+	}
+
+	r.store = store
+
+	return nil
+}
+
+// ReloadStaticConfig reloads static config.
+func (r *EdgeRouter) ReloadStaticConfig(path string) {}
 
 // SeedPeer adds seed endpoint.
 func (r *EdgeRouter) SeedPeer(endpoints ...backend.Endpoint) error {
@@ -86,45 +336,8 @@ func (r *EdgeRouter) waitCleanUp() {
 		r.lock.Lock()
 		defer r.lock.Unlock()
 
-		fa := r.arbiters.forward
-
-		// terminate forwarding.
-		if fa != nil {
-			fa.Shutdown()
-		}
-
-		// close vtep.
-		if err := r.vtep.Close(); err != nil {
-			r.log.Warn("cannot close vtep: ", err)
-		}
-
-		if fa != nil {
-			fa.Join()
-		}
-		r.log.Debug("forwarding stopped.")
-
-		r.arbiters.metanet.Shutdown()
-		r.arbiters.metanet.Join()
-		r.log.Debug("metadata network stopped.")
-
-		r.arbiters.config.Shutdown()
-		r.arbiters.config.Join()
-		r.log.Debug("config stopped.")
-
-		r.log.Debug("edgerouter cleaned up.")
+		r.arbiters.driver.Shutdown()
+		r.arbiters.driver.Join()
+		r.log.Info("all overlay drivers shutdown.")
 	})
-}
-
-// Mode returns name of edge router working mode.
-// values can be: ethernet, overlay.
-func (r *EdgeRouter) Mode() string {
-	cfg := r.cfg
-	if cfg == nil {
-		return "unknown"
-	}
-	mode := r.cfg.Mode
-	if mode == "overlay" {
-		mode = "ip"
-	}
-	return mode
 }
