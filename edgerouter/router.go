@@ -14,6 +14,7 @@ import (
 	"github.com/crossmesh/fabric/edgerouter/gossip"
 	"github.com/crossmesh/fabric/metanet"
 	"github.com/crossmesh/fabric/metanet/backend"
+	"github.com/crossmesh/netns"
 	logging "github.com/sirupsen/logrus"
 	arbit "github.com/sunmxt/arbiter"
 )
@@ -32,6 +33,11 @@ type EdgeRouter struct {
 	republishC      chan uint32
 	pendingAppendC  chan *pendingOverlayMetadataUpdation
 	pendingProcessC chan *pendingOverlayMetadataUpdation
+	virtualDoC      chan *virtualNetworkDoFibre
+
+	netns *netns.OperationParameterSet
+
+	log *logging.Entry
 
 	lock sync.RWMutex
 
@@ -57,8 +63,6 @@ type EdgeRouter struct {
 	networks     map[int32]*networkInfo // active networks.
 	idleNetworks map[driver.NetworkID]*networkInfo
 
-	log *logging.Entry
-
 	arbiters struct {
 		main   *arbit.Arbiter
 		driver *arbit.Arbiter
@@ -69,7 +73,8 @@ type EdgeRouter struct {
 func New(arbiter *arbit.Arbiter,
 	net *metanet.MetadataNetwork,
 	log *logging.Entry,
-	store common.Store) (a *EdgeRouter, err error) {
+	store common.Store,
+	namespaceBindPath string) (a *EdgeRouter, err error) {
 	defer func() {
 		if err != nil {
 			arbiter.Shutdown()
@@ -97,6 +102,7 @@ func New(arbiter *arbit.Arbiter,
 		republishC:      make(chan uint32),
 		pendingProcessC: make(chan *pendingOverlayMetadataUpdation),
 		pendingAppendC:  make(chan *pendingOverlayMetadataUpdation),
+		virtualDoC:      make(chan *virtualNetworkDoFibre),
 
 		networks:     map[int32]*networkInfo{},
 		idleNetworks: make(map[driver.NetworkID]*networkInfo),
@@ -104,6 +110,9 @@ func New(arbiter *arbit.Arbiter,
 	a.arbiters.main = arbit.NewWithParent(arbiter)
 	a.underlay.ids = make(map[*metanet.MetaPeer]int32)
 	a.underlay.ips = make(map[*metanet.MetaPeer]common.IPNetSet)
+	a.netns = &netns.OperationParameterSet{
+		BindMountPath: namespaceBindPath,
+	}
 
 	a.lock.Lock()
 	defer a.lock.Unlock()
@@ -121,6 +130,8 @@ func New(arbiter *arbit.Arbiter,
 	}
 
 	a.startCollectUnderlayAutoIPs()
+	a.startProcessVirtualDo()
+
 	a.waitCleanUp()
 	return a, nil
 }

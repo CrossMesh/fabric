@@ -8,6 +8,7 @@ require (
 	cloud.google.com/go/logging v1.0.0 // indirect
 	cloud.google.com/go/spanner v1.2.1 // indirect
 	github.com/creack/pty v1.1.9 // indirect
+	github.com/crossmesh/netns v0.0.0-20201206172933-0365403621eb
 	github.com/crossmesh/sladder v0.0.0-20201018042605-a601ea2299ee
 	github.com/denisbrodbeck/machineid v1.0.1 // indirect
 	github.com/gogo/protobuf v1.3.1 // indirect
@@ -44,6 +45,7 @@ require (
 	golang.org/x/build v0.0.0-20200226193612-7ece5dab5e4e // indirect
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1 // indirect
 	golang.org/x/mobile v0.0.0-20200212152714-2b26a4705d24 // indirect
+	golang.org/x/sys v0.0.0-20201204225414-ed752295db88 // indirect
 	google.golang.org/grpc v1.32.0
 	google.golang.org/grpc/cmd/protoc-gen-go-grpc v0.0.0-20200917190803-0f7e218c2cf4 // indirect
 	google.golang.org/grpc/examples v0.0.0-20200930182750-2e2833c718b5 // indirect

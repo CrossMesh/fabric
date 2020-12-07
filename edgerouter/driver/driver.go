@@ -1,11 +1,17 @@
 package driver
 
 import (
+	"math"
 	"strconv"
 
 	"github.com/crossmesh/fabric/common"
 	"github.com/crossmesh/fabric/metanet"
 	arbit "github.com/sunmxt/arbiter"
+)
+
+const (
+	// NetIDUnderlay represents underlay network.
+	NetIDUnderlay = math.MinInt32
 )
 
 // NetworkID is overlay network identifier.
@@ -91,10 +97,17 @@ type OverlayNetworkMap interface {
 
 // ResourceCollection contains exported resources provided for OverlayDriver.
 type ResourceCollection interface {
+	// persistent key-value store.
 	Store() common.Store
+
+	// goroutine lifecycle manager.
 	Arbiter() *arbit.Arbiter
+
 	NetworkMap(netID int32) OverlayNetworkMap
 	Messager() Messager
+
+	// Run code inside virtualized network environment.
+	VirtualDo(int32, func(underlayID, overlayID int32) error) error
 }
 
 // Messager implements communicating methods for driver among peers.
@@ -110,10 +123,6 @@ type OverlayDriver interface {
 
 	Init(ResourceCollection) error
 
-	AddLink(name, netns string, netID int32) error
-	DelLink(name, netns string, netID int32) error
-
-	LoadNetwork(netID int32) error
-	//ListNetwork() ([]int32, error)
-	//RemoveNetwork(netID int32) error
+	AddLink(name string, netID int32) error
+	DelLink(name string, netID int32) error
 }

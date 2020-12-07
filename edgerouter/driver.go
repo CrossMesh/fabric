@@ -17,7 +17,7 @@ type driverMessager struct {
 func (m *driverMessager) Send(peer *metanet.MetaPeer, msg []byte) {
 }
 
-func (m *driverMessager) WatchMessage(handle func(*metanet.Message) bool) {
+func (m *driverMessager) WatchMessage(handler func(*metanet.Message) bool) {
 }
 
 type driverNetworkMap struct {
@@ -198,6 +198,10 @@ func (c *driverContext) NetworkMap(netID int32) driver.OverlayNetworkMap {
 	return netMap
 }
 
+func (c *driverContext) VirtualDo(netID int32, process func(underlayID, overlayID int32) error) error {
+	return c.router.VirtualDo(netID, process)
+}
+
 func (c *driverContext) PeerJoin(info *networkInfo, p *metanet.MetaPeer) {
 	if info == nil {
 		return
@@ -239,13 +243,6 @@ func (c *driverContext) ProcessNewRemoteOptions(netID int32, p *metanet.MetaPeer
 	netMap.ProcessNewRemoteOptions(p, opts)
 }
 
-func (e *EdgeRouter) ensureNetworkNamespace(netID int32) (string, error) {
-	return "", nil
-	if e.underlay.ID != netID {
-		// overlay
-	}
-}
-
 const (
 	rootOverlayNamespaceLinkName = "eth0"
 )
@@ -278,8 +275,7 @@ func (e *EdgeRouter) delayActivateDriver(driverType driver.OverlayDriverType, dr
 				continue
 			}
 
-			netns, err := e.ensureNetworkNamespace(netID)
-			if err != nil {
+			if err := e.ensureNetworkNamespace(netID); err != nil {
 				e.log.Warnf("failed to ensure namespace for net %v. [driverType = %v] (err = \"%v\")", netID, driverType)
 				needRetry = true
 				continue
@@ -289,8 +285,8 @@ func (e *EdgeRouter) delayActivateDriver(driverType driver.OverlayDriverType, dr
 
 			oldCtx := info.driverCtx
 			if oldCtx != nil {
-				if err = oldCtx.driver.DelLink(rootOverlayNamespaceLinkName, netns, netID); err != nil {
-					e.log.Warnf("failed to remove link from net %v. [driverType = %v, netns = %v] (err = \"%v\")", netID, netns, driverType)
+				if err := oldCtx.driver.DelLink(rootOverlayNamespaceLinkName, netID); err != nil {
+					e.log.Warnf("failed to remove link from net %v. [driverType = %v] (err = \"%v\")", netID, driverType)
 					needRetry = true
 					info.lock.Unlock()
 					continue
@@ -299,8 +295,8 @@ func (e *EdgeRouter) delayActivateDriver(driverType driver.OverlayDriverType, dr
 				info.driverCtx = nil
 			}
 
-			if err = driver.AddLink(rootOverlayNamespaceLinkName, netns, netID); err != nil {
-				e.log.Warnf("failed to add link to net %v. [driverType = %v, netns = %v] (err = \"%v\")", netID, netns, driverType)
+			if err := driver.AddLink(rootOverlayNamespaceLinkName, netID); err != nil {
+				e.log.Warnf("failed to add link to net %v. [driverType = %v] (err = \"%v\")", netID, driverType)
 				needRetry = true
 				info.lock.Unlock()
 				continue

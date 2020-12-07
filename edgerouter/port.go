@@ -201,3 +201,10 @@ func (r *EdgeRouter) PeerIPs(p *metanet.MetaPeer) (public, private common.IPNetS
 
 	return
 }
+
+// VirtualDo runs process inside given virtualied network environment.
+func (r *EdgeRouter) VirtualDo(netID int32, do func(underlayID, netID int32) error) error {
+	return <-r.submitVirtualDo(netID, false, func(ctx *virtualNetworkDoContext) error {
+		return do(ctx.underlay.id, ctx.current.id)
+	})
+}
