@@ -1,6 +1,7 @@
 package edgerouter
 
 import (
+	"io"
 	"sync"
 	"time"
 
@@ -12,12 +13,18 @@ import (
 
 type driverMessager struct {
 	driverType driver.OverlayDriverType
+	r          *EdgeRouter
 }
 
-func (m *driverMessager) Send(peer *metanet.MetaPeer, msg []byte) {
+func (m *driverMessager) Send(peer *metanet.MetaPeer, payload []byte) {
+	m.r.fastSendVNetDriverMessage(peer, m.driverType, func(w io.Writer) {
+		// TODO(xutao): avoid data copy.
+		w.Write(payload)
+	})
 }
 
-func (m *driverMessager) WatchMessage(handler func(*metanet.Message) bool) {
+func (m *driverMessager) WatchMessage(handler driver.MessageHandler) driver.MessageHandler {
+	return m.r.watchForDriverMessage(m.driverType, handler)
 }
 
 type driverNetworkMap struct {

@@ -110,11 +110,16 @@ type ResourceCollection interface {
 	VirtualDo(int32, func(underlayID, overlayID int32) error) error
 }
 
+// MessageHandler accepts incoming message.
+type MessageHandler func(peer *metanet.MetaPeer, msg []byte) bool
+
 // Messager implements communicating methods for driver among peers.
 type Messager interface {
 	Send(peer *metanet.MetaPeer, msg []byte)
 	// ReliableSend(msg []byte)
-	WatchMessage(func(*metanet.Message) bool)
+
+	// register new message handler and returns existing one.
+	WatchMessage(MessageHandler) MessageHandler
 }
 
 // OverlayDriver provides overlay network supporting.

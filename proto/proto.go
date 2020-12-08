@@ -5,7 +5,6 @@ import (
 	"errors"
 	"reflect"
 
-	"github.com/crossmesh/fabric/proto/pb"
 	"github.com/golang/protobuf/proto"
 )
 
@@ -25,25 +24,22 @@ type ProtobufMessage proto.Message
 const (
 	MsgTypeUnknown = uint16(0)
 
-	MsgTypeGossip = uint16(1)
+	MsgTypeGossip         = uint16(1)
+	MsgTypeVNetController = uint16(2)
+	MsgTypeVNetDriver     = uint16(3)
 
-	MsgTypeRPC          = uint16(4)
-	MsgTypePeerExchange = uint16(5)
-	MsgTypePing         = uint16(6)
-	MsgTypeRawFrame     = uint16(7)
+	MsgTypePing     = uint16(6)
+	MsgTypeRawFrame = uint16(7)
+
+	MsgTypeUserDefineBegin = uint16(64)
 )
 
 var IDByProtoType map[reflect.Type]uint16 = map[reflect.Type]uint16{
-	reflect.TypeOf((*pb.RPC)(nil)).Elem():          MsgTypeRPC,
-	reflect.TypeOf((*pb.PeerExchange)(nil)).Elem(): MsgTypePeerExchange,
 	//reflect.TypeOf((*pb.Ping)(nil)).Elem():         MsgTypePing,
-
 	reflect.TypeOf((*NetworkRawFrame)(nil)).Elem(): MsgTypeRawFrame,
 }
 
 var ConstructorByID map[uint16]func() interface{} = map[uint16]func() interface{}{
-	MsgTypeRPC:          func() interface{} { return &pb.RPC{} },
-	MsgTypePeerExchange: func() interface{} { return &pb.PeerExchange{} },
 	//MsgTypePing:         func() interface{} { return &pb.Ping{} },
 	MsgTypeRawFrame: func() interface{} { return make(NetworkRawFrame, 0) },
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/crossmesh/fabric/edgerouter/gossip"
 	"github.com/crossmesh/fabric/metanet"
 	"github.com/crossmesh/fabric/metanet/backend"
+	"github.com/crossmesh/fabric/proto"
 	"github.com/crossmesh/netns"
 	logging "github.com/sirupsen/logrus"
 	arbit "github.com/sunmxt/arbiter"
@@ -35,18 +36,20 @@ type EdgeRouter struct {
 	pendingProcessC chan *pendingOverlayMetadataUpdation
 	virtualDoC      chan *virtualNetworkDoFibre
 
-	netns *netns.OperationParameterSet
+	netns           *netns.OperationParameterSet
+	metaNet         *metanet.MetadataNetwork
+	overlayModelKey string
+	overlayModel    *gossip.OverlayNetworksValidatorV1
 
 	log *logging.Entry
 
+	store common.Store
+
+	bufCache *sync.Pool
+
 	lock sync.RWMutex
 
-	metaNet         *metanet.MetadataNetwork
-	overlayModel    *gossip.OverlayNetworksValidatorV1
-	overlayModelKey string
-	epoch           uint32
-
-	store common.Store
+	driverMessageHandler map[driver.OverlayDriverType]driver.MessageHandler // (COW)
 
 	drivers map[driver.OverlayDriverType]*driverContext
 
@@ -96,7 +99,6 @@ func New(arbiter *arbit.Arbiter,
 	a = &EdgeRouter{
 		log:               log,
 		metaNet:           net,
-		epoch:             1,
 		RepublishInterval: defaultRepublishInterval,
 
 		republishC:      make(chan uint32),
@@ -113,6 +115,11 @@ func New(arbiter *arbit.Arbiter,
 	a.netns = &netns.OperationParameterSet{
 		BindMountPath: namespaceBindPath,
 	}
+	a.bufCache = &sync.Pool{
+		New: func() interface{} {
+			return make([]byte, 0, 8)
+		},
+	}
 
 	a.lock.Lock()
 	defer a.lock.Unlock()
@@ -120,23 +127,23 @@ func New(arbiter *arbit.Arbiter,
 	if err = a.populateStore(store); err != nil {
 		return nil, err
 	}
-
-	a.startRepublishLocalStates()
-	a.startProcessPendingUpdates(a.pendingProcessC)
-	a.startAcceptPendingUpdates(a.pendingAppendC, a.pendingProcessC)
-
+	if err = a.startProcessVirtualDo(); err != nil {
+		return nil, err
+	}
 	if err = a.initializeNetworkMap(); err != nil {
 		return nil, err
 	}
 
+	a.metaNet.RegisterMessageHandler(proto.MsgTypeVNetDriver, a.processDriverMessage)
+	//a.metaNet.RegisterMessageHandler(proto.MsgTypeVNetController, a.processVNetControllerMessage)
+
+	a.startRepublishLocalStates()
+	a.startProcessPendingUpdates(a.pendingProcessC)
+	a.startAcceptPendingUpdates(a.pendingAppendC, a.pendingProcessC)
 	a.startCollectUnderlayAutoIPs()
-	a.startProcessVirtualDo()
 
 	a.waitCleanUp()
 	return a, nil
-}
-
-func (r *EdgeRouter) startCollectUnderlayAutoIPs() {
 }
 
 func (r *EdgeRouter) doStoreWriteTxn(proc func(tx common.StoreTxn) (bool, error)) error {
