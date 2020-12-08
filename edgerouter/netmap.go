@@ -3,6 +3,7 @@ package edgerouter
 import (
 	"container/heap"
 	"errors"
+	"net"
 	"sync"
 	"time"
 
@@ -367,6 +368,66 @@ func (r *EdgeRouter) getRepublishInverval() time.Duration {
 		d = defaultRepublishInterval
 	}
 	return d
+}
+
+func (r *EdgeRouter) startCollectUnderlayAutoIPs() {
+	r.arbiters.main.Go(func() {
+	refreshAutoIPs:
+		for r.arbiters.main.ShouldRun() {
+			select {
+			case <-r.arbiters.driver.Exit():
+				break refreshAutoIPs
+			case <-time.After(defaultAutoIPRefreshInterval):
+			}
+
+			var newAutoIPs common.IPNetSet = nil
+
+			if err := <-r.submitVirtualDo(driver.NetIDUnderlay, false, func(ctx *virtualNetworkDoContext) error {
+				ifaces, err := net.Interfaces()
+				if err != nil {
+					r.log.Error("failed to enumerate network interfaces. (err = \"%v\")", err)
+					return nil
+				}
+
+				for _, iface := range ifaces {
+					addrs, ierr := iface.Addrs()
+					if ierr != nil {
+						r.log.Error("failed to get ip address for interface %v. (err = \"%v\")", err)
+						continue
+					}
+
+					for _, addr := range addrs {
+						ip, isIPNet := addr.(*net.IPNet)
+						if !isIPNet { // parse addr.String() for safety.
+							unparsed := addr.String()
+							if _, ip, err = net.ParseCIDR(unparsed); err != nil {
+								// ignore address in invalid notation.
+								r.log.Warn("parse failed. invalid interface ip address \"%v\". (err = \"%v\")", err)
+								continue
+							}
+						}
+
+						newAutoIPs = append(newAutoIPs, ip)
+					}
+				}
+
+				return nil
+			}); err != nil {
+				r.log.Error("virtual do fails when collecting underlay auto IPs. (err = \"%v\")", err)
+				continue
+			}
+
+			newAutoIPs.Build()
+
+			r.lock.Lock()
+			newAutoIPs.Remove(r.underlay.staticIPs...)
+			if !r.underlay.autoIPs.Equal(&newAutoIPs) {
+				r.underlay.autoIPs = newAutoIPs
+				r.republishC <- republishAll // republish.
+			}
+			r.lock.Unlock()
+		}
+	})
 }
 
 func (r *EdgeRouter) startRepublishLocalStates() {

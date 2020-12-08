@@ -23,6 +23,7 @@ import (
 const (
 	defaultGossiperTransportBufferSize = uint(1024)
 	defaultRepublishInterval           = time.Second * 5
+	defaultAutoIPRefreshInterval       = time.Second * 15
 	republishAll                       = uint32(0xFFFFFFFF)
 	republishNone                      = uint32(0)
 )
