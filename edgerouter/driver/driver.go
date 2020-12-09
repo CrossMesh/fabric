@@ -29,10 +29,8 @@ type OverlayDriverType uint16
 
 func (t OverlayDriverType) String() string {
 	switch t {
-	case CrossmeshSymmetryEthernet:
-		return "crossmesh_sym_eth"
-	case CrossmeshSymmetryRoute:
-		return "crossmesh_sym_route"
+	case MetanetOverlayDriver:
+		return "metanet"
 	case VxLAN:
 		return "vxlan"
 	}
@@ -40,10 +38,10 @@ func (t OverlayDriverType) String() string {
 }
 
 const (
-	UnknownOverlayDriver      = OverlayDriverType(0)
-	CrossmeshSymmetryEthernet = OverlayDriverType(1)
-	CrossmeshSymmetryRoute    = OverlayDriverType(2)
-	VxLAN                     = OverlayDriverType(3)
+	UnknownOverlayDriver = OverlayDriverType(0)
+
+	MetanetOverlayDriver = OverlayDriverType(1)
+	VxLAN                = OverlayDriverType(3)
 )
 
 // UnsupportedError raised when driver is unable to implements some network features.
@@ -95,6 +93,24 @@ type OverlayNetworkMap interface {
 	WatchPeerIPs(UnderlayIPWatcher)
 }
 
+// Logger accepts logs from driver.
+type Logger interface {
+	Fatal(v ...interface{})
+	Fatalf(fotmat string, v ...interface{})
+
+	Error(v ...interface{})
+	Errorf(fotmat string, v ...interface{})
+
+	Warn(v ...interface{})
+	Warnf(fotmat string, v ...interface{})
+
+	Info(v ...interface{})
+	Infof(fotmat string, v ...interface{})
+
+	Debug(v ...interface{})
+	Debugf(fotmat string, v ...interface{})
+}
+
 // ResourceCollection contains exported resources provided for OverlayDriver.
 type ResourceCollection interface {
 	// persistent key-value store.
@@ -105,6 +121,7 @@ type ResourceCollection interface {
 
 	NetworkMap(netID int32) OverlayNetworkMap
 	Messager() Messager
+	Logger() Logger
 
 	// Run code inside virtualized network environment.
 	VirtualDo(int32, func(underlayID, overlayID int32) error) error

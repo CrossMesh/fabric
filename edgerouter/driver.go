@@ -8,6 +8,7 @@ import (
 	"github.com/crossmesh/fabric/common"
 	"github.com/crossmesh/fabric/edgerouter/driver"
 	"github.com/crossmesh/fabric/metanet"
+	logging "github.com/sirupsen/logrus"
 	arbit "github.com/sunmxt/arbiter"
 )
 
@@ -184,6 +185,7 @@ func (m *driverNetworkMap) ProcessNewRemoteOptions(p *metanet.MetaPeer, opts map
 type driverContext struct {
 	router *EdgeRouter
 	store  common.SubpathStore
+	logger *logging.Entry
 
 	lock sync.RWMutex
 
@@ -204,6 +206,8 @@ func (c *driverContext) NetworkMap(netID int32) driver.OverlayNetworkMap {
 	netMap, _ := c.networkMap[netID]
 	return netMap
 }
+
+func (c *driverContext) Logger() driver.Logger { return c.logger }
 
 func (c *driverContext) VirtualDo(netID int32, process func(underlayID, overlayID int32) error) error {
 	return c.router.VirtualDo(netID, process)

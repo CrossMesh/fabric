@@ -139,6 +139,7 @@ func (r *EdgeRouter) RegisterOverlayDriver(drv driver.OverlayDriver) error {
 			driverType: typeID,
 		},
 		networkMap: map[int32]*driverNetworkMap{},
+		logger:     r.log.WithField("driver", typeID),
 	}
 
 	if err := drv.Init(ctx); err != nil {
