@@ -38,6 +38,9 @@ type driverNetworkMap struct {
 	localOptions        map[string][]byte
 	remoteOptions       map[*metanet.MetaPeer]map[string][]byte
 	remoteOptionWatcher map[*driver.RemoteOptionMapWatcher]struct{}
+
+	overlayIPs       map[*metanet.MetaPeer]common.IPNetSet
+	overlayIPWatcher map[*driver.IPWatcher]struct{}
 }
 
 func newDriverNerworkMap(info *networkInfo) *driverNetworkMap {
@@ -47,7 +50,29 @@ func newDriverNerworkMap(info *networkInfo) *driverNetworkMap {
 		localOptions:             map[string][]byte{},
 		remoteOptions:            make(map[*metanet.MetaPeer]map[string][]byte),
 		remoteOptionWatcher:      make(map[*driver.RemoteOptionMapWatcher]struct{}),
+
+		overlayIPs:       make(map[*metanet.MetaPeer]common.IPNetSet),
+		overlayIPWatcher: make(map[*driver.IPWatcher]struct{}),
 	}
+}
+
+func (m *driverNetworkMap) WatchOverlayIPs(watcher driver.IPWatcher) {
+	if watcher == nil {
+		return
+	}
+
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	m.overlayIPWatcher[&watcher] = struct{}{}
+}
+
+func (m *driverNetworkMap) OverlayIPs(p *metanet.MetaPeer) common.IPNetSet {
+	m.lock.RLock()
+	defer m.lock.RUnlock()
+
+	set, _ := m.overlayIPs[p]
+	return set
 }
 
 func (m *driverNetworkMap) WatchMemebershipChanged(handler driver.PeerEventHandler) {
@@ -127,43 +152,78 @@ func (m *driverNetworkMap) WatchPeerIPs(handler driver.UnderlayIPWatcher) {
 
 func (m *driverNetworkMap) PeerJoin(p *metanet.MetaPeer) {
 	m.lock.Lock()
-	defer m.lock.Unlock()
 
 	_, hasPeer := m.remoteOptions[p]
 	if hasPeer {
 		return
 	}
+	m.remoteOptions[p] = nil
+
+	m.lock.Unlock()
 
 	// notify.
+	// TODO(xutao): ensure order of notification when PeerJoin() is
+	//		called by multiple goroutines, although only single goroutine will call this so far.
 	for handler := range m.membershipChangesWatcher {
 		if !(*handler)(p, driver.PeerLeft) { // canceled?
 			delete(m.membershipChangesWatcher, handler)
 		}
 	}
-	m.remoteOptions[p] = nil
 }
 
 func (m *driverNetworkMap) PeerLeft(p *metanet.MetaPeer) {
 	m.lock.Lock()
-	defer m.lock.Unlock()
 
 	_, hasPeer := m.remoteOptions[p]
 	if !hasPeer {
 		return
 	}
 
-	// notify.
+	delete(m.remoteOptions, p)
+	delete(m.overlayIPs, p)
+
+	m.lock.Unlock()
+
+	// TODO(xutao): ensure order of notification when PeerLeft() is
+	//		called by multiple goroutines, although only single goroutine will call this so far.
 	for handler := range m.membershipChangesWatcher {
 		if !(*handler)(p, driver.PeerLeft) { // canceled?
 			delete(m.membershipChangesWatcher, handler)
 		}
 	}
-	delete(m.remoteOptions, p)
+}
+
+func (m *driverNetworkMap) ProcessOverlayIPs(p *metanet.MetaPeer, ips common.IPNetSet) {
+	if p == nil {
+		return
+	}
+
+	m.lock.Lock()
+
+	prevIPs, _ := m.overlayIPs[p]
+	if prevIPs.Equal(&ips) {
+		return
+	}
+
+	m.overlayIPs[p] = ips.Clone()
+
+	m.lock.Unlock()
+
+	// TODO(xutao): ensure order of notification when ProcessOverlayIPs() is
+	//		called by multiple goroutines, although only single goroutine will call this so far.
+	for watcher := range m.overlayIPWatcher {
+		if !(*watcher)(p, ips.Clone()) {
+			delete(m.overlayIPWatcher, watcher)
+		}
+	}
 }
 
 func (m *driverNetworkMap) ProcessNewRemoteOptions(p *metanet.MetaPeer, opts map[string][]byte) {
+	if p == nil {
+		return
+	}
+
 	m.lock.Lock()
-	defer m.lock.Unlock()
 
 	if _, hasPeer := m.remoteOptions[p]; !hasPeer {
 		return // ignore remote options for absent peer.
@@ -175,6 +235,10 @@ func (m *driverNetworkMap) ProcessNewRemoteOptions(p *metanet.MetaPeer, opts map
 	}
 	m.remoteOptions[p] = newOpts
 
+	m.lock.Unlock()
+
+	// TODO(xutao): ensure order of notification when ProcessNewRemoteOptions() is
+	//		called by multiple goroutines, although only single goroutine will call this so far.
 	for handler := range m.remoteOptionWatcher {
 		if !(*handler)(p, newOpts) {
 			delete(m.remoteOptionWatcher, handler)
@@ -252,6 +316,17 @@ func (c *driverContext) ProcessNewRemoteOptions(netID int32, p *metanet.MetaPeer
 		return
 	}
 	netMap.ProcessNewRemoteOptions(p, opts)
+}
+
+func (c *driverContext) ProcessOverlayIPs(netID int32, p *metanet.MetaPeer, ips common.IPNetSet) {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+
+	netMap, _ := c.networkMap[netID]
+	if netMap == nil {
+		return
+	}
+	netMap.ProcessOverlayIPs(p, ips)
 }
 
 const (

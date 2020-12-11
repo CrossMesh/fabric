@@ -29,6 +29,7 @@ const (
 
 // OverlayNetworkV1 contains joined overlay networks of peer.
 type OverlayNetworkV1 struct {
+	IPs    common.IPNetSet
 	Params map[string][]byte
 }
 
@@ -38,6 +39,7 @@ func (v1 *OverlayNetworkV1) Clone() *OverlayNetworkV1 {
 	for k, d := range v1.Params {
 		new.Params[k] = d
 	}
+	new.IPs = v1.IPs.Clone()
 	return new
 }
 
@@ -61,7 +63,7 @@ func (v1 *OverlayNetworkV1) Equal(x *OverlayNetworkV1) bool {
 			return false
 		}
 	}
-	return true
+	return v1.IPs.Equal(&x.IPs)
 }
 
 // Encode marshals OverlayNetworkV1.
@@ -70,76 +72,119 @@ func (v1 *OverlayNetworkV1) Encode() (bin []byte, err error) {
 	if numOfOptions > 0xFF {
 		return nil, errors.New("too many options")
 	}
-	bin = append(bin, uint8(numOfOptions))
-	numOfEncoded := 0
-	for k, d := range v1.Params {
-		numOfEncoded++
-		length := len(k)
-		if length > 0xFF {
-			return nil, fmt.Errorf("key \"%v\" is too long", k)
-		}
-		bin = append(bin, uint8(length))
-		if length = len(d); length > 0x7FFFFFFF {
-			return nil, fmt.Errorf("value with key \"%v\" is of length %v and cannot be encoded", k, length)
-		}
-		bin = append(bin, []byte(k)...)
-		if length < 0x7F {
+
+	// encode options.
+	{
+		var buf [8]byte
+
+		binary.PutUvarint(buf[:], uint64(numOfOptions))
+		numOfEncoded := 0
+		for k, d := range v1.Params {
+			numOfEncoded++
+			length := len(k)
+			if length > 0xFF {
+				return nil, fmt.Errorf("key \"%v\" is too long", k)
+			}
 			bin = append(bin, uint8(length))
-		} else { // extended
-			encoded := (uint32(length) & 0xFFFFFF80) << 1
-			encoded |= (uint32(length) & 0x7F) | 0x80
-			bin = append(bin, 0x00, 0x00, 0x00, 0x00)
-			binary.LittleEndian.PutUint32(bin[len(bin)-4:], encoded)
+			if length = len(d); length > 0x7FFFFFFF {
+				return nil, fmt.Errorf("value with key \"%v\" is of length %v and cannot be encoded", k, length)
+			}
+			bin = append(bin, []byte(k)...)
+			if length < 0x7F {
+				bin = append(bin, uint8(length))
+			} else { // extended
+				encoded := (uint32(length) & 0xFFFFFF80) << 1
+				encoded |= (uint32(length) & 0x7F) | 0x80
+				bin = append(bin, 0x00, 0x00, 0x00, 0x00)
+				binary.LittleEndian.PutUint32(bin[len(bin)-4:], encoded)
+			}
+			bin = append(bin, d...)
 		}
-		bin = append(bin, d...)
+		if numOfEncoded != numOfOptions {
+			return nil, errors.New("data race in OverlayNetworkV1 Encode()")
+		}
 	}
-	if numOfEncoded != numOfOptions {
-		return nil, errors.New("data race in OverlayNetworkV1 Encode()")
+
+	// encode ips.
+	{
+		var encoded []byte
+		if encoded, err = common.IPNetSetEncode(v1.IPs); err != nil {
+			return nil, err
+		}
+
+		var buf [8]byte
+		varLen := binary.PutUvarint(buf[:], uint64(len(encoded)))
+		bin = append(bin, buf[:varLen]...)
+		bin = append(bin, encoded...)
 	}
+
 	return bin, nil
 }
 
 // Decode unmarshals OverlayNetworkV1.
 func (v1 *OverlayNetworkV1) Decode(bin []byte) error {
-	new := make(map[string][]byte)
+	// decode remote options.
+	newParam := make(map[string][]byte)
 	if len(bin) < 1 {
-		v1.Params = new
+		v1.Params = newParam
 		return nil
 	}
-	numOfOptions := bin[0]
-	bin = bin[1:]
-	for ; numOfOptions > 0; numOfOptions-- {
-		if len(bin) < 1 {
-			return common.ErrBrokenStream
-		}
-		// key
-		length := uint32(bin[0])
+	if len(bin) < 2 {
+		return common.ErrBrokenStream
+	}
+	{
+		numOfOptions := bin[0]
 		bin = bin[1:]
-		if len(bin) < int(length) {
-			return common.ErrBrokenStream
-		}
-		key := string(bin[:length])
-		bin = bin[length:]
-		// data
-		length = uint32(bin[0])
-		if length&0x80 != 0 { // extended length.
-			raw := binary.LittleEndian.Uint32(bin[0:4])
-			length = 0
-			length |= raw & 0x7F
-			length |= (raw & 0xFFFFFF) >> 1
-			bin = bin[4:]
-		} else {
+		for ; numOfOptions > 0; numOfOptions-- {
+			if len(bin) < 1 {
+				return common.ErrBrokenStream
+			}
+			// key
+			length := uint32(bin[0])
 			bin = bin[1:]
+			if len(bin) < int(length) {
+				return errors.New("no enough bytes to decode remote option key")
+			}
+			key := string(bin[:length])
+			bin = bin[length:]
+			// data
+			length = uint32(bin[0])
+			if length&0x80 != 0 { // extended length.
+				raw := binary.LittleEndian.Uint32(bin[0:4])
+				length = 0
+				length |= raw & 0x7F
+				length |= (raw & 0xFFFFFF) >> 1
+				bin = bin[4:]
+			} else {
+				bin = bin[1:]
+			}
+			if len(bin) < int(length) {
+				return errors.New("no enough bytes to decode remote option value")
+			}
+			d := bin[:length]
+			bin = bin[length:]
+			newParam[key] = d
 		}
-		if len(bin) < int(length) {
-			return common.ErrBrokenStream
-		}
-		d := bin[:length]
-		bin = bin[length:]
-		new[key] = d
 	}
 
-	v1.Params = new
+	// decode IPs.
+	var newIPs common.IPNetSet
+	{
+		streamLen, consumed := binary.Uvarint(bin)
+		bin = bin[consumed:]
+		if streamLen > uint64(len(bin)) {
+			return errors.New("no enough bytes to decode overlay IPs")
+		}
+		ips, err := common.IPNetSetDecode(bin[:streamLen])
+		if err != nil {
+			return err
+		}
+		bin = bin[streamLen:]
+		newIPs = ips
+	}
+
+	v1.Params = newParam
+	v1.IPs = newIPs
 
 	// consumed length is not exported. export it later in need.
 	return nil
@@ -155,7 +200,9 @@ type OverlayNetworksV1 struct {
 	Version     uint16 `json:"v,omitempty"`
 	UnderlayID  int32  `json:"u,omitempty"`
 	UnderlayIPs common.IPNetSet
-	Networks    map[driver.NetworkID]*OverlayNetworkV1 `json:"nets,omitempty"`
+
+	NetworkEncodingSubverion uint8                                  `json:"nev,omitempty"`
+	Networks                 map[driver.NetworkID]*OverlayNetworkV1 `json:"nets,omitempty"`
 }
 
 const (
@@ -167,6 +214,7 @@ const (
 func (v1 *OverlayNetworksV1) Clone() (new *OverlayNetworksV1) {
 	new = &OverlayNetworksV1{}
 	new.Version = v1.Version
+	new.NetworkEncodingSubverion = v1.NetworkEncodingSubverion
 	if v1.Networks != nil {
 		new.Networks = map[driver.NetworkID]*OverlayNetworkV1{}
 		for netID, cfg := range v1.Networks {
@@ -187,7 +235,8 @@ func (v1 *OverlayNetworksV1) Equal(x *OverlayNetworksV1) bool {
 	if v1.Version != x.Version ||
 		len(v1.Networks) != len(x.Networks) ||
 		v1.UnderlayID != x.UnderlayID ||
-		!v1.UnderlayIPs.Equal(&x.UnderlayIPs) {
+		!v1.UnderlayIPs.Equal(&x.UnderlayIPs) ||
+		v1.NetworkEncodingSubverion != x.NetworkEncodingSubverion {
 		return false
 	}
 	for netID, cfg := range v1.Networks {
@@ -203,15 +252,19 @@ func (v1 *OverlayNetworksV1) Equal(x *OverlayNetworksV1) bool {
 }
 
 type packOverlayNetworksV1 struct {
-	Version     uint16                 `json:"v,omitempty"`
-	Networks    []packOverlayNetworkV1 `json:"nets,omitempty"`
-	UnderlayID  int32                  `json:"uid,omitempty"`
-	UnderlayIPs string                 `json:"uip"`
+	Version                  uint16                 `json:"v,omitempty"`
+	NetworkEncodingSubverion uint8                  `json:"nes,omitempty"`
+	Networks                 []packOverlayNetworkV1 `json:"nets,omitempty"`
+	UnderlayID               int32                  `json:"uid,omitempty"`
+	UnderlayIPs              string                 `json:"uip"`
 }
 
 // EncodeToString trys to marshal structure to string.
 func (v1 *OverlayNetworksV1) EncodeToString() (string, error) {
-	pack := packOverlayNetworksV1{Version: VersionOverlayNetworksV1}
+	pack := packOverlayNetworksV1{
+		Version:                  VersionOverlayNetworksV1,
+		NetworkEncodingSubverion: 1,
+	}
 	pack.Networks = make([]packOverlayNetworkV1, 0, len(v1.Networks))
 	for netID, cfg := range v1.Networks {
 		raw, err := cfg.Encode()

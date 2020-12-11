@@ -58,4 +58,6 @@ var (
 	ErrBrokenIPNetBinary = errors.New("IPNet binary stream is broken")
 
 	ErrParamValidatorMissing = errors.New("parameter validator of overlay network ")
+
+	ErrNetworkNotExists = errors.New("network is not exists")
 )

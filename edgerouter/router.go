@@ -208,6 +208,47 @@ func (r *EdgeRouter) commitNewUnderlayIPs(set common.IPNetSet) error {
 	})
 }
 
+func (r *EdgeRouter) modifyOverlayIPs(netID int32, modify func(ips *common.IPNetSet) bool) error {
+	info, _ := r.networks[netID]
+	if info == nil {
+		return common.ErrNetworkNotExists
+	}
+
+	info.lock.Lock()
+
+	self := r.metaNet.Publish.Self
+
+	newIPs, _ := info.staticIPs[self]
+	newIPs = newIPs.Clone()
+	if modify(&newIPs) {
+		if err := r.doStoreWriteTxn(func(tx common.StoreTxn) (bool, error) {
+			data, err := common.IPNetSetEncode(newIPs)
+			if err != nil {
+				err = fmt.Errorf("failed to encode ipnet set. (err = \"%v\")", err)
+				return false, err
+			}
+			rid := strconv.FormatInt(int64(info.ID), 10)
+			path := []string{rid, "static_ips"}
+			err = tx.Set(path, data)
+			return err != nil, err
+		}); err != nil {
+			return err
+		}
+
+		info.staticIPs[self] = newIPs
+		info.processNewOverlayIPs(self, newIPs)
+
+		info.lock.Unlock()
+
+		r.republishC <- republishAll
+
+	} else {
+		info.lock.Unlock()
+	}
+
+	return nil
+}
+
 func (r *EdgeRouter) populateStore(store common.Store) error {
 	tx, err := store.Txn(true)
 	if err != nil {
@@ -282,6 +323,7 @@ func (r *EdgeRouter) populateStore(store common.Store) error {
 	tx.Range(path, func(path []string, data []byte) bool {
 		var netID int32
 
+		// read network id.
 		rawID := path[len(path)-1]
 		{
 			rid, perr := strconv.ParseInt(rawID, 10, 32)
@@ -296,6 +338,7 @@ func (r *EdgeRouter) populateStore(store common.Store) error {
 			netID = int32(rid)
 		}
 
+		// read driver ID.
 		info := &networkInfo{}
 		if data, err = tx.Get(append(path, "driver")); err != nil {
 			err = fmt.Errorf("cannot read driver for network %v. (err = \"%v\")", netID, err)
@@ -319,6 +362,21 @@ func (r *EdgeRouter) populateStore(store common.Store) error {
 			driverType = driver.OverlayDriverType(rid)
 		}
 		info.driverType = driverType
+
+		// read static IPs.
+		staticIPPath := append(path, "static_ips")
+		if data, err = tx.Get(staticIPPath); err != nil {
+			r.log.Error("failed to read static ips. (err = \"%v\")")
+		}
+		if len(data) > 0 {
+			ips, err := common.IPNetSetDecode(data)
+			if err != nil {
+				r.log.Warn("static IPs currupted and will be reset. (err = \"%v\")", err)
+				tx.Delete(staticIPPath)
+			} else {
+				info.staticIPs[r.metaNet.Publish.Self] = ips
+			}
+		}
 
 		r.networks[netID] = info
 		return true

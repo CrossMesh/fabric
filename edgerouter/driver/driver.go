@@ -65,6 +65,9 @@ type UnderlayIDWatcher func(*metanet.MetaPeer, int32) bool
 // UnderlayIPWatcher handles changes of peer's underlay IPs.
 type UnderlayIPWatcher func(peer *metanet.MetaPeer, public, private common.IPNetSet) bool
 
+// IPWatcher handles changes of peer's IPs.
+type IPWatcher func(peer *metanet.MetaPeer, ips common.IPNetSet) bool
+
 var (
 	PeerLeft = uint8(1)
 	PeerJoin = uint8(2)
@@ -91,6 +94,10 @@ type OverlayNetworkMap interface {
 	// peers' underlay IPs.
 	PeerIPs(*metanet.MetaPeer) (public, private common.IPNetSet)
 	WatchPeerIPs(UnderlayIPWatcher)
+
+	// peers' overlay IPs.
+	OverlayIPs(*metanet.MetaPeer) common.IPNetSet
+	WatchOverlayIPs(IPWatcher)
 }
 
 // Logger accepts logs from driver.

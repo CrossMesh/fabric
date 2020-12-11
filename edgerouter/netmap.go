@@ -143,6 +143,7 @@ type networkInfo struct {
 
 	lock sync.RWMutex
 
+	staticIPs map[*metanet.MetaPeer]common.IPNetSet
 	driverCtx *driverContext
 
 	peers               map[*metanet.MetaPeer]struct{}
@@ -153,13 +154,32 @@ type networkInfo struct {
 
 func newNetworkInfo(r *EdgeRouter, id int32, driverType driver.OverlayDriverType) *networkInfo {
 	return &networkInfo{
-		r:                   r,
+		r: r,
+
+		staticIPs: make(map[*metanet.MetaPeer]common.IPNetSet),
+
 		underlayIDWatcher:   make(map[*driver.UnderlayIDWatcher]struct{}),
 		ipWatcher:           make(map[*driver.UnderlayIPWatcher]struct{}),
 		peers:               make(map[*metanet.MetaPeer]struct{}),
 		latestRemoteOptions: make(map[*metanet.MetaPeer]map[string][]byte),
 		ID:                  id,
 	}
+}
+
+func (i *networkInfo) processNewOverlayIPs(p *metanet.MetaPeer, ips common.IPNetSet) {
+	old, _ := i.staticIPs[p]
+	i.staticIPs[p] = ips
+
+	if old.Equal(&ips) {
+		return
+	}
+
+	drvCtx := i.driverCtx
+	if drvCtx == nil {
+		return
+	}
+
+	drvCtx.ProcessOverlayIPs(i.ID, p, ips)
 }
 
 func (i *networkInfo) detachNotifyDriverContext() {
@@ -255,7 +275,7 @@ func (i *networkInfo) ensurePeerPresent(p *metanet.MetaPeer, present bool) {
 	}
 }
 
-func (i *networkInfo) processNewRemoteOptions(netID int32, p *metanet.MetaPeer, opts map[string][]byte) {
+func (i *networkInfo) processNewRemoteOptions(p *metanet.MetaPeer, opts map[string][]byte) {
 	if _, hasPeer := i.peers[p]; !hasPeer {
 		return
 	}
@@ -271,7 +291,7 @@ func (i *networkInfo) processNewRemoteOptions(netID int32, p *metanet.MetaPeer, 
 	if drvCtx == nil {
 		return
 	}
-	drvCtx.ProcessNewRemoteOptions(netID, p, opts)
+	drvCtx.ProcessNewRemoteOptions(i.ID, p, opts)
 }
 
 func (i *networkInfo) processNewUnderlayInfo(p *metanet.MetaPeer, id int32, ips common.IPNetSet) {
@@ -543,7 +563,7 @@ func (r *EdgeRouter) republishOverlayNetworks(activeSet uint32) uint32 {
 			}
 		}
 
-		// publish dymanic options.
+		// publish overlay network details.
 		for id, info := range r.networks {
 			if info.driverCtx == nil { // unavaliable driver.
 				continue
@@ -561,11 +581,16 @@ func (r *EdgeRouter) republishOverlayNetworks(activeSet uint32) uint32 {
 			}
 			netMap.lock.RLock()
 
+			// dymanic options
 			paramV1 := tx.NetworkFromID(netID)
 			paramV1.Params = make(map[string][]byte, len(netMap.localOptions))
 			for k, v := range netMap.localOptions {
 				paramV1.Params[k] = v
 			}
+
+			// overlay IPs.
+			ips, _ := netMap.info.staticIPs[r.metaNet.Publish.Self]
+			paramV1.IPs = ips.Clone()
 
 			netMap.lock.RUnlock()
 			drv.lock.RUnlock()
@@ -810,7 +835,8 @@ func (r *EdgeRouter) updateOverlayNetworkMetadata(peer *metanet.MetaPeer, nets m
 			// may modify peer set, lock first.
 			idleInfo.lock.Lock()
 			idleInfo.ensurePeerPresent(peer, true)
-			idleInfo.processNewRemoteOptions(netID.ID, peer, net.Params) // may not needed?
+			idleInfo.processNewRemoteOptions(peer, net.Params) // may not needed?
+			idleInfo.processNewOverlayIPs(peer, net.IPs)
 			idleInfo.lock.Unlock()
 
 			r.idleNetworks[netID] = idleInfo
@@ -819,7 +845,8 @@ func (r *EdgeRouter) updateOverlayNetworkMetadata(peer *metanet.MetaPeer, nets m
 			// may modify peer set, lock first.
 			info.lock.Lock()
 			info.ensurePeerPresent(peer, true)
-			info.processNewRemoteOptions(netID.ID, peer, net.Params)
+			info.processNewRemoteOptions(peer, net.Params)
+			info.processNewOverlayIPs(peer, net.IPs)
 			info.lock.Unlock()
 		}
 	}

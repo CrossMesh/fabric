@@ -78,6 +78,30 @@ func (r *EdgeRouter) RemoveUnderlayIPs(ips ...*net.IPNet) error {
 	return r.commitNewUnderlayIPs(newSet)
 }
 
+// AddStaticOverlayIPs adds static overlay IPs.
+func (r *EdgeRouter) AddStaticOverlayIPs(netID int32, ips common.IPNetSet) error {
+	r.lock.RLock()
+	defer r.lock.RUnlock()
+
+	r.modifyOverlayIPs(netID, func(newIPs *common.IPNetSet) bool {
+		return newIPs.Merge(ips)
+	})
+
+	return nil
+}
+
+// RemoveStaticOverlayIPs removes static overlay IPs.
+func (r *EdgeRouter) RemoveStaticOverlayIPs(netID int32, ips common.IPNetSet) error {
+	r.lock.RLock()
+	defer r.lock.RUnlock()
+
+	r.modifyOverlayIPs(netID, func(newIPs *common.IPNetSet) bool {
+		return newIPs.Remove(ips...)
+	})
+
+	return nil
+}
+
 // PublicIPs reports public underlay IPs.
 func (r *EdgeRouter) PublicIPs() (ips common.IPNetSet) {
 	r.lock.RLock()
