@@ -151,20 +151,17 @@ func (r *EdgeRouter) RegisterOverlayDriver(drv driver.OverlayDriver) error {
 	}
 
 	path := []string{"driver", strconv.FormatUint(uint64(drv.Type()), 10), "data"}
-	ctx := &driverContext{
-		router: r,
-		driver: drv,
-		store: common.SubpathStore{
-			Store:  r.store,
-			Prefix: path,
-		},
-		driverType: typeID,
-		messager: &driverMessager{
-			driverType: typeID,
-		},
-		networkMap: map[int32]*driverNetworkMap{},
-		logger:     r.log.WithField("driver", typeID),
+	ctx := newEmptyDriverContext(r)
+	ctx.driver = drv
+	ctx.store = common.SubpathStore{
+		Store:  r.store,
+		Prefix: path,
 	}
+	ctx.driverType = typeID
+	ctx.messager = &driverMessager{
+		driverType: typeID,
+	}
+	ctx.logger = r.log.WithField("driver", typeID)
 
 	if err := drv.Init(ctx); err != nil {
 		r.log.Errorf("failed to initialize driver with type %v. (err = \"%v\")", typeID, err)

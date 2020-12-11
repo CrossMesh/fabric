@@ -148,8 +148,6 @@ type networkInfo struct {
 
 	peers               map[*metanet.MetaPeer]struct{}
 	latestRemoteOptions map[*metanet.MetaPeer]map[string][]byte
-	underlayIDWatcher   map[*driver.UnderlayIDWatcher]struct{}
-	ipWatcher           map[*driver.UnderlayIPWatcher]struct{}
 }
 
 func newNetworkInfo(r *EdgeRouter, id int32, driverType driver.OverlayDriverType) *networkInfo {
@@ -158,8 +156,6 @@ func newNetworkInfo(r *EdgeRouter, id int32, driverType driver.OverlayDriverType
 
 		staticIPs: make(map[*metanet.MetaPeer]common.IPNetSet),
 
-		underlayIDWatcher:   make(map[*driver.UnderlayIDWatcher]struct{}),
-		ipWatcher:           make(map[*driver.UnderlayIPWatcher]struct{}),
 		peers:               make(map[*metanet.MetaPeer]struct{}),
 		latestRemoteOptions: make(map[*metanet.MetaPeer]map[string][]byte),
 		ID:                  id,
@@ -222,33 +218,6 @@ func (i *networkInfo) Peers() (peers []*metanet.MetaPeer) {
 	return
 }
 
-func (i *networkInfo) UnderlayID(p *metanet.MetaPeer) int32 { return i.r.PeerUnderlayID(p) }
-func (i *networkInfo) PeerIPs(p *metanet.MetaPeer) (public, private common.IPNetSet) {
-	return i.r.PeerIPs(p)
-}
-
-func (i *networkInfo) WatchUnderlayID(handler driver.UnderlayIDWatcher) {
-	if handler == nil {
-		return
-	}
-
-	i.lock.Lock()
-	defer i.lock.Unlock()
-
-	i.underlayIDWatcher[&handler] = struct{}{}
-}
-
-func (i *networkInfo) WatchPeerIPs(handler driver.UnderlayIPWatcher) {
-	if handler == nil {
-		return
-	}
-
-	i.lock.Lock()
-	defer i.lock.Unlock()
-
-	i.ipWatcher[&handler] = struct{}{}
-}
-
 func (i *networkInfo) ensurePeerPresent(p *metanet.MetaPeer, present bool) {
 	// update peer set.
 	_, hasPeer := i.peers[p]
@@ -292,37 +261,6 @@ func (i *networkInfo) processNewRemoteOptions(p *metanet.MetaPeer, opts map[stri
 		return
 	}
 	drvCtx.ProcessNewRemoteOptions(i.ID, p, opts)
-}
-
-func (i *networkInfo) processNewUnderlayInfo(p *metanet.MetaPeer, id int32, ips common.IPNetSet) {
-	// notify.
-	for watcher := range i.underlayIDWatcher {
-		if !(*watcher)(p, id) {
-			delete(i.underlayIDWatcher, watcher)
-		}
-	}
-
-	if len(i.ipWatcher) > 0 {
-		var private, public common.IPNetSet
-		for _, ip := range ips {
-			if !ip.IP.IsGlobalUnicast() {
-				continue
-			}
-			for _, privateNet := range common.PrivateUnicastIPNets {
-				if privateNet.Contains(ip.IP) {
-					private = append(private, ip)
-				} else {
-					public = append(public, ip)
-				}
-			}
-		}
-
-		for watcher := range i.ipWatcher {
-			if !(*watcher)(p, public, private) {
-				delete(i.ipWatcher, watcher)
-			}
-		}
-	}
 }
 
 func (r *EdgeRouter) initializeNetworkMap() (err error) {
@@ -903,14 +841,7 @@ func (r *EdgeRouter) updateUnderlayInfomation(peer *metanet.MetaPeer, newID int3
 		return
 	}
 
-	for _, info := range r.networks {
-		info.lock.Lock()
-		info.processNewUnderlayInfo(peer, newID, newIPs)
-		info.lock.Unlock()
-	}
-	for _, info := range r.idleNetworks {
-		info.lock.Lock()
-		info.processNewUnderlayInfo(peer, newID, newIPs)
-		info.lock.Unlock()
+	for _, driver := range r.drivers {
+		driver.ProcessNewUnderlayInfo(peer, newID, newIPs)
 	}
 }

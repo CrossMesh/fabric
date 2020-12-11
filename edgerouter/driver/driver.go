@@ -87,14 +87,6 @@ type OverlayNetworkMap interface {
 	Peers() []*metanet.MetaPeer
 	WatchMemebershipChanged(PeerEventHandler)
 
-	// peers' underlay ID.
-	UnderlayID(*metanet.MetaPeer) int32
-	WatchUnderlayID(UnderlayIDWatcher)
-
-	// peers' underlay IPs.
-	PeerIPs(*metanet.MetaPeer) (public, private common.IPNetSet)
-	WatchPeerIPs(UnderlayIPWatcher)
-
 	// peers' overlay IPs.
 	OverlayIPs(*metanet.MetaPeer) common.IPNetSet
 	WatchOverlayIPs(IPWatcher)
@@ -129,6 +121,14 @@ type ResourceCollection interface {
 	NetworkMap(netID int32) OverlayNetworkMap
 	Messager() Messager
 	Logger() Logger
+
+	// peers' underlay ID.
+	UnderlayID(*metanet.MetaPeer) int32
+	WatchUnderlayID(UnderlayIDWatcher)
+
+	// peers' underlay IPs.
+	PeerIPs(*metanet.MetaPeer) (public, private common.IPNetSet)
+	WatchPeerIPs(UnderlayIPWatcher)
 
 	// Run code inside virtualized network environment.
 	VirtualDo(int32, func(underlayID, overlayID int32) error) error

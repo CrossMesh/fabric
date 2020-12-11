@@ -137,19 +137,6 @@ func (m *driverNetworkMap) WatchRemoteOptions(handler driver.RemoteOptionMapWatc
 	m.remoteOptionWatcher[&handler] = struct{}{}
 }
 
-func (m *driverNetworkMap) UnderlayID(p *metanet.MetaPeer) int32 { return m.info.UnderlayID(p) }
-func (m *driverNetworkMap) WatchUnderlayID(handler driver.UnderlayIDWatcher) {
-	m.info.WatchUnderlayID(handler)
-}
-
-func (m *driverNetworkMap) PeerIPs(p *metanet.MetaPeer) (public, private common.IPNetSet) {
-	return m.info.PeerIPs(p)
-}
-
-func (m *driverNetworkMap) WatchPeerIPs(handler driver.UnderlayIPWatcher) {
-	m.info.WatchPeerIPs(handler)
-}
-
 func (m *driverNetworkMap) PeerJoin(p *metanet.MetaPeer) {
 	m.lock.Lock()
 
@@ -257,7 +244,18 @@ type driverContext struct {
 	driver     driver.OverlayDriver
 	messager   *driverMessager
 
-	networkMap map[int32]*driverNetworkMap
+	networkMap        map[int32]*driverNetworkMap
+	underlayIDWatcher map[*driver.UnderlayIDWatcher]struct{}
+	ipWatcher         map[*driver.UnderlayIPWatcher]struct{}
+}
+
+func newEmptyDriverContext(router *EdgeRouter) *driverContext {
+	d := &driverContext{
+		router:            router,
+		networkMap:        make(map[int32]*driverNetworkMap),
+		underlayIDWatcher: make(map[*driver.UnderlayIDWatcher]struct{}),
+	}
+	return d
 }
 
 func (c *driverContext) Store() common.Store       { return &c.store }
@@ -275,6 +273,36 @@ func (c *driverContext) Logger() driver.Logger { return c.logger }
 
 func (c *driverContext) VirtualDo(netID int32, process func(underlayID, overlayID int32) error) error {
 	return c.router.VirtualDo(netID, process)
+}
+
+func (c *driverContext) UnderlayID(p *metanet.MetaPeer) int32 {
+	return c.router.PeerUnderlayID(p)
+}
+
+func (c *driverContext) WatchUnderlayID(watcher driver.UnderlayIDWatcher) {
+	if watcher == nil {
+		return
+	}
+
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	c.underlayIDWatcher[&watcher] = struct{}{}
+}
+
+func (c *driverContext) PeerIPs(p *metanet.MetaPeer) (public, private common.IPNetSet) {
+	return c.router.PeerIPs(p)
+}
+
+func (c *driverContext) WatchPeerIPs(watcher driver.UnderlayIPWatcher) {
+	if watcher == nil {
+		return
+	}
+
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	c.ipWatcher[&watcher] = struct{}{}
 }
 
 func (c *driverContext) PeerJoin(info *networkInfo, p *metanet.MetaPeer) {
@@ -327,6 +355,40 @@ func (c *driverContext) ProcessOverlayIPs(netID int32, p *metanet.MetaPeer, ips 
 		return
 	}
 	netMap.ProcessOverlayIPs(p, ips)
+}
+
+func (c *driverContext) ProcessNewUnderlayInfo(p *metanet.MetaPeer, id int32, ips common.IPNetSet) {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+
+	// notify.
+	for watcher := range c.underlayIDWatcher {
+		if !(*watcher)(p, id) {
+			delete(c.underlayIDWatcher, watcher)
+		}
+	}
+
+	if len(c.ipWatcher) > 0 {
+		var private, public common.IPNetSet
+		for _, ip := range ips {
+			if !ip.IP.IsGlobalUnicast() {
+				continue
+			}
+			for _, privateNet := range common.PrivateUnicastIPNets {
+				if privateNet.Contains(ip.IP) {
+					private = append(private, ip)
+				} else {
+					public = append(public, ip)
+				}
+			}
+		}
+
+		for watcher := range c.ipWatcher {
+			if !(*watcher)(p, public, private) {
+				delete(c.ipWatcher, watcher)
+			}
+		}
+	}
 }
 
 const (
